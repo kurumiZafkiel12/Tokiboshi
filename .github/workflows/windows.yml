@@ -16,7 +16,7 @@ jobs:
           flutter-version: 3.24.5
           channel: stable
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
 
       - name: Rust middle layer tests
         run: cargo test --manifest-path rust/Cargo.toml
