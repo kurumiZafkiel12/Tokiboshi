@@ -1,7 +1,7 @@
 //! Dev helper: build a sing-box config with the middle layer and print it.
 //! Usage: cargo run --example gen_config '<outbound-json>' [mixed_port]
 
-use tokiboshi_rust::config::{build_config, CoreSettings};
+use rust_lib_tokiboshi::config::{build_config, CoreSettings};
 
 fn main() {
     let outbound_json = std::env::args()

@@ -2,9 +2,12 @@
 //!
 //! Sits between the Flutter UI and the sing-box core:
 //! - `config`: sing-box configuration model, validation and generation.
+//! - `links`: share link / subscription parsing into sing-box outbounds.
 //! - `process`: sing-box core process lifecycle (start / stop / status).
-//! - `api`: thin functions exposed toward Flutter (flutter_rust_bridge).
+//! - `api`: functions exposed to Flutter via flutter_rust_bridge.
 
 pub mod api;
 pub mod config;
+pub mod links;
 pub mod process;
+mod frb_generated;

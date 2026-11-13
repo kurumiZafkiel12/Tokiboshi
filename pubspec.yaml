@@ -1,7 +1,7 @@
 name: tokiboshi
 description: "Tokiboshi — a sing-box client. Flutter UI, Rust middle layer, sing-box core."
 publish_to: "none"
-version: 0.0.1+1
+version: 0.1.0+2
 
 environment:
   sdk: ^3.5.0
@@ -9,6 +9,9 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  rust_lib_tokiboshi:
+    path: rust_builder
+  flutter_rust_bridge: 2.11.1
 
 dev_dependencies:
   flutter_test:
