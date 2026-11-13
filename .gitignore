@@ -1,0 +1,18 @@
+# Flutter / Dart
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.pub-cache/
+.pub/
+build/
+android/local.properties
+
+# Rust
+rust/target/
+**/target/
+
+# Misc
+.DS_Store
+.idea/
+.vscode/
+*.iml
