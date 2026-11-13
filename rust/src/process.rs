@@ -107,7 +107,20 @@ mod tests {
     use super::*;
     use std::io::Write;
 
-    /// A stand-in "sing-box" shell script: `check` succeeds, `run` sleeps.
+    /// A stand-in "sing-box" script: `check` exits 0, `run` stays alive.
+    /// Shell script on Unix, batch file on Windows (std::process runs
+    /// .cmd files through cmd.exe).
+    #[cfg(windows)]
+    fn fake_binary(dir: &Path) -> PathBuf {
+        let path = dir.join("fake-sing-box.cmd");
+        let mut f = std::fs::File::create(&path).unwrap();
+        writeln!(f, "@echo off").unwrap();
+        writeln!(f, "if \"%1\"==\"check\" exit /b 0").unwrap();
+        writeln!(f, "if \"%1\"==\"run\" ping -n 31 127.0.0.1 >nul").unwrap();
+        path
+    }
+
+    #[cfg(not(windows))]
     fn fake_binary(dir: &Path) -> PathBuf {
         let path = dir.join("fake-sing-box");
         let mut f = std::fs::File::create(&path).unwrap();
