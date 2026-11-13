@@ -1,10 +1,9 @@
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 
 import 'bridge/core_bridge.dart';
 import 'bridge/rust_core_bridge.dart';
 import 'services/store.dart';
+import 'services/system_proxy.dart';
 import 'src/rust/frb_generated.dart';
 
 Future<void> main() async {
@@ -14,10 +13,16 @@ Future<void> main() async {
 }
 
 class TokiboshiApp extends StatelessWidget {
-  const TokiboshiApp({super.key, required this.bridge, this.store});
+  const TokiboshiApp({
+    super.key,
+    required this.bridge,
+    this.store,
+    this.systemProxy,
+  });
 
   final CoreBridge bridge;
   final Store? store;
+  final SystemProxy? systemProxy;
 
   @override
   Widget build(BuildContext context) {
@@ -30,16 +35,26 @@ class TokiboshiApp extends StatelessWidget {
         ),
         useMaterial3: true,
       ),
-      home: HomePage(bridge: bridge, store: store ?? Store()),
+      home: HomePage(
+        bridge: bridge,
+        store: store ?? Store(),
+        systemProxy: systemProxy ?? const WindowsSystemProxy(),
+      ),
     );
   }
 }
 
 class HomePage extends StatefulWidget {
-  const HomePage({super.key, required this.bridge, required this.store});
+  const HomePage({
+    super.key,
+    required this.bridge,
+    required this.store,
+    required this.systemProxy,
+  });
 
   final CoreBridge bridge;
   final Store store;
+  final SystemProxy systemProxy;
 
   @override
   State<HomePage> createState() => _HomePageState();
@@ -141,31 +156,13 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  /// Set or clear the current user's Windows system proxy
-  /// (HKCU Internet Settings). No-op off Windows.
-  Future<void> _applySystemProxy(bool enable, int port) async {
-    if (!Platform.isWindows) return;
-    const key =
-        r'Software\Microsoft\Windows\CurrentVersion\Internet Settings';
-    await Process.run('reg', [
-      'add', 'HKCU\\$key', '/v', 'ProxyEnable', '/t', 'REG_DWORD',
-      '/d', enable ? '1' : '0', '/f',
-    ]);
-    if (enable) {
-      await Process.run('reg', [
-        'add', 'HKCU\\$key', '/v', 'ProxyServer', '/t', 'REG_SZ',
-        '/d', '127.0.0.1:$port', '/f',
-      ]);
-    }
-  }
-
   Future<void> _toggleCore() async {
     if (_busy) return;
     setState(() => _busy = true);
     try {
       if (_running) {
         await widget.bridge.stopCore();
-        await _applySystemProxy(false, _data.mixedPort);
+        await widget.systemProxy.apply(false, _data.mixedPort);
         setState(() {
           _running = false;
           _message = '已停止';
@@ -194,7 +191,7 @@ class _HomePageState extends State<HomePage> {
         singBoxPath: resolveSingBoxPath(_data.singBoxPath),
         configPath: configFile.path,
       );
-      if (_systemProxy) await _applySystemProxy(true, port);
+      if (_systemProxy) await widget.systemProxy.apply(true, port);
       setState(() {
         _running = true;
         _message = '运行中：${node.name} · 本地 mixed 127.0.0.1:$port'

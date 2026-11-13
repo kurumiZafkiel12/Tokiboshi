@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tokiboshi/main.dart';
 import 'package:tokiboshi/services/store.dart';
+import 'package:tokiboshi/services/system_proxy.dart';
 
 import 'fake_bridge.dart';
 
@@ -37,8 +38,11 @@ void main() {
   testWidgets('import, select and start/stop flow', (tester) async {
     final store = MemoryStore();
     final bridge = FakeBridge();
+    final proxy = NoopSystemProxy();
 
-    await tester.pumpWidget(TokiboshiApp(bridge: bridge, store: store));
+    await tester.pumpWidget(
+      TokiboshiApp(bridge: bridge, store: store, systemProxy: proxy),
+    );
     await tester.pumpAndSettle();
     expect(find.text('sing-box 已停止'), findsOneWidget);
     expect(find.text('还没有节点，点右上角图标导入'), findsOneWidget);
@@ -61,10 +65,12 @@ void main() {
     expect(find.text('sing-box 运行中'), findsOneWidget);
     expect(bridge.running, isTrue);
     expect(store.runtimeConfig, isNotNull);
+    expect(proxy.calls, [(enable: true, port: 7890)]);
 
     await tester.tap(find.text('停止'));
     await tester.pumpAndSettle();
     expect(find.text('sing-box 已停止'), findsOneWidget);
     expect(bridge.running, isFalse);
+    expect(proxy.calls.last, (enable: false, port: 7890));
   });
 }
