@@ -54,6 +54,33 @@ class ParseOutcome {
   final List<String> skipped;
 }
 
+/// One node handed to the config generator.
+class NodeSpec {
+  const NodeSpec({required this.name, required this.outboundJson});
+
+  final String name;
+  final String outboundJson;
+}
+
+/// Supervision status of the core process.
+class CoreStatus {
+  const CoreStatus({required this.running, this.restartCount = 0, this.lastExit});
+
+  final bool running;
+  final int restartCount;
+  final String? lastExit;
+}
+
+/// State of the background core download.
+class EnsureState {
+  const EnsureState({required this.phase, this.version, this.error});
+
+  /// idle | downloading | done | error
+  final String phase;
+  final String? version;
+  final String? error;
+}
+
 abstract class CoreBridge {
   /// Parse one share link into a node.
   Future<NodeInfo> parseShareLink(String link);
@@ -62,11 +89,16 @@ abstract class CoreBridge {
   /// sing-box JSON).
   Future<ParseOutcome> parseSubscription(String text);
 
-  /// Build a full sing-box config around one outbound JSON object.
+  /// Build the full GUI-shell sing-box config for all nodes
+  /// (selector/urltest groups, route rules, Clash API + zashboard,
+  /// cache file).
   Future<String> buildConfig({
-    required String outboundJson,
+    required List<NodeSpec> nodes,
     int mixedPort = 7890,
+    int clashApiPort = 9090,
     bool enableTun = false,
+    String dataDir = '',
+    String? selectedName,
   });
 
   /// Start sing-box (the Rust layer runs `sing-box check` first).
@@ -78,4 +110,21 @@ abstract class CoreBridge {
   Future<void> stopCore();
 
   Future<bool> coreRunning();
+
+  Future<CoreStatus> coreStatus();
+
+  /// Recent core log lines, oldest first.
+  Future<List<String>> coreLogs();
+
+  /// `sing-box version` first line for the binary at [binaryPath].
+  Future<String> coreVersion(String binaryPath);
+
+  /// Path of the managed (downloaded) sing-box binary.
+  Future<String> managedCorePath(String dataDir);
+
+  /// Start downloading the pinned sing-box release in the
+  /// background, unless already up to date.
+  Future<void> startEnsureCore(String dataDir);
+
+  Future<EnsureState> ensureCoreState();
 }

@@ -1,11 +1,16 @@
 import 'package:flutter/material.dart';
 
+import 'dart:async';
+
 import 'bridge/core_bridge.dart';
 import 'bridge/rust_core_bridge.dart';
 import 'pages/dashboard_page.dart';
+import 'pages/logs_page.dart';
 import 'pages/nodes_page.dart';
+import 'pages/panel_page.dart';
 import 'pages/settings_page.dart';
 import 'pages/subscriptions_page.dart';
+import 'services/clash_api.dart';
 import 'services/latency.dart';
 import 'services/store.dart';
 import 'services/subscription_fetcher.dart';
@@ -78,12 +83,28 @@ class _ShellPageState extends State<ShellPage> {
   bool _measuring = false;
   int _page = 0;
   String? _message;
+  String? _coreVersion;
+  int _restartCount = 0;
+  String? _lastExit;
+  String? _clashMode;
+  Timer? _statusTimer;
   final Map<NodeInfo, int?> _latency = {};
+
+  String get _dataDir => widget.store.dir.path;
+  ClashApiClient get _clash => ClashApiClient(port: _data.clashApiPort);
 
   @override
   void initState() {
     super.initState();
     _load();
+    _statusTimer =
+        Timer.periodic(const Duration(seconds: 2), (_) => _syncCoreStatus());
+  }
+
+  @override
+  void dispose() {
+    _statusTimer?.cancel();
+    super.dispose();
   }
 
   Future<void> _load() async {
@@ -94,6 +115,56 @@ class _ShellPageState extends State<ShellPage> {
       _data = data;
       _running = running;
     });
+    await _refreshCoreVersion();
+  }
+
+  Future<void> _refreshCoreVersion() async {
+    try {
+      final path = resolveSingBoxPath(_data.singBoxPath, _dataDir);
+      final v = await widget.bridge.coreVersion(path);
+      if (mounted) setState(() => _coreVersion = v);
+    } catch (_) {
+      if (mounted) setState(() => _coreVersion = null);
+    }
+  }
+
+  /// Keep the UI truthful about the supervised core: if it died for
+  /// good (restart limit hit), reflect that and drop the system proxy.
+  /// Also refreshes the Clash mode while running.
+  Future<void> _syncCoreStatus() async {
+    try {
+      final status = await widget.bridge.coreStatus();
+      if (!mounted) return;
+      var changed = status.restartCount != _restartCount ||
+          status.lastExit != _lastExit;
+      if (_running && !status.running) {
+        _running = false;
+        _clashMode = null;
+        changed = true;
+        await widget.systemProxy.apply(false, _data.mixedPort);
+        _message = status.lastExit != null
+            ? '内核已退出：${status.lastExit}'
+            : '内核已停止';
+      }
+      if (changed) {
+        setState(() {
+          _restartCount = status.restartCount;
+          _lastExit = status.lastExit;
+        });
+      }
+      if (_running && status.running) {
+        try {
+          final mode = await _clash.mode();
+          if (mounted && mode != null && mode != _clashMode) {
+            setState(() => _clashMode = mode);
+          }
+        } catch (_) {
+          // Clash API not up yet (UI download can take a while).
+        }
+      }
+    } catch (_) {
+      // Status polling is best-effort.
+    }
   }
 
   Future<void> _persist() => widget.store.save(_data);
@@ -140,14 +211,54 @@ class _ShellPageState extends State<ShellPage> {
     await _importText(text.trim());
   }
 
+  static bool _isHttpUrl(String s) =>
+      s.startsWith('http://') || s.startsWith('https://');
+
+  /// Fetch a subscription URL and parse it; if the returned content
+  /// itself lists further subscription URLs (one link containing
+  /// many), fetch and merge those too (one level deep).
+  Future<ParseOutcome> _fetchParseExpand(String url) async {
+    final content = await widget.fetcher.fetch(url);
+    final first = await widget.bridge.parseSubscription(content);
+    final nodes = [...first.nodes];
+    final skipped = [...first.skipped];
+    final nested = <String>{};
+    for (final line in content.split('\n')) {
+      final t = line.trim();
+      if (_isHttpUrl(t) && t != url) nested.add(t);
+    }
+    for (final link in nested.take(5)) {
+      try {
+        final inner = await widget.fetcher.fetch(link);
+        final outcome = await widget.bridge.parseSubscription(inner);
+        nodes.addAll(outcome.nodes);
+        skipped.addAll(outcome.skipped);
+      } catch (_) {
+        skipped.add('子订阅拉取失败 (${Uri.tryParse(link)?.host ?? link})');
+      }
+    }
+    return ParseOutcome(nodes: nodes, skipped: skipped);
+  }
+
   Future<void> _importText(String trimmed) async {
-    final isUrl = !trimmed.contains('\n') &&
-        (trimmed.startsWith('http://') || trimmed.startsWith('https://'));
-    if (isUrl) {
-      final uri = Uri.tryParse(trimmed);
-      final name = (uri != null && uri.host.isNotEmpty) ? uri.host : '订阅';
-      await _addSubscription(name, trimmed);
-      return;
+    // Split pasted content: standalone http(s) lines are subscription
+    // URLs (a single pasted link may carry many nodes); the rest is
+    // parsed as links/content.
+    final lines = trimmed
+        .split('\n')
+        .map((l) => l.trim())
+        .where((l) => l.isNotEmpty)
+        .toList();
+    final urlLines = lines.where(_isHttpUrl).toList();
+    final rest = lines.where((l) => !_isHttpUrl(l)).join('\n');
+    if (urlLines.isNotEmpty) {
+      for (final url in urlLines) {
+        final uri = Uri.tryParse(url);
+        final name = (uri != null && uri.host.isNotEmpty) ? uri.host : '订阅';
+        await _addSubscription(name, url);
+      }
+      if (rest.isEmpty) return;
+      trimmed = rest;
     }
     setState(() => _busy = true);
     try {
@@ -187,7 +298,8 @@ class _ShellPageState extends State<ShellPage> {
     final counts = <String, int>{};
     for (final entry in skipped) {
       final m = RegExp(r'\(([^()]*)\)\s*$').firstMatch(entry);
-      final type = m?.group(1) ?? 'unknown';
+      final type = m?.group(1) ??
+          (entry.startsWith('子订阅') ? '子订阅失败' : 'unknown');
       counts[type] = (counts[type] ?? 0) + 1;
     }
     final parts = counts.entries.map((e) => '${e.key} ×${e.value}').join('、');
@@ -254,8 +366,7 @@ class _ShellPageState extends State<ShellPage> {
   Future<void> _addSubscription(String name, String url) async {
     setState(() => _busy = true);
     try {
-      final content = await widget.fetcher.fetch(url);
-      final outcome = await widget.bridge.parseSubscription(content);
+      final outcome = await _fetchParseExpand(url);
       final id = 'sub-${DateTime.now().millisecondsSinceEpoch}';
       final nodes = outcome.nodes.map((n) => n.withSource(id)).toList();
       setState(() {
@@ -286,8 +397,7 @@ class _ShellPageState extends State<ShellPage> {
   Future<void> _updateSubscription(Subscription sub) async {
     setState(() => _busy = true);
     try {
-      final content = await widget.fetcher.fetch(sub.url);
-      final outcome = await widget.bridge.parseSubscription(content);
+      final outcome = await _fetchParseExpand(sub.url);
       final selected = _data.selected;
       final selectedFromSub = selected != null && selected.source == sub.id;
       final fresh = outcome.nodes.map((n) => n.withSource(sub.id)).toList();
@@ -364,7 +474,13 @@ class _ShellPageState extends State<ShellPage> {
   Future<void> _measureNode(NodeInfo node) async {
     if (_measuring) return;
     _measuring = true;
-    final ms = await tcpLatency(node.server, node.serverPort);
+    // Prefer the Clash API delay endpoint while the core runs (it
+    // measures through the real outbound); fall back to TCP connect.
+    int? ms;
+    if (_running) {
+      ms = await _clash.delay(node.name);
+    }
+    ms ??= await tcpLatency(node.server, node.serverPort);
     _measuring = false;
     if (mounted) setState(() => _latency[node] = ms);
   }
@@ -385,6 +501,36 @@ class _ShellPageState extends State<ShellPage> {
 
   // ---- core ----
 
+  /// Resolve the core binary, downloading the pinned sing-box
+  /// release first when the managed core is missing. Returns null
+  /// (with a message set) when no binary can be provided.
+  Future<String?> _ensureCoreBinary() async {
+    if (_data.singBoxPath.isNotEmpty) return _data.singBoxPath;
+    final managed = await widget.bridge.managedCorePath(_dataDir);
+    try {
+      final v = await widget.bridge.coreVersion(managed);
+      if (v.isNotEmpty) return managed;
+    } catch (_) {
+      // Managed core not installed yet — download it below.
+    }
+    _setMessage('正在下载 sing-box 内核（首次启动需要）…');
+    await widget.bridge.startEnsureCore(_dataDir);
+    for (var i = 0; i < 200; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 700));
+      final state = await widget.bridge.ensureCoreState();
+      if (state.phase == 'done') {
+        await _refreshCoreVersion();
+        return managed;
+      }
+      if (state.phase == 'error') {
+        _setMessage('内核下载失败：${state.error ?? '未知错误'}');
+        return null;
+      }
+    }
+    _setMessage('内核下载超时，请检查网络后重试');
+    return null;
+  }
+
   Future<void> _toggleCore() async {
     if (_busy) return;
     setState(() => _busy = true);
@@ -394,22 +540,30 @@ class _ShellPageState extends State<ShellPage> {
         await widget.systemProxy.apply(false, _data.mixedPort);
         setState(() {
           _running = false;
+          _clashMode = null;
           _message = '已停止';
         });
         return;
       }
-      final node = _data.selected;
-      if (node == null) {
-        _setMessage('先导入并选择一个节点');
+      if (_data.nodes.isEmpty) {
+        _setMessage('先导入节点');
         return;
       }
+      final binary = await _ensureCoreBinary();
+      if (binary == null) return;
+      final selected = _data.selected;
       final config = await widget.bridge.buildConfig(
-        outboundJson: node.outboundJson,
+        nodes: _data.nodes
+            .map((n) => NodeSpec(name: n.name, outboundJson: n.outboundJson))
+            .toList(),
         mixedPort: _data.mixedPort,
+        clashApiPort: _data.clashApiPort,
+        dataDir: _dataDir,
+        selectedName: selected?.name,
       );
       final configFile = await widget.store.writeRuntimeConfig(config);
       await widget.bridge.startCore(
-        singBoxPath: resolveSingBoxPath(_data.singBoxPath),
+        singBoxPath: binary,
         configPath: configFile.path,
       );
       if (_data.systemProxy) {
@@ -417,7 +571,10 @@ class _ShellPageState extends State<ShellPage> {
       }
       setState(() {
         _running = true;
-        _message = '运行中：${node.name} · 本地 mixed 127.0.0.1:${_data.mixedPort}'
+        _restartCount = 0;
+        _lastExit = null;
+        _message = '运行中：${_data.nodes.length} 个节点 · mixed 127.0.0.1:${_data.mixedPort}'
+            ' · 面板 127.0.0.1:${_data.clashApiPort}/ui'
             '${_data.systemProxy ? ' · 系统代理已开启' : ''}';
       });
     } catch (e) {
@@ -427,9 +584,43 @@ class _ShellPageState extends State<ShellPage> {
     }
   }
 
-  Future<void> _saveSettings(int port, String singBoxPath) async {
+  Future<void> _restartCore() async {
+    if (_busy || !_running) return;
+    await widget.bridge.stopCore();
+    await widget.systemProxy.apply(false, _data.mixedPort);
+    if (mounted) {
+      setState(() {
+        _running = false;
+        _clashMode = null;
+      });
+    }
+    await _toggleCore();
+  }
+
+  Future<void> _ensureFromSettings() async {
+    _setMessage('正在检查/下载 sing-box 内核…');
+    await widget.bridge.startEnsureCore(_dataDir);
+    for (var i = 0; i < 200; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 700));
+      final state = await widget.bridge.ensureCoreState();
+      if (state.phase == 'done') {
+        _setMessage('内核就绪：${state.version ?? ''}');
+        await _refreshCoreVersion();
+        return;
+      }
+      if (state.phase == 'error') {
+        _setMessage('内核下载失败：${state.error ?? '未知错误'}');
+        return;
+      }
+      if (!mounted) return;
+    }
+    _setMessage('内核下载超时，请检查网络后重试');
+  }
+
+  Future<void> _saveSettings(int port, int clashApiPort, String singBoxPath) async {
     setState(() {
       _data.mixedPort = port;
+      _data.clashApiPort = clashApiPort;
       _data.singBoxPath = singBoxPath;
       _message = '设置已保存';
     });
@@ -458,6 +649,12 @@ class _ShellPageState extends State<ShellPage> {
     final Widget page;
     switch (_page) {
       case 1:
+        page = PanelPage(
+          running: _running,
+          clashApiPort: _data.clashApiPort,
+          onStart: _toggleCore,
+        );
+      case 2:
         page = NodesPage(
           nodes: _data.nodes,
           subscriptions: _data.subscriptions,
@@ -470,7 +667,7 @@ class _ShellPageState extends State<ShellPage> {
           onImport: _importDialog,
           onMeasureAll: _measureAll,
         );
-      case 2:
+      case 3:
         page = SubscriptionsPage(
           subscriptions: _data.subscriptions,
           nodeCounts: nodeCounts,
@@ -480,15 +677,20 @@ class _ShellPageState extends State<ShellPage> {
           onUpdate: _updateSubscription,
           onDelete: _deleteSubscription,
         );
-      case 3:
+      case 4:
+        page = LogsPage(fetchLogs: widget.bridge.coreLogs);
+      case 5:
         page = SettingsPage(
           mixedPort: _data.mixedPort,
+          clashApiPort: _data.clashApiPort,
           singBoxPath: _data.singBoxPath,
           systemProxy: _data.systemProxy,
           running: _running,
           dataFilePath: widget.store.file.path,
+          coreVersion: _coreVersion,
           onSave: _saveSettings,
           onSystemProxyChanged: _setSystemProxy,
+          onEnsureCore: _ensureFromSettings,
         );
       default:
         page = DashboardPage(
@@ -501,7 +703,13 @@ class _ShellPageState extends State<ShellPage> {
           systemProxy: _data.systemProxy,
           selectedLatency: selected == null ? null : _latency[selected],
           selectedMeasured: selected != null && _latency.containsKey(selected),
+          coreVersion: _coreVersion,
+          restartCount: _restartCount,
+          lastExit: _lastExit,
+          clashMode: _clashMode,
           onToggle: _toggleCore,
+          onRestart: _restartCore,
+          onOpenPanel: () => setState(() => _page = 1),
           onMeasureSelected: () {
             final node = _data.selected;
             if (node != null) _measureNode(node);
@@ -542,13 +750,15 @@ class _ShellPageState extends State<ShellPage> {
                   ),
                 ),
                 _navItem(0, Icons.dashboard_outlined, '仪表盘'),
-                _navItem(1, Icons.dns_outlined, '节点'),
-                _navItem(2, Icons.subscriptions_outlined, '订阅'),
-                _navItem(3, Icons.settings_outlined, '设置'),
+                _navItem(1, Icons.web_asset_outlined, '面板'),
+                _navItem(2, Icons.dns_outlined, '节点'),
+                _navItem(3, Icons.subscriptions_outlined, '订阅'),
+                _navItem(4, Icons.terminal_outlined, '日志'),
+                _navItem(5, Icons.settings_outlined, '设置'),
                 const Spacer(),
                 const Padding(
                   padding: EdgeInsets.all(16),
-                  child: Text('v0.2.2 · sing-box 1.11.15'),
+                  child: Text('v0.3.0 · sing-box 1.14.4'),
                 ),
               ],
             ),

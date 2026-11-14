@@ -51,6 +51,7 @@ class AppData {
     this.subscriptions = const [],
     this.selectedIndex = -1,
     this.mixedPort = 7890,
+    this.clashApiPort = 9090,
     this.singBoxPath = '',
     this.systemProxy = true,
   });
@@ -60,7 +61,10 @@ class AppData {
   int selectedIndex;
   int mixedPort;
 
-  /// Empty means "sing-box.exe next to Tokiboshi.exe, else PATH".
+  /// Port of the sing-box Clash API controller (127.0.0.1:<port>).
+  int clashApiPort;
+
+  /// Empty means the managed core (downloaded into the data dir).
   String singBoxPath;
   bool systemProxy;
 
@@ -102,6 +106,7 @@ class Store {
         subscriptions: subscriptions,
         selectedIndex: (map['selectedIndex'] as int?) ?? -1,
         mixedPort: (map['mixedPort'] as int?) ?? 7890,
+        clashApiPort: (map['clashApiPort'] as int?) ?? 9090,
         singBoxPath: (map['singBoxPath'] as String?) ?? '',
         systemProxy: (map['systemProxy'] as bool?) ?? true,
       );
@@ -117,6 +122,7 @@ class Store {
       'subscriptions': data.subscriptions.map((s) => s.toJson()).toList(),
       'selectedIndex': data.selectedIndex,
       'mixedPort': data.mixedPort,
+      'clashApiPort': data.clashApiPort,
       'singBoxPath': data.singBoxPath,
       'systemProxy': data.systemProxy,
     };
@@ -133,11 +139,14 @@ class Store {
   }
 }
 
-/// Resolve the sing-box executable: explicit setting, then next to the
-/// app executable (the release bundle ships it there), then bare name
-/// for PATH lookup.
-String resolveSingBoxPath(String configured) {
+/// Resolve the sing-box executable: explicit setting, then the
+/// managed core in the data dir, then next to the app executable
+/// (legacy bundles), then bare name for PATH lookup.
+String resolveSingBoxPath(String configured, String dataDir) {
   if (configured.isNotEmpty) return configured;
+  final sep = Platform.isWindows ? '\\' : '/';
+  final managed = '$dataDir${sep}core${sep}sing-box.exe';
+  if (File(managed).existsSync()) return managed;
   final exeDir = File(Platform.resolvedExecutable).parent.path;
   final bundled = '$exeDir\\sing-box.exe';
   if (File(bundled).existsSync()) return bundled;

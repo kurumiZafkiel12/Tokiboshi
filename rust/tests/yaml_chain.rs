@@ -8,7 +8,13 @@ use rust_lib_tokiboshi::links::parse_subscription;
 fn clash_yaml_nodes_pass_sing_box_check() {
     let sing_box = std::env::var("SING_BOX").unwrap_or_else(|_| {
         let home = std::env::var("HOME").unwrap_or_default();
-        format!("{home}/opt/sing-box/sing-box")
+        // The generated config targets the pinned 1.14 format.
+        let pinned = format!("{home}/opt/sing-box-1.14.4/sing-box");
+        if std::path::Path::new(&pinned).exists() {
+            pinned
+        } else {
+            format!("{home}/opt/sing-box/sing-box")
+        }
     });
     if !std::path::Path::new(&sing_box).exists() {
         eprintln!("sing-box binary not found at {sing_box}, skipping");

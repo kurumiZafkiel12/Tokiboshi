@@ -8,6 +8,7 @@
 
 pub mod api;
 pub mod config;
+pub mod core_download;
 pub mod links;
 pub mod process;
 mod frb_generated;

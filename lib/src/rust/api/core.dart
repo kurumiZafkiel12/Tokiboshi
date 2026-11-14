@@ -3,21 +3,35 @@
 
 // ignore_for_file: invalid_use_of_internal_member, unused_import, unnecessary_import
 
+import '../config.dart';
 import '../frb_generated.dart';
 import '../links.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
+
+// These functions are ignored because they are not marked as `pub`: `set_ensure`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `eq`, `eq`, `fmt`, `fmt`
 
 /// Validate raw sing-box config JSON. Empty result means valid.
 Future<List<String>> validateConfig({required String text}) =>
     RustLib.instance.api.crateApiCoreValidateConfig(text: text);
 
-/// Build a full sing-box config around one outbound JSON object.
+/// Build the full GUI-shell sing-box config for all nodes: selector
+/// + urltest groups, route rule template, Clash API with the
+/// zashboard UI, cache file persistence.
 Future<String> buildConfig(
-        {required String outboundJson,
+        {required List<NodeSpec> nodes,
         required int mixedPort,
-        required bool enableTun}) =>
+        required int clashApiPort,
+        required bool enableTun,
+        required String dataDir,
+        String? selectedName}) =>
     RustLib.instance.api.crateApiCoreBuildConfig(
-        outboundJson: outboundJson, mixedPort: mixedPort, enableTun: enableTun);
+        nodes: nodes,
+        mixedPort: mixedPort,
+        clashApiPort: clashApiPort,
+        enableTun: enableTun,
+        dataDir: dataDir,
+        selectedName: selectedName);
 
 /// Version of the Rust middle layer (not of sing-box).
 Future<String> bridgeVersion() =>
@@ -38,7 +52,81 @@ Future<void> stopCore() => RustLib.instance.api.crateApiCoreStopCore();
 
 Future<bool> coreRunning() => RustLib.instance.api.crateApiCoreCoreRunning();
 
+/// Supervision status of the managed core process.
+Future<CoreStatus> coreStatus() =>
+    RustLib.instance.api.crateApiCoreCoreStatus();
+
+/// Recent core log lines (bounded ring buffer, oldest first).
+Future<List<String>> coreLogs() => RustLib.instance.api.crateApiCoreCoreLogs();
+
+/// `sing-box version` first line for the binary at `binary_path`.
+Future<String> coreVersion({required String binaryPath}) =>
+    RustLib.instance.api.crateApiCoreCoreVersion(binaryPath: binaryPath);
+
+/// Path of the managed sing-box binary under `data_dir`.
+Future<String> managedCorePath({required String dataDir}) =>
+    RustLib.instance.api.crateApiCoreManagedCorePath(dataDir: dataDir);
+
+/// Kick off (in the background) downloading the pinned sing-box
+/// release into `data_dir`, unless it is already up to date. Poll
+/// `ensure_core_state` for progress.
+Future<void> startEnsureCore({required String dataDir}) =>
+    RustLib.instance.api.crateApiCoreStartEnsureCore(dataDir: dataDir);
+
+Future<EnsureState> ensureCoreState() =>
+    RustLib.instance.api.crateApiCoreEnsureCoreState();
+
 /// Parse subscription content (links, base64 blob, Clash YAML, or
 /// sing-box JSON config) into nodes plus skipped-entry notes.
 Future<ParseOutcome> parseSubscription({required String text}) =>
     RustLib.instance.api.crateApiCoreParseSubscription(text: text);
+
+class CoreStatus {
+  final bool running;
+  final int restartCount;
+  final String? lastExit;
+
+  const CoreStatus({
+    required this.running,
+    required this.restartCount,
+    this.lastExit,
+  });
+
+  @override
+  int get hashCode =>
+      running.hashCode ^ restartCount.hashCode ^ lastExit.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is CoreStatus &&
+          runtimeType == other.runtimeType &&
+          running == other.running &&
+          restartCount == other.restartCount &&
+          lastExit == other.lastExit;
+}
+
+class EnsureState {
+  /// idle | downloading | done | error
+  final String phase;
+  final String? version;
+  final String? error;
+
+  const EnsureState({
+    required this.phase,
+    this.version,
+    this.error,
+  });
+
+  @override
+  int get hashCode => phase.hashCode ^ version.hashCode ^ error.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is EnsureState &&
+          runtimeType == other.runtimeType &&
+          phase == other.phase &&
+          version == other.version &&
+          error == other.error;
+}

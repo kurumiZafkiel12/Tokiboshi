@@ -2,6 +2,7 @@
 library;
 
 import '../src/rust/api/core.dart' as rust_api;
+import '../src/rust/config.dart' as rust_config;
 import 'core_bridge.dart';
 
 class RustCoreBridge implements CoreBridge {
@@ -24,14 +25,25 @@ class RustCoreBridge implements CoreBridge {
 
   @override
   Future<String> buildConfig({
-    required String outboundJson,
+    required List<NodeSpec> nodes,
     int mixedPort = 7890,
+    int clashApiPort = 9090,
     bool enableTun = false,
+    String dataDir = '',
+    String? selectedName,
   }) {
     return rust_api.buildConfig(
-      outboundJson: outboundJson,
+      nodes: nodes
+          .map((n) => rust_config.NodeSpec(
+                name: n.name,
+                outboundJson: n.outboundJson,
+              ))
+          .toList(),
       mixedPort: mixedPort,
+      clashApiPort: clashApiPort,
       enableTun: enableTun,
+      dataDir: dataDir,
+      selectedName: selectedName,
     );
   }
 
@@ -48,4 +60,35 @@ class RustCoreBridge implements CoreBridge {
 
   @override
   Future<bool> coreRunning() => rust_api.coreRunning();
+
+  @override
+  Future<CoreStatus> coreStatus() async {
+    final s = await rust_api.coreStatus();
+    return CoreStatus(
+      running: s.running,
+      restartCount: s.restartCount,
+      lastExit: s.lastExit,
+    );
+  }
+
+  @override
+  Future<List<String>> coreLogs() => rust_api.coreLogs();
+
+  @override
+  Future<String> coreVersion(String binaryPath) =>
+      rust_api.coreVersion(binaryPath: binaryPath);
+
+  @override
+  Future<String> managedCorePath(String dataDir) =>
+      rust_api.managedCorePath(dataDir: dataDir);
+
+  @override
+  Future<void> startEnsureCore(String dataDir) =>
+      rust_api.startEnsureCore(dataDir: dataDir);
+
+  @override
+  Future<EnsureState> ensureCoreState() async {
+    final s = await rust_api.ensureCoreState();
+    return EnsureState(phase: s.phase, version: s.version, error: s.error);
+  }
 }

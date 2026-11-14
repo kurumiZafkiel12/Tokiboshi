@@ -13,20 +13,65 @@ use serde_json::{json, Value};
 pub struct CoreSettings {
     /// Port of the local mixed inbound.
     pub mixed_port: u16,
+    /// Port of the Clash API controller (127.0.0.1:<port>).
+    pub clash_api_port: u16,
     /// Whether to enable the TUN inbound (requires platform support).
     pub enable_tun: bool,
     /// Log level passed to sing-box: trace/debug/info/warn/error/fatal/panic.
     pub log_level: String,
+    /// App data directory; the cache file lives here so the selector
+    /// choice survives restarts. Empty means a relative "cache.db".
+    pub data_dir: String,
 }
 
 impl Default for CoreSettings {
     fn default() -> Self {
         Self {
             mixed_port: 7890,
+            clash_api_port: 9090,
             enable_tun: false,
             log_level: "info".to_string(),
+            data_dir: String::new(),
         }
     }
+}
+
+/// One node for the multi-node generator: display name + outbound JSON.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct NodeSpec {
+    pub name: String,
+    pub outbound_json: String,
+}
+
+/// Where the external UI (zashboard) is downloaded from by sing-box.
+pub const ZASHBOARD_DOWNLOAD_URL: &str =
+    "https://github.com/Zephyruso/zashboard/releases/latest/download/dist.zip";
+
+const RESERVED_TAGS: [&str; 7] = [
+    "proxy", "auto", "direct", "mixed-in", "tun-in", "dns-remote", "dns-local",
+];
+
+/// Deterministic, collision-free outbound tags for node names.
+/// The selector persists its choice by tag (cache_file), so the same
+/// node list must always produce the same tags.
+pub fn assign_tags(names: &[String]) -> Vec<String> {
+    let mut used: Vec<String> = RESERVED_TAGS.iter().map(|s| s.to_string()).collect();
+    let mut out = Vec::with_capacity(names.len());
+    for (i, name) in names.iter().enumerate() {
+        let base = {
+            let t = name.trim();
+            if t.is_empty() { format!("node-{}", i + 1) } else { t.to_string() }
+        };
+        let mut tag = base.clone();
+        let mut n = 2;
+        while used.contains(&tag) {
+            tag = format!("{base}-{n}");
+            n += 1;
+        }
+        used.push(tag.clone());
+        out.push(tag);
+    }
+    out
 }
 
 const LOG_LEVELS: [&str; 7] = ["trace", "debug", "info", "warn", "error", "fatal", "panic"];
@@ -69,30 +114,87 @@ pub fn validate_config(text: &str) -> Vec<String> {
     problems
 }
 
-/// Build a complete sing-box configuration around a single outbound.
-///
-/// `outbound` is one sing-box outbound object (e.g. a vless/hysteria2
-/// node). The generated config routes everything through that outbound,
-/// with a direct outbound available under the tag `direct`.
+/// Build a complete sing-box configuration around a single outbound
+/// (kept for tests and one-node callers; delegates to the multi-node
+/// generator).
 pub fn build_config(outbound: &Value, settings: &CoreSettings) -> Result<String, String> {
-    let outbound_type = outbound
-        .get("type")
-        .and_then(Value::as_str)
-        .filter(|s| !s.is_empty())
-        .ok_or_else(|| "outbound missing \"type\"".to_string())?;
+    let spec = NodeSpec {
+        name: outbound
+            .get("tag")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string(),
+        outbound_json: outbound.to_string(),
+    };
+    build_config_multi(std::slice::from_ref(&spec), settings, None)
+}
+
+/// Build a complete sing-box configuration for the GUI shell:
+///
+/// - one `mixed` inbound (plus TUN when enabled),
+/// - a `proxy` selector over an `auto` urltest group and every node,
+/// - route rules: private IPs direct, ads rejected, CN sites/IPs
+///   direct (remote rule-sets), everything else to the selector,
+/// - new-format DNS (remote through the proxy, CN via local),
+/// - `experimental.clash_api` on 127.0.0.1 with the zashboard
+///   external UI, and `experimental.cache_file` so the selector
+///   choice survives restarts.
+///
+/// `selected_name` (a node display name) becomes the selector's
+/// default when given. Pure function of its inputs.
+pub fn build_config_multi(
+    nodes: &[NodeSpec],
+    settings: &CoreSettings,
+    selected_name: Option<&str>,
+) -> Result<String, String> {
+    if nodes.is_empty() {
+        return Err("no nodes to build a config from".to_string());
+    }
     if !LOG_LEVELS.contains(&settings.log_level.as_str()) {
         return Err(format!("unknown log level: {}", settings.log_level));
     }
-    if settings.mixed_port == 0 {
-        return Err("mixed_port must not be 0".to_string());
+    if settings.mixed_port == 0 || settings.clash_api_port == 0 {
+        return Err("ports must not be 0".to_string());
     }
 
-    let mut node = outbound.clone();
-    let obj = node
-        .as_object_mut()
-        .ok_or_else(|| "outbound must be a JSON object".to_string())?;
-    obj.entry("tag".to_string())
-        .or_insert_with(|| Value::String("proxy".to_string()));
+    let names: Vec<String> = nodes.iter().map(|n| n.name.clone()).collect();
+    let tags = assign_tags(&names);
+
+    let mut outbounds: Vec<Value> = Vec::new();
+    let default_tag = selected_name
+        .and_then(|sel| names.iter().position(|n| n == sel))
+        .map(|i| tags[i].clone())
+        .unwrap_or_else(|| "auto".to_string());
+    let mut selector_members = vec![Value::String("auto".to_string())];
+    selector_members.extend(tags.iter().cloned().map(Value::String));
+    outbounds.push(json!({
+        "type": "selector",
+        "tag": "proxy",
+        "outbounds": selector_members,
+        "default": default_tag
+    }));
+    outbounds.push(json!({
+        "type": "urltest",
+        "tag": "auto",
+        "outbounds": tags.iter().cloned().map(Value::String).collect::<Vec<_>>(),
+        "url": "https://www.gstatic.com/generate_204",
+        "interval": "3m",
+        "tolerance": 50
+    }));
+    for (spec, tag) in nodes.iter().zip(tags.iter()) {
+        let mut ob: Value = serde_json::from_str(&spec.outbound_json)
+            .map_err(|e| format!("node '{}' has invalid outbound JSON: {e}", spec.name))?;
+        let obj = ob
+            .as_object_mut()
+            .ok_or_else(|| format!("node '{}' outbound must be an object", spec.name))?;
+        match obj.get("type").and_then(Value::as_str) {
+            Some(t) if !t.is_empty() => {}
+            _ => return Err(format!("node '{}' outbound missing \"type\"", spec.name)),
+        }
+        obj.insert("tag".to_string(), Value::String(tag.clone()));
+        outbounds.push(ob);
+    }
+    outbounds.push(json!({ "type": "direct", "tag": "direct" }));
 
     let mut inbounds = vec![json!({
         "type": "mixed",
@@ -111,15 +213,60 @@ pub fn build_config(outbound: &Value, settings: &CoreSettings) -> Result<String,
         }));
     }
 
-    let _ = outbound_type;
+    let cache_path = if settings.data_dir.is_empty() {
+        "cache.db".to_string()
+    } else {
+        format!("{}/cache.db", settings.data_dir.trim_end_matches(['/', '\\']))
+    };
+
     let config = json!({
         "log": { "level": settings.log_level, "timestamp": true },
+        "dns": {
+            "servers": [
+                { "type": "https", "tag": "dns-remote", "server": "8.8.8.8", "detour": "proxy" },
+                { "type": "local", "tag": "dns-local" }
+            ],
+            "rules": [
+                { "rule_set": ["geosite-cn"], "action": "route", "server": "dns-local" }
+            ],
+            "final": "dns-remote"
+        },
         "inbounds": inbounds,
-        "outbounds": [
-            node,
-            { "type": "direct", "tag": "direct" }
+        "outbounds": outbounds,
+        "http_clients": [
+            { "tag": "rules-hc", "detour": "proxy" }
         ],
-        "route": { "final": "proxy", "auto_detect_interface": true }
+        "route": {
+            "rules": [
+                { "ip_is_private": true, "outbound": "direct" },
+                { "rule_set": ["geosite-category-ads-all"], "action": "reject" },
+                { "rule_set": ["geosite-cn", "geoip-cn"], "outbound": "direct" }
+            ],
+            "rule_set": [
+                { "type": "remote", "tag": "geosite-cn", "format": "binary",
+                  "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-cn.srs",
+                  "http_client": "rules-hc" },
+                { "type": "remote", "tag": "geoip-cn", "format": "binary",
+                  "url": "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-cn.srs",
+                  "http_client": "rules-hc" },
+                { "type": "remote", "tag": "geosite-category-ads-all", "format": "binary",
+                  "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-category-ads-all.srs",
+                  "http_client": "rules-hc" }
+            ],
+            "final": "proxy",
+            "auto_detect_interface": true,
+            "default_domain_resolver": "dns-local"
+        },
+        "experimental": {
+            "cache_file": { "enabled": true, "path": cache_path },
+            "clash_api": {
+                "external_controller": format!("127.0.0.1:{}", settings.clash_api_port),
+                "external_ui": "ui",
+                "external_ui_download_url": ZASHBOARD_DOWNLOAD_URL,
+                "external_ui_download_detour": "proxy",
+                "default_mode": "Rule"
+            }
+        }
     });
     serde_json::to_string_pretty(&config).map_err(|e| e.to_string())
 }
@@ -151,10 +298,91 @@ mod tests {
         let text = build_config(&outbound, &CoreSettings::default()).unwrap();
         assert!(validate_config(&text).is_empty());
         let v: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(v["outbounds"][0]["type"], "selector");
         assert_eq!(v["outbounds"][0]["tag"], "proxy");
-        assert_eq!(v["outbounds"][1]["type"], "direct");
+        let last = v["outbounds"].as_array().unwrap().last().unwrap().clone();
+        assert_eq!(last["type"], "direct");
         assert_eq!(v["inbounds"][0]["listen_port"], 7890);
         assert_eq!(v["route"]["final"], "proxy");
+    }
+
+    fn spec(name: &str, server: &str) -> NodeSpec {
+        NodeSpec {
+            name: name.to_string(),
+            outbound_json: json!({
+                "type": "hysteria2", "server": server, "server_port": 443,
+                "password": "pw", "tls": {"enabled": true}
+            })
+            .to_string(),
+        }
+    }
+
+    #[test]
+    fn multi_config_has_groups_rules_and_clash_api() {
+        let nodes = vec![spec("节点A", "a.example.com"), spec("节点B", "b.example.com")];
+        let settings = CoreSettings {
+            data_dir: "/data/app".to_string(),
+            ..CoreSettings::default()
+        };
+        let text = build_config_multi(&nodes, &settings, Some("节点B")).unwrap();
+        let v: Value = serde_json::from_str(&text).unwrap();
+        // Groups: selector over [auto, A, B], default honours selection.
+        let selector = &v["outbounds"][0];
+        assert_eq!(selector["type"], "selector");
+        assert_eq!(selector["outbounds"], json!(["auto", "节点A", "节点B"]));
+        assert_eq!(selector["default"], "节点B");
+        assert_eq!(v["outbounds"][1]["type"], "urltest");
+        assert_eq!(v["outbounds"][2]["tag"], "节点A");
+        // Route template: private direct, ads reject, CN direct.
+        let rules = v["route"]["rules"].as_array().unwrap();
+        assert_eq!(rules[0]["ip_is_private"], true);
+        assert_eq!(rules[1]["action"], "reject");
+        assert_eq!(rules[2]["outbound"], "direct");
+        assert_eq!(v["route"]["rule_set"].as_array().unwrap().len(), 3);
+        // Clash API + zashboard + cache file.
+        let api = &v["experimental"]["clash_api"];
+        assert_eq!(api["external_controller"], "127.0.0.1:9090");
+        assert_eq!(api["external_ui_download_url"], ZASHBOARD_DOWNLOAD_URL);
+        assert_eq!(v["experimental"]["cache_file"]["enabled"], true);
+        assert_eq!(v["experimental"]["cache_file"]["path"], "/data/app/cache.db");
+        // DNS: new format, remote detours through the selector.
+        assert_eq!(v["dns"]["servers"][0]["type"], "https");
+        assert_eq!(v["dns"]["servers"][0]["detour"], "proxy");
+        assert_eq!(v["dns"]["final"], "dns-remote");
+    }
+
+    #[test]
+    fn multi_config_dedupes_tags_and_avoids_reserved() {
+        let nodes = vec![
+            spec("proxy", "a.example.com"),
+            spec("dup", "b.example.com"),
+            spec("dup", "c.example.com"),
+            spec("", "d.example.com"),
+        ];
+        let text = build_config_multi(&nodes, &CoreSettings::default(), None).unwrap();
+        let v: Value = serde_json::from_str(&text).unwrap();
+        let selector = &v["outbounds"][0];
+        assert_eq!(
+            selector["outbounds"],
+            json!(["auto", "proxy-2", "dup", "dup-2", "node-4"])
+        );
+        assert_eq!(selector["default"], "auto");
+    }
+
+    #[test]
+    fn multi_config_rejects_empty_and_bad_nodes() {
+        assert!(build_config_multi(&[], &CoreSettings::default(), None).is_err());
+        let bad = vec![NodeSpec { name: "x".into(), outbound_json: "{}".into() }];
+        assert!(build_config_multi(&bad, &CoreSettings::default(), None).is_err());
+        let bad2 = vec![NodeSpec { name: "x".into(), outbound_json: "nope".into() }];
+        assert!(build_config_multi(&bad2, &CoreSettings::default(), None).is_err());
+    }
+
+    #[test]
+    fn tags_are_deterministic() {
+        let names = vec!["a".to_string(), "a".to_string(), "auto".to_string()];
+        assert_eq!(assign_tags(&names), vec!["a", "a-2", "auto-2"]);
+        assert_eq!(assign_tags(&names), assign_tags(&names));
     }
 
     #[test]

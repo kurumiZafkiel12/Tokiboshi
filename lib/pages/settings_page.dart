@@ -5,21 +5,27 @@ class SettingsPage extends StatefulWidget {
   const SettingsPage({
     super.key,
     required this.mixedPort,
+    required this.clashApiPort,
     required this.singBoxPath,
     required this.systemProxy,
     required this.running,
     required this.dataFilePath,
     required this.onSave,
     required this.onSystemProxyChanged,
+    this.coreVersion,
+    this.onEnsureCore,
   });
 
   final int mixedPort;
+  final int clashApiPort;
   final String singBoxPath;
   final bool systemProxy;
   final bool running;
   final String dataFilePath;
-  final void Function(int port, String singBoxPath) onSave;
+  final void Function(int port, int clashApiPort, String singBoxPath) onSave;
   final ValueChanged<bool> onSystemProxyChanged;
+  final String? coreVersion;
+  final VoidCallback? onEnsureCore;
 
   @override
   State<SettingsPage> createState() => _SettingsPageState();
@@ -27,24 +33,32 @@ class SettingsPage extends StatefulWidget {
 
 class _SettingsPageState extends State<SettingsPage> {
   late final _portController = TextEditingController(text: '${widget.mixedPort}');
+  late final _clashPortController =
+      TextEditingController(text: '${widget.clashApiPort}');
   late final _pathController = TextEditingController(text: widget.singBoxPath);
   String? _error;
 
   @override
   void dispose() {
     _portController.dispose();
+    _clashPortController.dispose();
     _pathController.dispose();
     super.dispose();
   }
 
   void _save() {
     final port = int.tryParse(_portController.text.trim()) ?? 0;
+    final clashPort = int.tryParse(_clashPortController.text.trim()) ?? 0;
     if (port <= 0 || port > 65535) {
       setState(() => _error = '本地端口无效：${_portController.text}');
       return;
     }
+    if (clashPort <= 0 || clashPort > 65535) {
+      setState(() => _error = 'Clash API 端口无效：${_clashPortController.text}');
+      return;
+    }
     setState(() => _error = null);
-    widget.onSave(port, _pathController.text.trim());
+    widget.onSave(port, clashPort, _pathController.text.trim());
   }
 
   @override
@@ -74,10 +88,21 @@ class _SettingsPageState extends State<SettingsPage> {
                   ),
                   const SizedBox(height: 12),
                   TextField(
+                    controller: _clashPortController,
+                    enabled: !widget.running,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                      labelText: 'Clash API 端口（面板与控制通道，默认 9090）',
+                      border: OutlineInputBorder(),
+                      isDense: true,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
                     controller: _pathController,
                     enabled: !widget.running,
                     decoration: const InputDecoration(
-                      labelText: 'sing-box 路径（留空 = 程序目录/PATH）',
+                      labelText: 'sing-box 路径（留空 = 用托管内核，自动下载）',
                       border: OutlineInputBorder(),
                       isDense: true,
                     ),
@@ -93,6 +118,25 @@ class _SettingsPageState extends State<SettingsPage> {
                       onPressed: widget.running ? null : _save,
                       child: const Text('保存设置'),
                     ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Row(
+                children: [
+                  const Icon(Icons.memory, size: 20),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(widget.coreVersion ?? 'sing-box 内核未下载（首次启动时自动下载）'),
+                  ),
+                  OutlinedButton(
+                    onPressed: widget.onEnsureCore,
+                    child: const Text('下载/更新内核'),
                   ),
                 ],
               ),
@@ -116,8 +160,8 @@ class _SettingsPageState extends State<SettingsPage> {
                 children: [
                   const Text('关于', style: TextStyle(fontWeight: FontWeight.w600)),
                   const SizedBox(height: 8),
-                  const Text('Tokiboshi v0.2.2 · Flutter 界面 + Rust 中间层 + sing-box 内核'),
-                  const Text('内置 sing-box 1.11.15（Release 包随附）'),
+                  const Text('Tokiboshi v0.3.0 · Flutter 壳 + Rust 中间层 + sing-box 内核'),
+                  const Text('面板为 zashboard（由 sing-box 托管于 127.0.0.1:9090/ui）；内核 sing-box 1.14.4 按需下载'),
                   Text('数据文件：${widget.dataFilePath}'),
                 ],
               ),

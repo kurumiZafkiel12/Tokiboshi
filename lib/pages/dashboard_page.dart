@@ -17,6 +17,12 @@ class DashboardPage extends StatelessWidget {
     required this.selectedMeasured,
     required this.onToggle,
     required this.onMeasureSelected,
+    this.coreVersion,
+    this.restartCount = 0,
+    this.lastExit,
+    this.clashMode,
+    this.onRestart,
+    this.onOpenPanel,
   });
 
   final bool running;
@@ -30,6 +36,12 @@ class DashboardPage extends StatelessWidget {
   final bool selectedMeasured;
   final VoidCallback onToggle;
   final VoidCallback onMeasureSelected;
+  final String? coreVersion;
+  final int restartCount;
+  final String? lastExit;
+  final String? clashMode;
+  final VoidCallback? onRestart;
+  final VoidCallback? onOpenPanel;
 
   @override
   Widget build(BuildContext context) {
@@ -82,17 +94,62 @@ class DashboardPage extends StatelessWidget {
                               label: Text(systemProxy ? '系统代理 开' : '系统代理 关'),
                               visualDensity: VisualDensity.compact,
                             ),
+                            Chip(
+                              avatar: const Icon(Icons.memory, size: 16),
+                              label: Text(coreVersion ?? '内核未下载'),
+                              visualDensity: VisualDensity.compact,
+                            ),
+                            if (clashMode != null)
+                              Chip(
+                                avatar: const Icon(Icons.route, size: 16),
+                                label: Text('模式 $clashMode'),
+                                visualDensity: VisualDensity.compact,
+                              ),
+                            if (restartCount > 0)
+                              Chip(
+                                avatar: const Icon(Icons.restart_alt, size: 16),
+                                label: Text('已自动重启 $restartCount 次'),
+                                visualDensity: VisualDensity.compact,
+                              ),
                           ],
                         ),
+                        if (lastExit != null) ...[
+                          const SizedBox(height: 6),
+                          Text(
+                            '上次退出：$lastExit',
+                            style: TextStyle(color: scheme.error),
+                          ),
+                        ],
                       ],
                     ),
                   ),
-                  FilledButton(
-                    onPressed: busy ? null : onToggle,
-                    style: FilledButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 16),
-                    ),
-                    child: Text(running ? '停止' : '启动', style: const TextStyle(fontSize: 16)),
+                  Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      FilledButton(
+                        onPressed: busy ? null : onToggle,
+                        style: FilledButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 16),
+                        ),
+                        child: Text(running ? '停止' : '启动', style: const TextStyle(fontSize: 16)),
+                      ),
+                      if (running) ...[
+                        const SizedBox(height: 8),
+                        Wrap(
+                          spacing: 8,
+                          children: [
+                            OutlinedButton(
+                              onPressed: busy ? null : onRestart,
+                              child: const Text('重启'),
+                            ),
+                            OutlinedButton(
+                              onPressed: onOpenPanel,
+                              child: const Text('打开面板'),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ],
                   ),
                 ],
               ),

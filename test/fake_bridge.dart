@@ -31,14 +31,18 @@ class FakeBridge implements CoreBridge {
 
   @override
   Future<String> buildConfig({
-    required String outboundJson,
+    required List<NodeSpec> nodes,
     int mixedPort = 7890,
+    int clashApiPort = 9090,
     bool enableTun = false,
+    String dataDir = '',
+    String? selectedName,
   }) async {
-    if (outboundJson.isEmpty) {
-      throw const FormatException('outbound missing "type"');
+    if (nodes.isEmpty) {
+      throw const FormatException('no nodes to build a config from');
     }
-    lastConfig = '{"outbounds":[$outboundJson],"listen_port":$mixedPort}';
+    lastConfig = '{"outbounds":[${nodes.map((n) => n.outboundJson).join(',')}]'
+        ',"listen_port":$mixedPort,"clash_api_port":$clashApiPort}';
     return lastConfig!;
   }
 
@@ -58,4 +62,27 @@ class FakeBridge implements CoreBridge {
 
   @override
   Future<bool> coreRunning() async => running;
+
+  @override
+  Future<CoreStatus> coreStatus() async =>
+      CoreStatus(running: running, restartCount: 0);
+
+  @override
+  Future<List<String>> coreLogs() async =>
+      running ? const ['fake-core-started'] : const [];
+
+  @override
+  Future<String> coreVersion(String binaryPath) async =>
+      'sing-box version 1.14.4-fake';
+
+  @override
+  Future<String> managedCorePath(String dataDir) async =>
+      '$dataDir/core/sing-box.exe';
+
+  @override
+  Future<void> startEnsureCore(String dataDir) async {}
+
+  @override
+  Future<EnsureState> ensureCoreState() async =>
+      const EnsureState(phase: 'done', version: 'sing-box version 1.14.4-fake');
 }

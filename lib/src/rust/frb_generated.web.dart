@@ -7,6 +7,7 @@
 // ignore_for_file: argument_type_not_assignable
 
 import 'api/core.dart';
+import 'config.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'frb_generated.dart';
@@ -28,10 +29,19 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   bool dco_decode_bool(dynamic raw);
 
   @protected
+  CoreStatus dco_decode_core_status(dynamic raw);
+
+  @protected
+  EnsureState dco_decode_ensure_state(dynamic raw);
+
+  @protected
   List<String> dco_decode_list_String(dynamic raw);
 
   @protected
   List<NodeInfo> dco_decode_list_node_info(dynamic raw);
+
+  @protected
+  List<NodeSpec> dco_decode_list_node_spec(dynamic raw);
 
   @protected
   Uint8List dco_decode_list_prim_u_8_strict(dynamic raw);
@@ -40,10 +50,19 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   NodeInfo dco_decode_node_info(dynamic raw);
 
   @protected
+  NodeSpec dco_decode_node_spec(dynamic raw);
+
+  @protected
+  String? dco_decode_opt_String(dynamic raw);
+
+  @protected
   ParseOutcome dco_decode_parse_outcome(dynamic raw);
 
   @protected
   int dco_decode_u_16(dynamic raw);
+
+  @protected
+  int dco_decode_u_32(dynamic raw);
 
   @protected
   int dco_decode_u_8(dynamic raw);
@@ -58,10 +77,19 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   bool sse_decode_bool(SseDeserializer deserializer);
 
   @protected
+  CoreStatus sse_decode_core_status(SseDeserializer deserializer);
+
+  @protected
+  EnsureState sse_decode_ensure_state(SseDeserializer deserializer);
+
+  @protected
   List<String> sse_decode_list_String(SseDeserializer deserializer);
 
   @protected
   List<NodeInfo> sse_decode_list_node_info(SseDeserializer deserializer);
+
+  @protected
+  List<NodeSpec> sse_decode_list_node_spec(SseDeserializer deserializer);
 
   @protected
   Uint8List sse_decode_list_prim_u_8_strict(SseDeserializer deserializer);
@@ -70,10 +98,19 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   NodeInfo sse_decode_node_info(SseDeserializer deserializer);
 
   @protected
+  NodeSpec sse_decode_node_spec(SseDeserializer deserializer);
+
+  @protected
+  String? sse_decode_opt_String(SseDeserializer deserializer);
+
+  @protected
   ParseOutcome sse_decode_parse_outcome(SseDeserializer deserializer);
 
   @protected
   int sse_decode_u_16(SseDeserializer deserializer);
+
+  @protected
+  int sse_decode_u_32(SseDeserializer deserializer);
 
   @protected
   int sse_decode_u_8(SseDeserializer deserializer);
@@ -91,10 +128,19 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_bool(bool self, SseSerializer serializer);
 
   @protected
+  void sse_encode_core_status(CoreStatus self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_ensure_state(EnsureState self, SseSerializer serializer);
+
+  @protected
   void sse_encode_list_String(List<String> self, SseSerializer serializer);
 
   @protected
   void sse_encode_list_node_info(List<NodeInfo> self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_list_node_spec(List<NodeSpec> self, SseSerializer serializer);
 
   @protected
   void sse_encode_list_prim_u_8_strict(
@@ -104,10 +150,19 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_node_info(NodeInfo self, SseSerializer serializer);
 
   @protected
+  void sse_encode_node_spec(NodeSpec self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_opt_String(String? self, SseSerializer serializer);
+
+  @protected
   void sse_encode_parse_outcome(ParseOutcome self, SseSerializer serializer);
 
   @protected
   void sse_encode_u_16(int self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_u_32(int self, SseSerializer serializer);
 
   @protected
   void sse_encode_u_8(int self, SseSerializer serializer);
