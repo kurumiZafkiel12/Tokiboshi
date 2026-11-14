@@ -5,19 +5,43 @@
 /// Tests substitute a fake implementation of this interface.
 library;
 
+import 'dart:convert';
+
 class NodeInfo {
-  const NodeInfo({required this.name, required this.outboundJson});
+  const NodeInfo({required this.name, required this.outboundJson, this.source = ''});
 
   final String name;
 
   /// A single sing-box outbound as JSON text.
   final String outboundJson;
 
-  Map<String, dynamic> toJson() => {'name': name, 'outboundJson': outboundJson};
+  /// '' for manually imported nodes, otherwise the owning
+  /// subscription's id.
+  final String source;
+
+  Map<String, dynamic> get _outbound {
+    try {
+      final v = jsonDecode(outboundJson);
+      return v is Map<String, dynamic> ? v : const {};
+    } catch (_) {
+      return const {};
+    }
+  }
+
+  String get protocol => (_outbound['type'] as String?) ?? 'unknown';
+  String get server => (_outbound['server'] as String?) ?? '';
+  int get serverPort => (_outbound['server_port'] as num?)?.toInt() ?? 0;
+
+  NodeInfo withSource(String source) =>
+      NodeInfo(name: name, outboundJson: outboundJson, source: source);
+
+  Map<String, dynamic> toJson() =>
+      {'name': name, 'outboundJson': outboundJson, 'source': source};
 
   factory NodeInfo.fromJson(Map<String, dynamic> json) => NodeInfo(
         name: json['name'] as String,
         outboundJson: json['outboundJson'] as String,
+        source: (json['source'] as String?) ?? '',
       );
 }
 

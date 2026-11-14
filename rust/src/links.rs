@@ -281,12 +281,235 @@ pub fn parse_share_link(link: &str) -> Result<NodeInfo, String> {
     Err("unsupported link scheme (vless/vmess/trojan/hysteria2/ss)".to_string())
 }
 
+fn yaml_to_json(v: &serde_yaml::Value) -> Value {
+    match v {
+        serde_yaml::Value::Null => Value::Null,
+        serde_yaml::Value::Bool(b) => Value::Bool(*b),
+        serde_yaml::Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                Value::from(i)
+            } else if let Some(u) = n.as_u64() {
+                Value::from(u)
+            } else if let Some(f) = n.as_f64() {
+                serde_json::Number::from_f64(f).map(Value::Number).unwrap_or(Value::Null)
+            } else {
+                Value::Null
+            }
+        }
+        serde_yaml::Value::String(s) => Value::String(s.clone()),
+        serde_yaml::Value::Sequence(seq) => Value::Array(seq.iter().map(yaml_to_json).collect()),
+        serde_yaml::Value::Mapping(map) => {
+            let mut out = Map::new();
+            for (k, val) in map {
+                if let serde_yaml::Value::String(key) = k {
+                    out.insert(key.clone(), yaml_to_json(val));
+                }
+            }
+            Value::Object(out)
+        }
+        serde_yaml::Value::Tagged(tagged) => yaml_to_json(&tagged.value),
+    }
+}
+
+fn cs<'a>(m: &'a Map<String, Value>, key: &str) -> Option<&'a str> {
+    m.get(key).and_then(Value::as_str).filter(|s| !s.is_empty())
+}
+
+fn cbool(m: &Map<String, Value>, key: &str) -> bool {
+    m.get(key).and_then(Value::as_bool).unwrap_or(false)
+}
+
+/// TLS object from Clash-style fields (servername/sni,
+/// skip-cert-verify, alpn, reality-opts, client-fingerprint).
+fn clash_tls(m: &Map<String, Value>) -> Map<String, Value> {
+    let mut tls = Map::new();
+    tls.insert("enabled".into(), Value::Bool(true));
+    if let Some(sni) = cs(m, "servername").or_else(|| cs(m, "sni")) {
+        tls.insert("server_name".into(), Value::String(sni.to_string()));
+    }
+    if cbool(m, "skip-cert-verify") {
+        tls.insert("insecure".into(), Value::Bool(true));
+    }
+    if let Some(alpn) = m.get("alpn").and_then(Value::as_array) {
+        tls.insert("alpn".into(), Value::Array(alpn.clone()));
+    }
+    if let Some(reality) = m.get("reality-opts").and_then(Value::as_object) {
+        let mut r = Map::new();
+        r.insert("enabled".into(), Value::Bool(true));
+        if let Some(pk) = cs(reality, "public-key") {
+            r.insert("public_key".into(), Value::String(pk.to_string()));
+        }
+        if let Some(sid) = cs(reality, "short-id") {
+            r.insert("short_id".into(), Value::String(sid.to_string()));
+        }
+        tls.insert("reality".into(), Value::Object(r));
+        tls.insert(
+            "utls".into(),
+            json!({"enabled": true, "fingerprint": cs(m, "client-fingerprint").unwrap_or("chrome")}),
+        );
+    }
+    tls
+}
+
+fn clash_transport(m: &Map<String, Value>) -> Option<Value> {
+    match cs(m, "network")? {
+        "ws" => {
+            let mut t = Map::new();
+            t.insert("type".into(), Value::String("ws".into()));
+            if let Some(opts) = m.get("ws-opts").and_then(Value::as_object) {
+                if let Some(path) = cs(opts, "path") {
+                    t.insert("path".into(), Value::String(path.to_string()));
+                }
+                if let Some(host) = opts
+                    .get("headers")
+                    .and_then(Value::as_object)
+                    .and_then(|h| cs(h, "Host"))
+                {
+                    let mut headers = Map::new();
+                    headers.insert("Host".into(), Value::String(host.to_string()));
+                    t.insert("headers".into(), Value::Object(headers));
+                }
+            }
+            Some(Value::Object(t))
+        }
+        "grpc" => {
+            let mut t = Map::new();
+            t.insert("type".into(), Value::String("grpc".into()));
+            if let Some(svc) = m
+                .get("grpc-opts")
+                .and_then(Value::as_object)
+                .and_then(|o| cs(o, "grpc-service-name"))
+            {
+                t.insert("service_name".into(), Value::String(svc.to_string()));
+            }
+            Some(Value::Object(t))
+        }
+        _ => None,
+    }
+}
+
+/// Convert one Clash proxy mapping into a sing-box outbound.
+fn clash_proxy_to_outbound(m: &Map<String, Value>) -> Option<Value> {
+    let typ = cs(m, "type")?;
+    let server = cs(m, "server")?;
+    let port = m.get("port").and_then(Value::as_u64)?;
+    let mut ob = Map::new();
+    ob.insert("server".into(), Value::String(server.to_string()));
+    ob.insert("server_port".into(), Value::from(port));
+    match typ {
+        "ss" => {
+            ob.insert("type".into(), "shadowsocks".into());
+            ob.insert("method".into(), Value::String(cs(m, "cipher")?.to_string()));
+            ob.insert("password".into(), Value::String(cs(m, "password")?.to_string()));
+            if cs(m, "plugin") == Some("obfs") {
+                let opts = m.get("plugin-opts").and_then(Value::as_object);
+                let mode = opts.and_then(|o| cs(o, "mode")).unwrap_or("http");
+                let host = opts.and_then(|o| cs(o, "host")).unwrap_or("");
+                ob.insert("plugin".into(), Value::String("obfs-local".into()));
+                ob.insert(
+                    "plugin_opts".into(),
+                    Value::String(format!("obfs={mode};obfs-host={host}")),
+                );
+            }
+        }
+        "vmess" => {
+            ob.insert("type".into(), "vmess".into());
+            ob.insert("uuid".into(), Value::String(cs(m, "uuid")?.to_string()));
+            ob.insert(
+                "security".into(),
+                Value::String(cs(m, "cipher").unwrap_or("auto").to_string()),
+            );
+            ob.insert(
+                "alter_id".into(),
+                Value::from(m.get("alterId").and_then(Value::as_i64).unwrap_or(0)),
+            );
+            if cbool(m, "tls") {
+                ob.insert("tls".into(), Value::Object(clash_tls(m)));
+            }
+            if let Some(t) = clash_transport(m) {
+                ob.insert("transport".into(), t);
+            }
+        }
+        "vless" => {
+            ob.insert("type".into(), "vless".into());
+            ob.insert("uuid".into(), Value::String(cs(m, "uuid")?.to_string()));
+            if let Some(flow) = cs(m, "flow") {
+                ob.insert("flow".into(), Value::String(flow.to_string()));
+            }
+            if cbool(m, "tls") {
+                ob.insert("tls".into(), Value::Object(clash_tls(m)));
+            }
+            if let Some(t) = clash_transport(m) {
+                ob.insert("transport".into(), t);
+            }
+        }
+        "trojan" => {
+            ob.insert("type".into(), "trojan".into());
+            ob.insert("password".into(), Value::String(cs(m, "password")?.to_string()));
+            ob.insert("tls".into(), Value::Object(clash_tls(m)));
+            if let Some(t) = clash_transport(m) {
+                ob.insert("transport".into(), t);
+            }
+        }
+        "hysteria2" => {
+            ob.insert("type".into(), "hysteria2".into());
+            let password = cs(m, "password").or_else(|| cs(m, "auth"))?;
+            ob.insert("password".into(), Value::String(password.to_string()));
+            ob.insert("tls".into(), Value::Object(clash_tls(m)));
+            if let Some(obfs_type) = cs(m, "obfs") {
+                let mut obfs = Map::new();
+                obfs.insert("type".into(), Value::String(obfs_type.to_string()));
+                if let Some(pw) = cs(m, "obfs-password") {
+                    obfs.insert("password".into(), Value::String(pw.to_string()));
+                }
+                ob.insert("obfs".into(), Value::Object(obfs));
+            }
+        }
+        _ => return None,
+    }
+    Some(Value::Object(ob))
+}
+
+/// Parse a Clash YAML subscription (its `proxies:` list becomes nodes).
+pub fn parse_clash_yaml(text: &str) -> Result<Vec<NodeInfo>, String> {
+    let doc: serde_yaml::Value =
+        serde_yaml::from_str(text).map_err(|e| format!("invalid YAML: {e}"))?;
+    let doc = yaml_to_json(&doc);
+    let proxies = doc
+        .get("proxies")
+        .and_then(Value::as_array)
+        .ok_or("YAML has no proxies list")?;
+    let nodes: Vec<NodeInfo> = proxies
+        .iter()
+        .filter_map(Value::as_object)
+        .filter_map(|m| {
+            let outbound = clash_proxy_to_outbound(m)?;
+            let name = cs(m, "name")
+                .map(str::to_string)
+                .unwrap_or_else(|| "clash-node".to_string());
+            Some(NodeInfo { name, outbound_json: outbound.to_string() })
+        })
+        .collect();
+    if nodes.is_empty() {
+        Err("no usable proxies in Clash YAML".to_string())
+    } else {
+        Ok(nodes)
+    }
+}
+
 /// Parse subscription content: newline separated links, one base64 blob
-/// of links, or a sing-box JSON config (its outbounds become nodes).
+/// of links, a sing-box JSON config (its outbounds become nodes), or a
+/// Clash YAML document (its proxies become nodes).
 /// Invalid lines are skipped; an error is returned only when nothing
 /// usable was found.
 pub fn parse_subscription(text: &str) -> Result<Vec<NodeInfo>, String> {
     let trimmed = text.trim();
+    if trimmed.lines().any(|l| {
+        let t = l.trim_start();
+        t.starts_with("proxies:") || t.starts_with("proxies :")
+    }) {
+        return parse_clash_yaml(trimmed);
+    }
     if trimmed.starts_with('{') {
         let v: Value = serde_json::from_str(trimmed).map_err(|e| format!("invalid JSON: {e}"))?;
         let outbounds = v
@@ -409,6 +632,54 @@ mod tests {
         let nodes = parse_subscription(text).unwrap();
         assert_eq!(nodes.len(), 1);
         assert_eq!(nodes[0].name, "n1");
+    }
+
+    #[test]
+    fn parses_hy2_alias() {
+        let n = parse_share_link("hy2://pw@hy2.example.com:443?sni=hy2.example.com#A2").unwrap();
+        let ob = out(&n);
+        assert_eq!(ob["type"], "hysteria2");
+        assert_eq!(n.name, "A2");
+    }
+
+    #[test]
+    fn parses_clash_yaml() {
+        let yaml = r#"
+proxies:
+  - name: "YAML-SS"
+    type: ss
+    server: ss.example.com
+    port: 8388
+    cipher: aes-256-gcm
+    password: pw1
+  - name: "YAML-VLESS"
+    type: vless
+    server: vl.example.com
+    port: 443
+    uuid: 11111111-2222-3333-4444-555555555555
+    tls: true
+    servername: vl.example.com
+    reality-opts:
+      public-key: PUBKEY
+      short-id: ab12
+  - name: "YAML-HY2"
+    type: hysteria2
+    server: hy.example.com
+    port: 443
+    password: pw3
+    sni: hy.example.com
+    skip-cert-verify: true
+  - name: "YAML-TUIC"
+    type: tuic
+    server: tu.example.com
+    port: 443
+"#;
+        let nodes = parse_subscription(yaml).unwrap();
+        assert_eq!(nodes.len(), 3);
+        assert_eq!(nodes[0].name, "YAML-SS");
+        assert_eq!(out(&nodes[0])["method"], "aes-256-gcm");
+        assert_eq!(out(&nodes[1])["tls"]["reality"]["public_key"], "PUBKEY");
+        assert_eq!(out(&nodes[2])["tls"]["insecure"], true);
     }
 
     #[test]

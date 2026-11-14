@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tokiboshi/main.dart';
 import 'package:tokiboshi/services/store.dart';
+import 'package:tokiboshi/services/subscription_fetcher.dart';
 import 'package:tokiboshi/services/system_proxy.dart';
 
 import 'fake_bridge.dart';
@@ -35,31 +36,68 @@ class MemoryStore extends Store {
 }
 
 void main() {
-  testWidgets('import, select and start/stop flow', (tester) async {
+  testWidgets('import, subscribe and start/stop flow', (tester) async {
+    tester.view.physicalSize = const Size(1280, 800);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
     final store = MemoryStore();
     final bridge = FakeBridge();
     final proxy = NoopSystemProxy();
+    final fetcher = FakeFetcher({
+      'https://sub.example.com/abc':
+          'ss://aes-256-gcm:pw@127.0.0.1:8388#a\n'
+              'ss://aes-256-gcm:pw@127.0.0.1:8389#b\n',
+    });
 
     await tester.pumpWidget(
-      TokiboshiApp(bridge: bridge, store: store, systemProxy: proxy),
+      TokiboshiApp(
+        bridge: bridge,
+        store: store,
+        systemProxy: proxy,
+        fetcher: fetcher,
+      ),
     );
     await tester.pumpAndSettle();
     expect(find.text('sing-box 已停止'), findsOneWidget);
-    expect(find.text('还没有节点，点右上角图标导入'), findsOneWidget);
+    expect(find.text('未选择节点'), findsOneWidget);
 
-    // Import one ss link through the dialog.
-    await tester.tap(find.byTooltip('导入节点 / 订阅'));
+    // Import one ss link from the nodes page.
+    await tester.tap(find.text('节点').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('导入'));
     await tester.pumpAndSettle();
     await tester.enterText(
       find.byType(TextField).last,
       'ss://aes-256-gcm:pw@127.0.0.1:8388#x',
     );
-    await tester.tap(find.text('导入'));
+    await tester.tap(find.text('导入').last);
     await tester.pumpAndSettle();
-    expect(find.text('FakeSS'), findsWidgets); // list tile + status subtitle
+    expect(find.text('FakeSS'), findsOneWidget);
     expect(store.data.nodes, hasLength(1));
+    expect(store.data.nodes.single.source, '');
 
-    // Start and stop.
+    // Add a subscription by URL from the subscriptions page.
+    await tester.tap(find.text('订阅').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('添加订阅'));
+    await tester.pumpAndSettle();
+    final dialogFields = find.descendant(
+      of: find.byType(AlertDialog),
+      matching: find.byType(TextField),
+    );
+    await tester.enterText(dialogFields.first, 'TestSub');
+    await tester.enterText(dialogFields.last, 'https://sub.example.com/abc');
+    await tester.tap(find.text('添加'));
+    await tester.pumpAndSettle();
+    expect(fetcher.requested, ['https://sub.example.com/abc']);
+    expect(find.text('TestSub'), findsOneWidget);
+    expect(store.data.subscriptions, hasLength(1));
+    expect(store.data.nodes, hasLength(3));
+    expect(store.data.nodes.where((n) => n.source.isNotEmpty), hasLength(2));
+
+    // Back on the dashboard: start and stop.
+    await tester.tap(find.text('仪表盘').first);
+    await tester.pumpAndSettle();
     await tester.tap(find.text('启动'));
     await tester.pumpAndSettle();
     expect(find.text('sing-box 运行中'), findsOneWidget);
@@ -72,5 +110,41 @@ void main() {
     expect(find.text('sing-box 已停止'), findsOneWidget);
     expect(bridge.running, isFalse);
     expect(proxy.calls.last, (enable: false, port: 7890));
+  });
+
+  testWidgets('pasting a subscription URL in import adds a subscription',
+      (tester) async {
+    tester.view.physicalSize = const Size(1280, 800);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    final store = MemoryStore();
+    final fetcher = FakeFetcher({
+      'https://sub.example.com/abc':
+          'ss://aes-256-gcm:pw@127.0.0.1:8388#a\n',
+    });
+    await tester.pumpWidget(
+      TokiboshiApp(
+        bridge: FakeBridge(),
+        store: store,
+        systemProxy: NoopSystemProxy(),
+        fetcher: fetcher,
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('节点').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('导入'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byType(TextField).last,
+      'https://sub.example.com/abc',
+    );
+    await tester.tap(find.text('导入').last);
+    await tester.pumpAndSettle();
+    expect(fetcher.requested, ['https://sub.example.com/abc']);
+    expect(store.data.subscriptions, hasLength(1));
+    expect(store.data.subscriptions.single.name, 'sub.example.com');
+    expect(store.data.nodes, hasLength(1));
+    expect(store.data.nodes.single.source, store.data.subscriptions.single.id);
   });
 }

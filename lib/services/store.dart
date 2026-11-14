@@ -1,7 +1,9 @@
-/// Tiny JSON file persistence for the Windows app (v0.1).
+/// Tiny JSON file persistence for the Windows app.
 ///
 /// Data lives in `%APPDATA%\Tokiboshi\data.json`; when APPDATA is not
-/// available it falls back to `./tokiboshi-data.json`.
+/// available it falls back to `./tokiboshi-data.json`. The v0.1 format
+/// (nodes/settings only) loads unchanged; subscriptions and the
+/// system-proxy flag default when absent.
 library;
 
 import 'dart:convert';
@@ -9,20 +11,58 @@ import 'dart:io';
 
 import '../bridge/core_bridge.dart';
 
+class Subscription {
+  const Subscription({
+    required this.id,
+    required this.name,
+    required this.url,
+    this.updatedAt,
+  });
+
+  final String id;
+  final String name;
+  final String url;
+
+  /// ISO-8601 time of the last successful update.
+  final String? updatedAt;
+
+  Subscription copyWith({String? name, String? url, String? updatedAt}) =>
+      Subscription(
+        id: id,
+        name: name ?? this.name,
+        url: url ?? this.url,
+        updatedAt: updatedAt ?? this.updatedAt,
+      );
+
+  Map<String, dynamic> toJson() =>
+      {'id': id, 'name': name, 'url': url, 'updatedAt': updatedAt};
+
+  factory Subscription.fromJson(Map<String, dynamic> json) => Subscription(
+        id: json['id'] as String,
+        name: json['name'] as String,
+        url: json['url'] as String,
+        updatedAt: json['updatedAt'] as String?,
+      );
+}
+
 class AppData {
   AppData({
     this.nodes = const [],
+    this.subscriptions = const [],
     this.selectedIndex = -1,
     this.mixedPort = 7890,
     this.singBoxPath = '',
+    this.systemProxy = true,
   });
 
   List<NodeInfo> nodes;
+  List<Subscription> subscriptions;
   int selectedIndex;
   int mixedPort;
 
   /// Empty means "sing-box.exe next to Tokiboshi.exe, else PATH".
   String singBoxPath;
+  bool systemProxy;
 
   NodeInfo? get selected =>
       (selectedIndex >= 0 && selectedIndex < nodes.length)
@@ -54,11 +94,16 @@ class Store {
       final nodes = (map['nodes'] as List<dynamic>? ?? [])
           .map((e) => NodeInfo.fromJson(e as Map<String, dynamic>))
           .toList();
+      final subscriptions = (map['subscriptions'] as List<dynamic>? ?? [])
+          .map((e) => Subscription.fromJson(e as Map<String, dynamic>))
+          .toList();
       return AppData(
         nodes: nodes,
+        subscriptions: subscriptions,
         selectedIndex: (map['selectedIndex'] as int?) ?? -1,
         mixedPort: (map['mixedPort'] as int?) ?? 7890,
         singBoxPath: (map['singBoxPath'] as String?) ?? '',
+        systemProxy: (map['systemProxy'] as bool?) ?? true,
       );
     } catch (_) {
       return AppData();
@@ -69,9 +114,11 @@ class Store {
     await dir.create(recursive: true);
     final map = {
       'nodes': data.nodes.map((n) => n.toJson()).toList(),
+      'subscriptions': data.subscriptions.map((s) => s.toJson()).toList(),
       'selectedIndex': data.selectedIndex,
       'mixedPort': data.mixedPort,
       'singBoxPath': data.singBoxPath,
+      'systemProxy': data.systemProxy,
     };
     await _file.writeAsString(jsonEncode(map));
   }
