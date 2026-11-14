@@ -113,7 +113,11 @@ pub fn download_and_install(data_dir: &Path) -> Result<String, String> {
 
 fn wanted_file(name: &str) -> bool {
     let base = name.rsplit('/').next().unwrap_or(name);
-    base == "sing-box" || base == "sing-box.exe" || base == "libcronet.dll" || base == "libcronet.so"
+    base == "sing-box"
+        || base == "sing-box.exe"
+        || base == "libcronet.dll"
+        || base == "libcronet.so"
+        || base == "wintun.dll"
 }
 
 fn extract_from_zip(bytes: &[u8], core_dir: &Path) -> Result<(), String> {

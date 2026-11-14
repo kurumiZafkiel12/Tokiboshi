@@ -54,6 +54,7 @@ class AppData {
     this.clashApiPort = 9090,
     this.singBoxPath = '',
     this.systemProxy = true,
+    this.enableTun = false,
   });
 
   List<NodeInfo> nodes;
@@ -67,6 +68,10 @@ class AppData {
   /// Empty means the managed core (downloaded into the data dir).
   String singBoxPath;
   bool systemProxy;
+
+  /// TUN inbound (virtual NIC). Needs an elevated process on
+  /// Windows; applied when the core (re)starts.
+  bool enableTun;
 
   NodeInfo? get selected =>
       (selectedIndex >= 0 && selectedIndex < nodes.length)
@@ -109,6 +114,7 @@ class Store {
         clashApiPort: (map['clashApiPort'] as int?) ?? 9090,
         singBoxPath: (map['singBoxPath'] as String?) ?? '',
         systemProxy: (map['systemProxy'] as bool?) ?? true,
+        enableTun: (map['enableTun'] as bool?) ?? false,
       );
     } catch (_) {
       return AppData();
@@ -125,6 +131,7 @@ class Store {
       'clashApiPort': data.clashApiPort,
       'singBoxPath': data.singBoxPath,
       'systemProxy': data.systemProxy,
+      'enableTun': data.enableTun,
     };
     await _file.writeAsString(jsonEncode(map));
   }

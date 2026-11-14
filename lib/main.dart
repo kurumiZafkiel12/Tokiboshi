@@ -82,6 +82,7 @@ class _ShellPageState extends State<ShellPage> {
   bool _busy = false;
   bool _measuring = false;
   int _page = 0;
+  bool _navCollapsed = false;
   String? _message;
   String? _coreVersion;
   int _restartCount = 0;
@@ -457,6 +458,19 @@ class _ShellPageState extends State<ShellPage> {
   Future<void> _selectNode(int index) async {
     setState(() => _data.selectedIndex = index);
     await _persist();
+    // While the core runs, switch the selector live through the
+    // Clash API (node tags are assigned from names). If the live
+    // switch fails, the choice still applies on the next start via
+    // the generated config's selector default.
+    if (_running && index >= 0 && index < _data.nodes.length) {
+      final node = _data.nodes[index];
+      try {
+        await _clash.select('proxy', node.name);
+        _setMessage('已切换到 ${node.name}');
+      } catch (_) {
+        _setMessage('已选中 ${node.name}（重启内核后生效）');
+      }
+    }
   }
 
   Future<void> _deleteNode(int index) async {
@@ -558,6 +572,7 @@ class _ShellPageState extends State<ShellPage> {
             .toList(),
         mixedPort: _data.mixedPort,
         clashApiPort: _data.clashApiPort,
+        enableTun: _data.enableTun,
         dataDir: _dataDir,
         selectedName: selected?.name,
       );
@@ -632,6 +647,32 @@ class _ShellPageState extends State<ShellPage> {
       _data.systemProxy = value;
     });
     await _persist();
+    if (_running) {
+      await widget.systemProxy.apply(value, _data.mixedPort);
+      _setMessage(value ? '系统代理已开启' : '系统代理已关闭');
+    }
+  }
+
+  Future<void> _setTun(bool value) async {
+    setState(() {
+      _data.enableTun = value;
+    });
+    await _persist();
+    if (_running) {
+      _setMessage(value ? '虚拟网卡已开启，正在重启内核…' : '虚拟网卡已关闭，正在重启内核…');
+      await _restartCore();
+    } else {
+      _setMessage(value ? '虚拟网卡已开启（下次启动生效）' : '虚拟网卡已关闭');
+    }
+  }
+
+  Future<void> _setMode(String mode) async {
+    try {
+      await _clash.setMode(mode);
+      if (mounted) setState(() => _clashMode = mode);
+    } catch (e) {
+      _setMessage('切换模式失败：$e');
+    }
   }
 
   // ---- layout ----
@@ -707,9 +748,13 @@ class _ShellPageState extends State<ShellPage> {
           restartCount: _restartCount,
           lastExit: _lastExit,
           clashMode: _clashMode,
+          tun: _data.enableTun,
           onToggle: _toggleCore,
           onRestart: _restartCore,
           onOpenPanel: () => setState(() => _page = 1),
+          onTunChanged: _setTun,
+          onSystemProxyChanged: _setSystemProxy,
+          onModeChanged: _setMode,
           onMeasureSelected: () {
             final node = _data.selected;
             if (node != null) _measureNode(node);
@@ -720,13 +765,13 @@ class _ShellPageState extends State<ShellPage> {
       body: Row(
         children: [
           Container(
-            width: 208,
+            width: _navCollapsed ? 68 : 208,
             color: scheme.surfaceContainerLow,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 18, 16, 14),
+                  padding: EdgeInsets.fromLTRB(_navCollapsed ? 16 : 16, 18, 16, 14),
                   child: Row(
                     children: [
                       ClipRRect(
@@ -737,15 +782,17 @@ class _ShellPageState extends State<ShellPage> {
                           height: 36,
                         ),
                       ),
-                      const SizedBox(width: 10),
-                      const Expanded(
-                        child: Text(
-                          'Tokiboshi',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
+                      if (!_navCollapsed) ...[
+                        const SizedBox(width: 10),
+                        const Expanded(
+                          child: Text(
+                            'Tokiboshi',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
+                          ),
                         ),
-                      ),
+                      ],
                     ],
                   ),
                 ),
@@ -756,10 +803,21 @@ class _ShellPageState extends State<ShellPage> {
                 _navItem(4, Icons.terminal_outlined, '日志'),
                 _navItem(5, Icons.settings_outlined, '设置'),
                 const Spacer(),
-                const Padding(
-                  padding: EdgeInsets.all(16),
-                  child: Text('v0.3.0 · sing-box 1.14.4'),
+                IconButton(
+                  icon: Icon(
+                    _navCollapsed
+                        ? Icons.keyboard_double_arrow_right
+                        : Icons.keyboard_double_arrow_left,
+                    size: 19,
+                  ),
+                  tooltip: _navCollapsed ? '展开侧栏' : '收起侧栏',
+                  onPressed: () => setState(() => _navCollapsed = !_navCollapsed),
                 ),
+                if (!_navCollapsed)
+                  const Padding(
+                    padding: EdgeInsets.all(16),
+                    child: Text('v0.4.0 · sing-box 1.14.4'),
+                  ),
               ],
             ),
           ),
@@ -787,7 +845,7 @@ class _ShellPageState extends State<ShellPage> {
   Widget _navItem(int index, IconData icon, String label) {
     final scheme = Theme.of(context).colorScheme;
     final selected = _page == index;
-    return Padding(
+    final item = Padding(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
       child: Material(
         color: selected ? scheme.primaryContainer : Colors.transparent,
@@ -796,27 +854,35 @@ class _ShellPageState extends State<ShellPage> {
           borderRadius: BorderRadius.circular(10),
           onTap: () => setState(() => _page = index),
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            padding: EdgeInsets.symmetric(
+              horizontal: _navCollapsed ? 8 : 12,
+              vertical: 10,
+            ),
             child: Row(
+              mainAxisAlignment:
+                  _navCollapsed ? MainAxisAlignment.center : MainAxisAlignment.start,
               children: [
                 Icon(
                   icon,
                   size: 19,
                   color: selected ? scheme.onPrimaryContainer : scheme.onSurfaceVariant,
                 ),
-                const SizedBox(width: 10),
-                Text(
-                  label,
-                  style: TextStyle(
-                    color: selected ? scheme.onPrimaryContainer : scheme.onSurface,
-                    fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+                if (!_navCollapsed) ...[
+                  const SizedBox(width: 10),
+                  Text(
+                    label,
+                    style: TextStyle(
+                      color: selected ? scheme.onPrimaryContainer : scheme.onSurface,
+                      fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+                    ),
                   ),
-                ),
+                ],
               ],
             ),
           ),
         ),
       ),
     );
+    return _navCollapsed ? Tooltip(message: label, child: item) : item;
   }
 }

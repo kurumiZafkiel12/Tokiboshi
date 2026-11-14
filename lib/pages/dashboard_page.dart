@@ -2,7 +2,8 @@ import 'package:flutter/material.dart';
 
 import '../bridge/core_bridge.dart';
 
-/// Home / dashboard: connection status, selected node, quick stats.
+/// Home / dashboard: connection card with mode switch, quick
+/// toggles （系统代理 / 虚拟网卡）, and stats.
 class DashboardPage extends StatelessWidget {
   const DashboardPage({
     super.key,
@@ -23,6 +24,10 @@ class DashboardPage extends StatelessWidget {
     this.clashMode,
     this.onRestart,
     this.onOpenPanel,
+    this.tun = false,
+    this.onTunChanged,
+    this.onSystemProxyChanged,
+    this.onModeChanged,
   });
 
   final bool running;
@@ -42,6 +47,16 @@ class DashboardPage extends StatelessWidget {
   final String? clashMode;
   final VoidCallback? onRestart;
   final VoidCallback? onOpenPanel;
+  final bool tun;
+  final ValueChanged<bool>? onTunChanged;
+  final ValueChanged<bool>? onSystemProxyChanged;
+  final ValueChanged<String>? onModeChanged;
+
+  static const _modes = <(String, String)>[
+    ('Rule', '规则'),
+    ('Global', '全局'),
+    ('Direct', '直连'),
+  ];
 
   @override
   Widget build(BuildContext context) {
@@ -80,7 +95,24 @@ class DashboardPage extends StatelessWidget {
                               : '${node.name} · ${node.protocol.toUpperCase()} · ${node.server}:${node.serverPort}',
                           style: TextStyle(color: scheme.onSurfaceVariant),
                         ),
-                        const SizedBox(height: 8),
+                        const SizedBox(height: 10),
+                        SegmentedButton<String>(
+                          segments: [
+                            for (final m in _modes)
+                              ButtonSegment<String>(
+                                value: m.$1,
+                                label: Text(m.$2),
+                              ),
+                          ],
+                          selected: {clashMode ?? 'Rule'},
+                          onSelectionChanged: running && onModeChanged != null
+                              ? (s) => onModeChanged!(s.first)
+                              : null,
+                          style: const ButtonStyle(
+                            visualDensity: VisualDensity.compact,
+                          ),
+                        ),
+                        const SizedBox(height: 10),
                         Wrap(
                           spacing: 8,
                           children: [
@@ -90,21 +122,10 @@ class DashboardPage extends StatelessWidget {
                               visualDensity: VisualDensity.compact,
                             ),
                             Chip(
-                              avatar: const Icon(Icons.language, size: 16),
-                              label: Text(systemProxy ? '系统代理 开' : '系统代理 关'),
-                              visualDensity: VisualDensity.compact,
-                            ),
-                            Chip(
                               avatar: const Icon(Icons.memory, size: 16),
                               label: Text(coreVersion ?? '内核未下载'),
                               visualDensity: VisualDensity.compact,
                             ),
-                            if (clashMode != null)
-                              Chip(
-                                avatar: const Icon(Icons.route, size: 16),
-                                label: Text('模式 $clashMode'),
-                                visualDensity: VisualDensity.compact,
-                              ),
                             if (restartCount > 0)
                               Chip(
                                 avatar: const Icon(Icons.restart_alt, size: 16),
@@ -158,6 +179,32 @@ class DashboardPage extends StatelessWidget {
           const SizedBox(height: 12),
           Row(
             children: [
+              Expanded(
+                child: _toggleCard(
+                  context,
+                  icon: Icons.shuffle,
+                  label: '系统代理',
+                  subtitle: '把系统代理指向 127.0.0.1:$mixedPort',
+                  value: systemProxy,
+                  onChanged: onSystemProxyChanged,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: _toggleCard(
+                  context,
+                  icon: Icons.shield_outlined,
+                  label: '虚拟网卡',
+                  subtitle: 'TUN 模式接管全局流量（需以管理员身份运行）',
+                  value: tun,
+                  onChanged: busy ? null : onTunChanged,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
               Expanded(child: _statCard(context, Icons.dns_outlined, '节点', '$nodeCount')),
               const SizedBox(width: 12),
               Expanded(
@@ -206,6 +253,52 @@ class DashboardPage extends StatelessWidget {
             ],
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _toggleCard(
+    BuildContext context, {
+    required IconData icon,
+    required String label,
+    required String subtitle,
+    required bool value,
+    required ValueChanged<bool>? onChanged,
+  }) {
+    final scheme = Theme.of(context).colorScheme;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        child: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(9),
+              decoration: BoxDecoration(
+                color: value
+                    ? scheme.primaryContainer
+                    : scheme.surfaceContainerHighest,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Icon(icon, size: 20, color: value ? scheme.onPrimaryContainer : scheme.onSurfaceVariant),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(label, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+                  Text(
+                    subtitle,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
+                  ),
+                ],
+              ),
+            ),
+            Switch(value: value, onChanged: onChanged),
+          ],
+        ),
       ),
     );
   }

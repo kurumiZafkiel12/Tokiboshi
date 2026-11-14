@@ -8,11 +8,17 @@ const _protocolColors = <String, Color>{
   'vmess': Color(0xFFAB47BC),
   'trojan': Color(0xFFFF7043),
   'hysteria2': Color(0xFFEC407A),
+  'hysteria': Color(0xFFEC407A),
   'shadowsocks': Color(0xFF26A69A),
+  'socks': Color(0xFF8D6E63),
+  'http': Color(0xFF78909C),
+  'tuic': Color(0xFF7E57C2),
 };
 
-/// Node list grouped by source (manual import / each subscription),
-/// with search and TCP latency results.
+/// Node selection: group filter chips (all / manual / each
+/// subscription) over a card grid — name, protocol, latency,
+/// selected check. Tapping a card selects the node; while the core
+/// runs the shell also switches it live through the Clash API.
 class NodesPage extends StatefulWidget {
   const NodesPage({
     super.key,
@@ -46,21 +52,26 @@ class NodesPage extends StatefulWidget {
 class _NodesPageState extends State<NodesPage> {
   String _query = '';
 
+  /// '' = all groups; otherwise a subscription id, or '__manual'.
+  String _group = '';
+
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final subNames = {for (final s in widget.subscriptions) s.id: s.name};
+    bool inGroup(NodeInfo n) {
+      if (_group.isEmpty) return true;
+      if (_group == '__manual') return n.source.isEmpty;
+      return n.source == _group;
+    }
+
     final visible = <int>[
       for (var i = 0; i < widget.nodes.length; i++)
-        if (_query.isEmpty ||
-            widget.nodes[i].name.toLowerCase().contains(_query) ||
-            widget.nodes[i].server.toLowerCase().contains(_query))
+        if (inGroup(widget.nodes[i]) &&
+            (_query.isEmpty ||
+                widget.nodes[i].name.toLowerCase().contains(_query) ||
+                widget.nodes[i].server.toLowerCase().contains(_query)))
           i,
     ];
-    final groups = <String, List<int>>{};
-    for (final i in visible) {
-      groups.putIfAbsent(widget.nodes[i].source, () => []).add(i);
-    }
+    final hasManual = widget.nodes.any((n) => n.source.isEmpty);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -68,7 +79,7 @@ class _NodesPageState extends State<NodesPage> {
           padding: const EdgeInsets.fromLTRB(20, 20, 20, 8),
           child: Row(
             children: [
-              Text('节点（${widget.nodes.length}）',
+              Text('节点选择（${widget.nodes.length}）',
                   style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w600)),
               const Spacer(),
               OutlinedButton.icon(
@@ -86,7 +97,7 @@ class _NodesPageState extends State<NodesPage> {
           ),
         ),
         Padding(
-          padding: const EdgeInsets.fromLTRB(20, 4, 20, 8),
+          padding: const EdgeInsets.fromLTRB(20, 4, 20, 4),
           child: TextField(
             decoration: const InputDecoration(
               prefixIcon: Icon(Icons.search),
@@ -97,30 +108,52 @@ class _NodesPageState extends State<NodesPage> {
             onChanged: (v) => setState(() => _query = v.trim().toLowerCase()),
           ),
         ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 4, 20, 8),
+          child: Wrap(
+            spacing: 8,
+            runSpacing: 6,
+            children: [
+              ChoiceChip(
+                label: const Text('全部'),
+                selected: _group.isEmpty,
+                onSelected: (_) => setState(() => _group = ''),
+              ),
+              if (hasManual)
+                ChoiceChip(
+                  label: const Text('手动导入'),
+                  selected: _group == '__manual',
+                  onSelected: (_) => setState(() => _group = '__manual'),
+                ),
+              for (final s in widget.subscriptions)
+                ChoiceChip(
+                  label: Text(s.name),
+                  selected: _group == s.id,
+                  onSelected: (_) => setState(() => _group = s.id),
+                ),
+            ],
+          ),
+        ),
         Expanded(
           child: widget.nodes.isEmpty
               ? const Center(child: Text('还没有节点，点右上角「导入」粘贴链接或订阅地址'))
-              : ListView(
-                  padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
-                  children: [
-                    for (final entry in groups.entries) ...[
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(4, 12, 4, 6),
-                        child: Text(
-                          entry.key.isEmpty
-                              ? '手动导入'
-                              : '订阅 · ${subNames[entry.key] ?? entry.key}',
-                          style: TextStyle(
-                            color: scheme.onSurfaceVariant,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
+              : visible.isEmpty
+                  ? const Center(child: Text('这个分组里没有匹配的节点'))
+                  : GridView.builder(
+                      padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
+                      gridDelegate:
+                          const SliverGridDelegateWithMaxCrossAxisExtent(
+                        maxCrossAxisExtent: 300,
+                        mainAxisExtent: 96,
+                        crossAxisSpacing: 10,
+                        mainAxisSpacing: 10,
                       ),
-                      for (final i in entry.value)
-                        _nodeCard(context, i, widget.nodes[i]),
-                    ],
-                  ],
-                ),
+                      itemCount: visible.length,
+                      itemBuilder: (context, vi) {
+                        final i = visible[vi];
+                        return _nodeCard(context, i, widget.nodes[i]);
+                      },
+                    ),
         ),
       ],
     );
@@ -133,69 +166,90 @@ class _NodesPageState extends State<NodesPage> {
     final ms = widget.latency[node];
     final hasLatency = widget.latency.containsKey(node);
     return Card(
-      margin: const EdgeInsets.only(bottom: 8),
+      margin: EdgeInsets.zero,
+      color: selected ? scheme.primaryContainer.withValues(alpha: 0.45) : null,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(14),
         side: BorderSide(
           color: selected ? scheme.primary : Colors.transparent,
           width: 1.5,
         ),
       ),
       child: InkWell(
-        borderRadius: BorderRadius.circular(12),
-        onTap: widget.running ? null : () => widget.onSelect(index),
+        borderRadius: BorderRadius.circular(14),
+        onTap: () => widget.onSelect(index),
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-          child: Row(
+          padding: const EdgeInsets.fromLTRB(14, 10, 8, 10),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                decoration: BoxDecoration(
-                  color: color.withValues(alpha: 0.18),
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: Text(
-                  node.protocol.toUpperCase(),
-                  style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w700),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
                       node.name,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
-                        fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                        fontSize: 15,
+                        fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
                       ),
                     ),
-                    Text(
-                      '${node.server}:${node.serverPort}',
-                      style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
-                    ),
-                  ],
-                ),
-              ),
-              if (hasLatency)
-                Text(
-                  ms == null ? '超时' : '$ms ms',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: ms == null ? scheme.error : Colors.greenAccent,
                   ),
-                ),
-              if (selected)
-                Padding(
-                  padding: const EdgeInsets.only(left: 8),
-                  child: Icon(Icons.check_circle, size: 18, color: scheme.primary),
-                ),
-              IconButton(
-                icon: const Icon(Icons.delete_outline, size: 19),
-                tooltip: '删除',
-                onPressed: widget.running ? null : () => widget.onDelete(index),
+                  if (selected)
+                    Container(
+                      decoration: BoxDecoration(
+                        color: Colors.green.shade400,
+                        shape: BoxShape.circle,
+                      ),
+                      padding: const EdgeInsets.all(3),
+                      child: const Icon(Icons.check, size: 13, color: Colors.black),
+                    )
+                  else
+                    IconButton(
+                      icon: const Icon(Icons.delete_outline, size: 17),
+                      tooltip: '删除',
+                      visualDensity: VisualDensity.compact,
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(),
+                      onPressed:
+                          widget.running ? null : () => widget.onDelete(index),
+                    ),
+                ],
+              ),
+              const Spacer(),
+              Row(
+                children: [
+                  Container(
+                    width: 8,
+                    height: 8,
+                    decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    node.protocol,
+                    style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
+                  ),
+                  const Spacer(),
+                  Text(
+                    !hasLatency
+                        ? '未测速'
+                        : (ms == null ? '失败' : '$ms ms'),
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: !hasLatency
+                          ? scheme.onSurfaceVariant
+                          : (ms == null ? scheme.error : Colors.greenAccent),
+                    ),
+                  ),
+                ],
+              ),
+              Text(
+                '${node.server}:${node.serverPort}',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
               ),
             ],
           ),

@@ -43,12 +43,29 @@ fn push_log(shared: &Shared, line: String) {
     }
 }
 
+/// Build a command for the core binary. On Windows the GUI has no
+/// console of its own, so a console-subsystem child would pop up a
+/// visible black console window (hosted by Windows Terminal) that
+/// stays on screen for the core's whole lifetime — CREATE_NO_WINDOW
+/// keeps it fully hidden. Its stdout/stderr are piped and captured
+/// either way.
+fn core_command(binary: &Path) -> Command {
+    let mut cmd = Command::new(binary);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    cmd
+}
+
 fn spawn_child(
     binary: &Path,
     config_path: &Path,
     shared: &Arc<Shared>,
 ) -> Result<Child, String> {
-    let mut child = Command::new(binary)
+    let mut child = core_command(binary)
         .arg("run")
         .arg("-c")
         .arg(config_path)
@@ -130,7 +147,7 @@ impl CoreProcess {
     /// Run `sing-box check -c <config>`; Ok(()) only when the binary
     /// accepts the configuration.
     pub fn check_config(&self, config_path: &Path) -> Result<(), String> {
-        let output = Command::new(&self.binary)
+        let output = core_command(&self.binary)
             .arg("check")
             .arg("-c")
             .arg(config_path)
@@ -148,7 +165,7 @@ impl CoreProcess {
 
     /// `sing-box version`, first line (e.g. "sing-box version 1.14.4").
     pub fn version(&self) -> Result<String, String> {
-        let output = Command::new(&self.binary)
+        let output = core_command(&self.binary)
             .arg("version")
             .output()
             .map_err(|e| format!("cannot run sing-box version: {e}"))?;
