@@ -74,8 +74,8 @@ pub fn core_running() -> bool {
     }
 }
 
-/// Parse subscription content (plain links, base64 blob, or sing-box
-/// JSON config) into nodes.
-pub fn parse_subscription(text: String) -> Result<Vec<crate::links::NodeInfo>, String> {
+/// Parse subscription content (links, base64 blob, Clash YAML, or
+/// sing-box JSON config) into nodes plus skipped-entry notes.
+pub fn parse_subscription(text: String) -> Result<crate::links::ParseOutcome, String> {
     crate::links::parse_subscription(&text)
 }

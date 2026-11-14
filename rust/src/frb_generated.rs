@@ -177,6 +177,13 @@ let mut var_outboundJson = <String>::sse_decode(deserializer);
 return crate::links::NodeInfo{name: var_name, outbound_json: var_outboundJson};}
                 }
                 
+                impl SseDecode for crate::links::ParseOutcome {
+                    // Codec=Sse (Serialization based), see doc to use other codecs
+                    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {let mut var_nodes = <Vec<crate::links::NodeInfo>>::sse_decode(deserializer);
+let mut var_skipped = <Vec<String>>::sse_decode(deserializer);
+return crate::links::ParseOutcome{nodes: var_nodes, skipped: var_skipped};}
+                }
+                
                 impl SseDecode for u16 {
                     // Codec=Sse (Serialization based), see doc to use other codecs
                     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {deserializer.cursor.read_u16::<NativeEndian>().unwrap()}
@@ -249,6 +256,21 @@ impl flutter_rust_bridge::IntoIntoDart<crate::links::NodeInfo> for crate::links:
                 self
             }
         }
+// Codec=Dco (DartCObject based), see doc to use other codecs
+            impl flutter_rust_bridge::IntoDart for crate::links::ParseOutcome {
+                fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+                    [
+                    self.nodes.into_into_dart().into_dart(),
+self.skipped.into_into_dart().into_dart()
+                ].into_dart()
+                }
+            }
+            impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive for crate::links::ParseOutcome {}
+impl flutter_rust_bridge::IntoIntoDart<crate::links::ParseOutcome> for crate::links::ParseOutcome {
+            fn into_into_dart(self) -> crate::links::ParseOutcome {
+                self
+            }
+        }
 
                 impl SseEncode for String {
                     // Codec=Sse (Serialization based), see doc to use other codecs
@@ -282,6 +304,12 @@ impl flutter_rust_bridge::IntoIntoDart<crate::links::NodeInfo> for crate::links:
                     // Codec=Sse (Serialization based), see doc to use other codecs
                     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {<String>::sse_encode(self.name, serializer);
 <String>::sse_encode(self.outbound_json, serializer);}
+                }
+                
+                impl SseEncode for crate::links::ParseOutcome {
+                    // Codec=Sse (Serialization based), see doc to use other codecs
+                    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {<Vec<crate::links::NodeInfo>>::sse_encode(self.nodes, serializer);
+<Vec<String>>::sse_encode(self.skipped, serializer);}
                 }
                 
                 impl SseEncode for u16 {

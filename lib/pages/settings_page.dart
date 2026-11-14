@@ -116,7 +116,7 @@ class _SettingsPageState extends State<SettingsPage> {
                 children: [
                   const Text('关于', style: TextStyle(fontWeight: FontWeight.w600)),
                   const SizedBox(height: 8),
-                  const Text('Tokiboshi v0.2.1 · Flutter 界面 + Rust 中间层 + sing-box 内核'),
+                  const Text('Tokiboshi v0.2.2 · Flutter 界面 + Rust 中间层 + sing-box 内核'),
                   const Text('内置 sing-box 1.11.15（Release 包随附）'),
                   Text('数据文件：${widget.dataFilePath}'),
                 ],

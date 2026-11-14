@@ -23,7 +23,7 @@ class HttpSubscriptionFetcher implements SubscriptionFetcher {
     final client = HttpClient()..connectionTimeout = const Duration(seconds: 15);
     try {
       final request = await client.getUrl(uri);
-      request.headers.set(HttpHeaders.userAgentHeader, 'Tokiboshi/0.2.1');
+      request.headers.set(HttpHeaders.userAgentHeader, 'Tokiboshi/0.2.2');
       request.headers.set(HttpHeaders.acceptHeader, '*/*');
       final response = await request.close().timeout(const Duration(seconds: 30));
       if (response.statusCode < 200 || response.statusCode >= 300) {

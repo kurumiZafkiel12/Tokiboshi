@@ -152,13 +152,18 @@ class _ShellPageState extends State<ShellPage> {
     setState(() => _busy = true);
     try {
       List<NodeInfo> imported;
+      var skipped = const <String>[];
       if (trimmed.contains('\n') || !trimmed.contains('://')) {
-        imported = await widget.bridge.parseSubscription(trimmed);
+        final outcome = await widget.bridge.parseSubscription(trimmed);
+        imported = outcome.nodes;
+        skipped = outcome.skipped;
       } else {
         try {
           imported = [await widget.bridge.parseShareLink(trimmed)];
         } catch (_) {
-          imported = await widget.bridge.parseSubscription(trimmed);
+          final outcome = await widget.bridge.parseSubscription(trimmed);
+          imported = outcome.nodes;
+          skipped = outcome.skipped;
         }
       }
       setState(() {
@@ -166,7 +171,7 @@ class _ShellPageState extends State<ShellPage> {
         if (_data.selectedIndex < 0 && _data.nodes.isNotEmpty) {
           _data.selectedIndex = 0;
         }
-        _message = '已导入 ${imported.length} 个节点';
+        _message = '已导入 ${imported.length} 个节点${_skippedNote(skipped)}';
       });
       await _persist();
     } catch (e) {
@@ -174,6 +179,19 @@ class _ShellPageState extends State<ShellPage> {
     } finally {
       if (mounted) setState(() => _busy = false);
     }
+  }
+
+  /// "；另有 N 个暂不支持已跳过（wireguard ×1）" or '' when none.
+  String _skippedNote(List<String> skipped) {
+    if (skipped.isEmpty) return '';
+    final counts = <String, int>{};
+    for (final entry in skipped) {
+      final m = RegExp(r'\(([^()]*)\)\s*$').firstMatch(entry);
+      final type = m?.group(1) ?? 'unknown';
+      counts[type] = (counts[type] ?? 0) + 1;
+    }
+    final parts = counts.entries.map((e) => '${e.key} ×${e.value}').join('、');
+    return '；另有 ${skipped.length} 个暂不支持已跳过（$parts）';
   }
 
   Future<void> _addSubscriptionDialog() async {
@@ -237,9 +255,9 @@ class _ShellPageState extends State<ShellPage> {
     setState(() => _busy = true);
     try {
       final content = await widget.fetcher.fetch(url);
-      final parsed = await widget.bridge.parseSubscription(content);
+      final outcome = await widget.bridge.parseSubscription(content);
       final id = 'sub-${DateTime.now().millisecondsSinceEpoch}';
-      final nodes = parsed.map((n) => n.withSource(id)).toList();
+      final nodes = outcome.nodes.map((n) => n.withSource(id)).toList();
       setState(() {
         _data.subscriptions = [
           ..._data.subscriptions,
@@ -254,7 +272,8 @@ class _ShellPageState extends State<ShellPage> {
         if (_data.selectedIndex < 0 && _data.nodes.isNotEmpty) {
           _data.selectedIndex = 0;
         }
-        _message = '订阅「$name」已添加：${nodes.length} 个节点';
+        _message =
+            '订阅「$name」已添加：${nodes.length} 个节点${_skippedNote(outcome.skipped)}';
       });
       await _persist();
     } catch (e) {
@@ -268,10 +287,10 @@ class _ShellPageState extends State<ShellPage> {
     setState(() => _busy = true);
     try {
       final content = await widget.fetcher.fetch(sub.url);
-      final parsed = await widget.bridge.parseSubscription(content);
+      final outcome = await widget.bridge.parseSubscription(content);
       final selected = _data.selected;
       final selectedFromSub = selected != null && selected.source == sub.id;
-      final fresh = parsed.map((n) => n.withSource(sub.id)).toList();
+      final fresh = outcome.nodes.map((n) => n.withSource(sub.id)).toList();
       setState(() {
         _data.nodes = [
           for (final n in _data.nodes)
@@ -294,7 +313,7 @@ class _ShellPageState extends State<ShellPage> {
           _data.selectedIndex =
               idx >= 0 ? idx : (_data.nodes.isEmpty ? -1 : 0);
         }
-        _message = '订阅「${sub.name}」已更新：${fresh.length} 个节点';
+        _message = '订阅「${sub.name}」已更新：${fresh.length} 个节点' + _skippedNote(outcome.skipped);
       });
       await _persist();
     } catch (e) {
@@ -529,7 +548,7 @@ class _ShellPageState extends State<ShellPage> {
                 const Spacer(),
                 const Padding(
                   padding: EdgeInsets.all(16),
-                  child: Text('v0.2.1 · sing-box 1.11.15'),
+                  child: Text('v0.2.2 · sing-box 1.11.15'),
                 ),
               ],
             ),

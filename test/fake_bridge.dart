@@ -19,14 +19,14 @@ class FakeBridge implements CoreBridge {
   }
 
   @override
-  Future<List<NodeInfo>> parseSubscription(String text) async {
+  Future<ParseOutcome> parseSubscription(String text) async {
     final nodes = <NodeInfo>[];
     for (final line in text.split('\n')) {
       if (line.trim().isEmpty) continue;
       nodes.add(await parseShareLink(line.trim()));
     }
     if (nodes.isEmpty) throw const FormatException('no usable links');
-    return nodes;
+    return ParseOutcome(nodes: nodes);
   }
 
   @override

@@ -15,6 +15,15 @@ pub struct NodeInfo {
     pub outbound_json: String,
 }
 
+/// Result of parsing subscription content: converted nodes plus a
+/// human-readable note per entry that had to be skipped (currently
+/// unsupported type), formatted as "name (type)".
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ParseOutcome {
+    pub nodes: Vec<NodeInfo>,
+    pub skipped: Vec<String>,
+}
+
 fn b64_decode(input: &str) -> Result<Vec<u8>, String> {
     use base64::Engine;
     let cleaned: String = input.chars().filter(|c| !c.is_whitespace()).collect();
@@ -278,7 +287,86 @@ pub fn parse_share_link(link: &str) -> Result<NodeInfo, String> {
         let name = if get("ps").is_empty() { format!("vmess-{}:{}", get("add"), port) } else { get("ps") };
         return Ok(NodeInfo { name, outbound_json: Value::Object(ob).to_string() });
     }
-    Err("unsupported link scheme (vless/vmess/trojan/hysteria2/ss)".to_string())
+    if link.starts_with("socks://") || link.starts_with("socks5://") {
+        return parse_socks_link(link);
+    }
+    Err("unsupported link scheme (vless/vmess/trojan/hysteria2/ss/socks)".to_string())
+}
+
+fn parse_host_port(s: &str) -> Result<(String, u16), String> {
+    let (host, port_s) = if let Some(close) = s.find(']') {
+        let port = s[close + 1..]
+            .strip_prefix(':')
+            .ok_or_else(|| "missing port".to_string())?;
+        (s[1..close].to_string(), port)
+    } else {
+        let (h, p) = s.rsplit_once(':').ok_or("missing port")?;
+        (h.to_string(), p)
+    };
+    let port = port_s.parse().map_err(|_| "bad port".to_string())?;
+    Ok((host, port))
+}
+
+/// socks:// / socks5:// — userinfo may be plain user:pass, a base64
+/// blob, or the whole authority may be base64 (v2rayN style).
+fn parse_socks_link(link: &str) -> Result<NodeInfo, String> {
+    let scheme = if link.starts_with("socks5://") { "socks5" } else { "socks" };
+    if link.contains('@') {
+        let p = split_link(link, scheme)?;
+        // userinfo is either "user:password" or base64 of it.
+        let (username, password) = if p.userinfo.contains(':') {
+            let (u, pw) = p.userinfo.split_once(':').unwrap();
+            (Some(u.to_string()), Some(pw.to_string()))
+        } else if let Ok(raw) = b64_decode(&p.userinfo) {
+            let text = String::from_utf8_lossy(&raw).into_owned();
+            match text.split_once(':') {
+                Some((u, pw)) => (Some(u.to_string()), Some(pw.to_string())),
+                None => (Some(p.userinfo.clone()), None),
+            }
+        } else {
+            (Some(p.userinfo.clone()), None)
+        };
+        let mut ob = json!({
+            "type": "socks", "version": "5",
+            "server": p.host, "server_port": p.port
+        });
+        if let Some(u) = username {
+            ob["username"] = Value::String(u);
+        }
+        if let Some(pw) = password {
+            ob["password"] = Value::String(pw);
+        }
+        return Ok(node(p.name.clone(), &format!("socks-{}:{}", p.host, p.port), ob));
+    }
+    // No '@': try base64 whole-authority, else plain host:port.
+    let rest = link.split_once("://").unwrap().1;
+    let (main, frag) = match rest.split_once('#') {
+        Some((m, f)) => (m, Some(percent_decode(f))),
+        None => (rest, None),
+    };
+    let authority = main.split(['?', '/']).next().unwrap_or("");
+    let decoded = b64_decode(authority)
+        .map(|raw| String::from_utf8_lossy(&raw).into_owned())
+        .unwrap_or_default();
+    let (userinfo, hostport) = match decoded.rsplit_once('@') {
+        Some((u, h)) => (Some(u.to_string()), h.to_string()),
+        None => (None, authority.to_string()),
+    };
+    let (server, port) = parse_host_port(&hostport)?;
+    let mut ob = json!({
+        "type": "socks", "version": "5",
+        "server": server, "server_port": port
+    });
+    if let Some(ui) = userinfo {
+        if let Some((u, pw)) = ui.split_once(':') {
+            ob["username"] = Value::String(u.to_string());
+            ob["password"] = Value::String(pw.to_string());
+        }
+    }
+    let name = frag
+        .filter(|n| !n.is_empty())
+        .unwrap_or_else(|| format!("socks-{server}:{port}"));
+    Ok(NodeInfo { name, outbound_json: ob.to_string() })
 }
 
 fn yaml_to_json(v: &serde_yaml::Value) -> Value {
@@ -465,13 +553,88 @@ fn clash_proxy_to_outbound(m: &Map<String, Value>) -> Option<Value> {
                 ob.insert("obfs".into(), Value::Object(obfs));
             }
         }
+        "socks5" | "socks" => {
+            ob.insert("type".into(), "socks".into());
+            ob.insert("version".into(), Value::String("5".into()));
+            if let Some(u) = cs(m, "username") {
+                ob.insert("username".into(), Value::String(u.to_string()));
+            }
+            if let Some(p) = cs(m, "password") {
+                ob.insert("password".into(), Value::String(p.to_string()));
+            }
+        }
+        "http" => {
+            ob.insert("type".into(), "http".into());
+            if let Some(u) = cs(m, "username") {
+                ob.insert("username".into(), Value::String(u.to_string()));
+            }
+            if let Some(p) = cs(m, "password") {
+                ob.insert("password".into(), Value::String(p.to_string()));
+            }
+            if cbool(m, "tls") {
+                ob.insert("tls".into(), Value::Object(clash_tls(m)));
+            }
+        }
+        "hysteria" => {
+            ob.insert("type".into(), "hysteria".into());
+            if let Some(auth) = cs(m, "auth-str").or_else(|| cs(m, "auth_str")) {
+                ob.insert("auth_str".into(), Value::String(auth.to_string()));
+            }
+            let mbps = |key: &str| -> Option<u64> {
+                match m.get(key) {
+                    Some(Value::Number(n)) => n.as_u64(),
+                    Some(Value::String(s)) => {
+                        let digits: String =
+                            s.chars().take_while(|c| c.is_ascii_digit()).collect();
+                        digits.parse().ok()
+                    }
+                    _ => None,
+                }
+            };
+            if let Some(up) = mbps("up") {
+                ob.insert("up_mbps".into(), Value::from(up));
+            }
+            if let Some(down) = mbps("down") {
+                ob.insert("down_mbps".into(), Value::from(down));
+            }
+            if let Some(obfs) = cs(m, "obfs") {
+                ob.insert("obfs".into(), Value::String(obfs.to_string()));
+            }
+            ob.insert("tls".into(), Value::Object(clash_tls(m)));
+        }
+        "tuic" => {
+            ob.insert("type".into(), "tuic".into());
+            ob.insert("uuid".into(), Value::String(cs(m, "uuid")?.to_string()));
+            ob.insert("password".into(), Value::String(cs(m, "password")?.to_string()));
+            ob.insert(
+                "congestion_control".into(),
+                Value::String(
+                    cs(m, "congestion-controller").unwrap_or("bbr").to_string(),
+                ),
+            );
+            ob.insert(
+                "udp_relay_mode".into(),
+                Value::String(cs(m, "udp-relay-mode").unwrap_or("native").to_string()),
+            );
+            if cbool(m, "reduce-rtt") {
+                ob.insert("zero_rtt_handshake".into(), Value::Bool(true));
+            }
+            let mut tls = clash_tls(m);
+            if !tls.contains_key("alpn") {
+                tls.insert("alpn".into(), json!(["h3"]));
+            }
+            if cbool(m, "disable-sni") {
+                tls.insert("disable_sni".into(), Value::Bool(true));
+            }
+            ob.insert("tls".into(), Value::Object(tls));
+        }
         _ => return None,
     }
     Some(Value::Object(ob))
 }
 
 /// Parse a Clash YAML subscription (its `proxies:` list becomes nodes).
-pub fn parse_clash_yaml(text: &str) -> Result<Vec<NodeInfo>, String> {
+pub fn parse_clash_yaml(text: &str) -> Result<ParseOutcome, String> {
     let doc: serde_yaml::Value =
         serde_yaml::from_str(text).map_err(|e| format!("invalid YAML: {e}"))?;
     let doc = yaml_to_json(&doc);
@@ -479,21 +642,27 @@ pub fn parse_clash_yaml(text: &str) -> Result<Vec<NodeInfo>, String> {
         .get("proxies")
         .and_then(Value::as_array)
         .ok_or("YAML has no proxies list")?;
-    let nodes: Vec<NodeInfo> = proxies
-        .iter()
-        .filter_map(Value::as_object)
-        .filter_map(|m| {
-            let outbound = clash_proxy_to_outbound(m)?;
-            let name = cs(m, "name")
-                .map(str::to_string)
-                .unwrap_or_else(|| "clash-node".to_string());
-            Some(NodeInfo { name, outbound_json: outbound.to_string() })
-        })
-        .collect();
+    let mut nodes = Vec::new();
+    let mut skipped = Vec::new();
+    for proxy in proxies.iter().filter_map(Value::as_object) {
+        let name = cs(proxy, "name")
+            .map(str::to_string)
+            .unwrap_or_else(|| "clash-node".to_string());
+        match clash_proxy_to_outbound(proxy) {
+            Some(outbound) => nodes.push(NodeInfo {
+                name,
+                outbound_json: outbound.to_string(),
+            }),
+            None => {
+                let typ = cs(proxy, "type").unwrap_or("unknown");
+                skipped.push(format!("{name} ({typ})"));
+            }
+        }
+    }
     if nodes.is_empty() {
         Err("no usable proxies in Clash YAML".to_string())
     } else {
-        Ok(nodes)
+        Ok(ParseOutcome { nodes, skipped })
     }
 }
 
@@ -502,7 +671,7 @@ pub fn parse_clash_yaml(text: &str) -> Result<Vec<NodeInfo>, String> {
 /// Clash YAML document (its proxies become nodes).
 /// Invalid lines are skipped; an error is returned only when nothing
 /// usable was found.
-pub fn parse_subscription(text: &str) -> Result<Vec<NodeInfo>, String> {
+pub fn parse_subscription(text: &str) -> Result<ParseOutcome, String> {
     let trimmed = text.trim();
     if trimmed.lines().any(|l| {
         let t = l.trim_start();
@@ -531,7 +700,7 @@ pub fn parse_subscription(text: &str) -> Result<Vec<NodeInfo>, String> {
         if nodes.is_empty() {
             return Err("no usable outbounds in JSON config".to_string());
         }
-        return Ok(nodes);
+        return Ok(ParseOutcome { nodes, skipped: Vec::new() });
     }
     let decoded_text;
     let content: &str = if trimmed.contains("://") {
@@ -540,16 +709,22 @@ pub fn parse_subscription(text: &str) -> Result<Vec<NodeInfo>, String> {
         decoded_text = String::from_utf8_lossy(&b64_decode(trimmed)?).into_owned();
         &decoded_text
     };
-    let nodes: Vec<NodeInfo> = content
-        .lines()
-        .map(str::trim)
-        .filter(|l| !l.is_empty())
-        .filter_map(|l| parse_share_link(l).ok())
-        .collect();
+    let mut nodes = Vec::new();
+    let mut skipped = Vec::new();
+    for line in content.lines().map(str::trim).filter(|l| !l.is_empty()) {
+        match parse_share_link(line) {
+            Ok(n) => nodes.push(n),
+            Err(_) => {
+                if let Some((scheme, _)) = line.split_once("://") {
+                    skipped.push(format!("未识别链接 ({scheme})"));
+                }
+            }
+        }
+    }
     if nodes.is_empty() {
         Err("no usable share links found".to_string())
     } else {
-        Ok(nodes)
+        Ok(ParseOutcome { nodes, skipped })
     }
 }
 
@@ -620,7 +795,8 @@ mod tests {
         use base64::Engine;
         let blob = "trojan://secret@a.example.com:443#A\nss://aes-128-gcm:pw@b.example.com:8388#B\n";
         let encoded = base64::engine::general_purpose::STANDARD.encode(blob);
-        let nodes = parse_subscription(&encoded).unwrap();
+        let outcome = parse_subscription(&encoded).unwrap();
+        let nodes = outcome.nodes;
         assert_eq!(nodes.len(), 2);
         assert_eq!(nodes[0].name, "A");
         assert_eq!(nodes[1].name, "B");
@@ -629,7 +805,7 @@ mod tests {
     #[test]
     fn parses_singbox_json_subscription() {
         let text = r#"{"outbounds":[{"type":"hysteria2","tag":"n1","server":"h.example.com","server_port":443,"password":"x","tls":{"enabled":true}},{"type":"direct","tag":"direct"}]}"#;
-        let nodes = parse_subscription(text).unwrap();
+        let nodes = parse_subscription(text).unwrap().nodes;
         assert_eq!(nodes.len(), 1);
         assert_eq!(nodes[0].name, "n1");
     }
@@ -674,12 +850,84 @@ proxies:
     server: tu.example.com
     port: 443
 "#;
-        let nodes = parse_subscription(yaml).unwrap();
+        let outcome = parse_subscription(yaml).unwrap();
+        let nodes = outcome.nodes;
         assert_eq!(nodes.len(), 3);
         assert_eq!(nodes[0].name, "YAML-SS");
         assert_eq!(out(&nodes[0])["method"], "aes-256-gcm");
         assert_eq!(out(&nodes[1])["tls"]["reality"]["public_key"], "PUBKEY");
         assert_eq!(out(&nodes[2])["tls"]["insecure"], true);
+        // The tuic entry has no uuid/password: skipped, and reported.
+        assert_eq!(outcome.skipped, vec!["YAML-TUIC (tuic)".to_string()]);
+    }
+
+    #[test]
+    fn parses_clash_yaml_extra_types() {
+        let yaml = r#"
+proxies:
+  - name: "SOCKS-NODE"
+    type: socks5
+    server: sk.example.com
+    port: 1080
+    username: u1
+    password: p1
+  - name: "HTTP-NODE"
+    type: http
+    server: ht.example.com
+    port: 8080
+  - name: "HY1-NODE"
+    type: hysteria
+    server: h1.example.com
+    port: 443
+    auth-str: a1
+    up: 10 Mbps
+    down: 50 Mbps
+    sni: h1.example.com
+  - name: "TUIC-NODE"
+    type: tuic
+    server: tu.example.com
+    port: 443
+    uuid: 11111111-2222-3333-4444-555555555555
+    password: tpw
+    sni: tu.example.com
+  - name: "WG-NODE"
+    type: wireguard
+    server: wg.example.com
+    port: 51820
+"#;
+        let outcome = parse_subscription(yaml).unwrap();
+        let nodes = outcome.nodes;
+        assert_eq!(nodes.len(), 4);
+        assert_eq!(out(&nodes[0])["type"], "socks");
+        assert_eq!(out(&nodes[0])["username"], "u1");
+        assert_eq!(out(&nodes[1])["type"], "http");
+        assert_eq!(out(&nodes[2])["type"], "hysteria");
+        assert_eq!(out(&nodes[2])["auth_str"], "a1");
+        assert_eq!(out(&nodes[2])["up_mbps"], 10);
+        assert_eq!(out(&nodes[3])["type"], "tuic");
+        assert_eq!(out(&nodes[3])["tls"]["alpn"][0], "h3");
+        assert_eq!(outcome.skipped, vec!["WG-NODE (wireguard)".to_string()]);
+    }
+
+    #[test]
+    fn parses_socks_links() {
+        let n = parse_share_link("socks5://user:pass@sk.example.com:1080#SK1").unwrap();
+        let ob = out(&n);
+        assert_eq!(ob["type"], "socks");
+        assert_eq!(ob["server"], "sk.example.com");
+        assert_eq!(ob["server_port"], 1080);
+        assert_eq!(ob["username"], "user");
+        assert_eq!(n.name, "SK1");
+        // v2rayN base64 whole-authority form.
+        use base64::Engine;
+        let blob = base64::engine::general_purpose::STANDARD
+            .encode("u2:p2@sk2.example.com:2080");
+        let n2 = parse_share_link(&format!("socks://{blob}#SK2")).unwrap();
+        let ob2 = out(&n2);
+        assert_eq!(ob2["server"], "sk2.example.com");
+        assert_eq!(ob2["server_port"], 2080);
+        assert_eq!(ob2["password"], "p2");
+        assert_eq!(n2.name, "SK2");
     }
 
     #[test]

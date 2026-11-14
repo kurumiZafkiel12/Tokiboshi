@@ -38,7 +38,7 @@ Future<void> stopCore() => RustLib.instance.api.crateApiCoreStopCore();
 
 Future<bool> coreRunning() => RustLib.instance.api.crateApiCoreCoreRunning();
 
-/// Parse subscription content (plain links, base64 blob, or sing-box
-/// JSON config) into nodes.
-Future<List<NodeInfo>> parseSubscription({required String text}) =>
+/// Parse subscription content (links, base64 blob, Clash YAML, or
+/// sing-box JSON config) into nodes plus skipped-entry notes.
+Future<ParseOutcome> parseSubscription({required String text}) =>
     RustLib.instance.api.crateApiCoreParseSubscription(text: text);

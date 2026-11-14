@@ -38,6 +38,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   NodeInfo dco_decode_node_info(dynamic raw);
 
   @protected
+  ParseOutcome dco_decode_parse_outcome(dynamic raw);
+
+  @protected
   int dco_decode_u_16(dynamic raw);
 
   @protected
@@ -63,6 +66,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   NodeInfo sse_decode_node_info(SseDeserializer deserializer);
+
+  @protected
+  ParseOutcome sse_decode_parse_outcome(SseDeserializer deserializer);
 
   @protected
   int sse_decode_u_16(SseDeserializer deserializer);
@@ -94,6 +100,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_node_info(NodeInfo self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_parse_outcome(ParseOutcome self, SseSerializer serializer);
 
   @protected
   void sse_encode_u_16(int self, SseSerializer serializer);

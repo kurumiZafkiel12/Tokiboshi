@@ -32,9 +32,24 @@ proxies:
     reality-opts:
       public-key: UYAJI0NMP2K4jMiSrqGgVKd3Z3Z3Z3Z3Z3Z3Z3Z3Z3Q
       short-id: ab12
+  - name: "CHAIN-SOCKS"
+    type: socks5
+    server: 127.0.0.1
+    port: 1080
+    username: u
+    password: p
+  - name: "CHAIN-TUIC"
+    type: tuic
+    server: 127.0.0.1
+    port: 443
+    uuid: 11111111-2222-3333-4444-555555555555
+    password: tpw
+    sni: example.com
 "#;
-    let nodes = parse_subscription(yaml).unwrap();
-    assert_eq!(nodes.len(), 2);
+    let outcome = parse_subscription(yaml).unwrap();
+    let nodes = outcome.nodes;
+    assert_eq!(nodes.len(), 4);
+    assert!(outcome.skipped.is_empty());
     for node in &nodes {
         let outbound: serde_json::Value =
             serde_json::from_str(&node.outbound_json).unwrap();

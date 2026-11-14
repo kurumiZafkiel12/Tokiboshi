@@ -95,7 +95,7 @@ abstract class RustLibApi extends BaseApi {
 
   Future<NodeInfo> crateApiCoreParseShareLink({required String link});
 
-  Future<List<NodeInfo>> crateApiCoreParseSubscription({required String text});
+  Future<ParseOutcome> crateApiCoreParseSubscription({required String text});
 
   Future<void> crateApiCoreStartCore(
       {required String binaryPath, required String configPath});
@@ -236,7 +236,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
-  Future<List<NodeInfo>> crateApiCoreParseSubscription({required String text}) {
+  Future<ParseOutcome> crateApiCoreParseSubscription({required String text}) {
     return handler.executeNormal(NormalTask(
       callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
@@ -245,7 +245,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             funcId: 6, port: port_);
       },
       codec: SseCodec(
-        decodeSuccessData: sse_decode_list_node_info,
+        decodeSuccessData: sse_decode_parse_outcome,
         decodeErrorData: sse_decode_String,
       ),
       constMeta: kCrateApiCoreParseSubscriptionConstMeta,
@@ -376,6 +376,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  ParseOutcome dco_decode_parse_outcome(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 2)
+      throw Exception('unexpected arr length: expect 2 but see ${arr.length}');
+    return ParseOutcome(
+      nodes: dco_decode_list_node_info(arr[0]),
+      skipped: dco_decode_list_String(arr[1]),
+    );
+  }
+
+  @protected
   int dco_decode_u_16(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw as int;
@@ -446,6 +458,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  ParseOutcome sse_decode_parse_outcome(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_nodes = sse_decode_list_node_info(deserializer);
+    var var_skipped = sse_decode_list_String(deserializer);
+    return ParseOutcome(nodes: var_nodes, skipped: var_skipped);
+  }
+
+  @protected
   int sse_decode_u_16(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return deserializer.buffer.getUint16();
@@ -512,6 +532,13 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_String(self.name, serializer);
     sse_encode_String(self.outboundJson, serializer);
+  }
+
+  @protected
+  void sse_encode_parse_outcome(ParseOutcome self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_list_node_info(self.nodes, serializer);
+    sse_encode_list_String(self.skipped, serializer);
   }
 
   @protected

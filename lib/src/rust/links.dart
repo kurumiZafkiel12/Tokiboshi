@@ -28,3 +28,27 @@ class NodeInfo {
           name == other.name &&
           outboundJson == other.outboundJson;
 }
+
+/// Result of parsing subscription content: converted nodes plus a
+/// human-readable note per entry that had to be skipped (currently
+/// unsupported type), formatted as "name (type)".
+class ParseOutcome {
+  final List<NodeInfo> nodes;
+  final List<String> skipped;
+
+  const ParseOutcome({
+    required this.nodes,
+    required this.skipped,
+  });
+
+  @override
+  int get hashCode => nodes.hashCode ^ skipped.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is ParseOutcome &&
+          runtimeType == other.runtimeType &&
+          nodes == other.nodes &&
+          skipped == other.skipped;
+}

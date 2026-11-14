@@ -45,12 +45,22 @@ class NodeInfo {
       );
 }
 
+/// Result of parsing subscription content: converted nodes plus one
+/// "name (type)" note per entry skipped as unsupported.
+class ParseOutcome {
+  const ParseOutcome({required this.nodes, this.skipped = const []});
+
+  final List<NodeInfo> nodes;
+  final List<String> skipped;
+}
+
 abstract class CoreBridge {
   /// Parse one share link into a node.
   Future<NodeInfo> parseShareLink(String link);
 
-  /// Parse subscription content (links, base64 blob, sing-box JSON).
-  Future<List<NodeInfo>> parseSubscription(String text);
+  /// Parse subscription content (links, base64 blob, Clash YAML,
+  /// sing-box JSON).
+  Future<ParseOutcome> parseSubscription(String text);
 
   /// Build a full sing-box config around one outbound JSON object.
   Future<String> buildConfig({

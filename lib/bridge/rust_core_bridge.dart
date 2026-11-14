@@ -12,11 +12,14 @@ class RustCoreBridge implements CoreBridge {
   }
 
   @override
-  Future<List<NodeInfo>> parseSubscription(String text) async {
-    final nodes = await rust_api.parseSubscription(text: text);
-    return nodes
-        .map((n) => NodeInfo(name: n.name, outboundJson: n.outboundJson))
-        .toList();
+  Future<ParseOutcome> parseSubscription(String text) async {
+    final outcome = await rust_api.parseSubscription(text: text);
+    return ParseOutcome(
+      nodes: outcome.nodes
+          .map((n) => NodeInfo(name: n.name, outboundJson: n.outboundJson))
+          .toList(),
+      skipped: outcome.skipped,
+    );
   }
 
   @override
