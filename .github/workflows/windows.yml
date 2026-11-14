@@ -2,7 +2,8 @@ name: windows
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'fix/**']
+  pull_request:
   workflow_dispatch:
 
 jobs:
@@ -21,8 +22,14 @@ jobs:
       - name: Rust middle layer tests
         run: cargo test --manifest-path rust/Cargo.toml
 
+      - name: Flutter dependencies
+        run: flutter pub get --enforce-lockfile
+
+      - name: Flutter analysis
+        run: flutter analyze
+
       - name: Flutter tests
-        run: flutter test
+        run: flutter test --no-pub
 
       - name: Build Windows release
         run: flutter build windows --release

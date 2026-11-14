@@ -122,10 +122,7 @@ impl CoreProcess {
             None => CoreState::Stopped,
             Some(child) => match child.try_wait() {
                 Ok(None) => CoreState::Running,
-                _ => {
-                    *slot = None;
-                    CoreState::Stopped
-                }
+                _ => CoreState::Stopped
             },
         }
     }
@@ -396,6 +393,7 @@ mod tests {
         core.start(&config).unwrap();
         let deadline = std::time::Instant::now() + Duration::from_secs(20);
         loop {
+            let _ = core.state();
             if core.restart_count() >= MAX_RESTARTS && core.last_exit().is_some() {
                 break;
             }

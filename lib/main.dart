@@ -16,8 +16,12 @@ import 'pages/settings_page.dart';
 import 'pages/subscriptions_page.dart';
 import 'services/clash_api.dart';
 import 'services/latency.dart';
+import 'services/local_ports.dart';
+import 'services/node_tags.dart';
+import 'services/proxy_chain.dart';
 import 'services/store.dart';
 import 'services/subscription_fetcher.dart';
+import 'services/subscription_resolver.dart';
 import 'services/system_proxy.dart';
 import 'src/rust/frb_generated.dart';
 
@@ -41,12 +45,14 @@ class TokiboshiApp extends StatelessWidget {
     this.store,
     this.systemProxy,
     this.fetcher,
+    this.allocatePort = findAvailablePort,
   });
 
   final CoreBridge bridge;
   final Store? store;
   final SystemProxy? systemProxy;
   final SubscriptionFetcher? fetcher;
+  final PortAllocator allocatePort;
 
   @override
   Widget build(BuildContext context) {
@@ -61,6 +67,7 @@ class TokiboshiApp extends StatelessWidget {
       ),
       home: ShellPage(
         bridge: bridge,
+        allocatePort: allocatePort,
         store: store ?? Store(),
         systemProxy: systemProxy ?? const WindowsSystemProxy(),
         fetcher: fetcher ?? const HttpSubscriptionFetcher(),
@@ -76,12 +83,14 @@ class ShellPage extends StatefulWidget {
     required this.store,
     required this.systemProxy,
     required this.fetcher,
+    required this.allocatePort,
   });
 
   final CoreBridge bridge;
   final Store store;
   final SystemProxy systemProxy;
   final SubscriptionFetcher fetcher;
+  final PortAllocator allocatePort;
 
   @override
   State<ShellPage> createState() => _ShellPageState();
@@ -231,80 +240,57 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
 
   /// Fetch a subscription URL and parse it; if the returned content
   /// itself lists further subscription URLs (one link containing
-  /// many), fetch and merge those too (one level deep).
-  /// Compile a Clash-style name filter (`filter` / `exclude-filter`)
-  /// to a Dart RegExp. Clash filters are regexes, often prefixed
-  /// with an inline `(?i)`; Dart has no inline flags, so strip them
-  /// and switch to case-insensitive matching instead. A filter that
-  /// does not compile is ignored rather than breaking the update.
-  RegExp? _clashRegex(String? pattern) {
-    if (pattern == null || pattern.isEmpty) return null;
-    var p = pattern;
-    var insensitive = false;
-    if (p.contains('(?i)')) {
-      insensitive = true;
-      p = p.replaceAll('(?i)', '');
-    }
-    try {
-      return RegExp(p, caseSensitive: !insensitive);
-    } catch (_) {
-      return null;
-    }
-  }
+  /// many), recursively fetch providers and merge their nodes.
+  Future<ParseOutcome> _fetchParseExpand(String url) =>
+      SubscriptionResolver(bridge: widget.bridge, fetcher: widget.fetcher).resolve(url);
 
-  Future<ParseOutcome> _fetchParseExpand(String url) async {
-    final content = await widget.fetcher.fetch(url);
-    final first = await widget.bridge.parseSubscription(content);
-    final nodes = [...first.nodes];
-    final skipped = [...first.skipped];
-    final nested = <String>{};
-    for (final line in content.split('\n')) {
-      final t = line.trim();
-      if (_isHttpUrl(t) && t != url) nested.add(t);
-    }
-    for (final link in nested.take(5)) {
-      try {
-        final inner = await widget.fetcher.fetch(link);
-        final outcome = await widget.bridge.parseSubscription(inner);
-        nodes.addAll(outcome.nodes);
-        skipped.addAll(outcome.skipped);
-      } catch (_) {
-        skipped.add('子订阅拉取失败 (${Uri.tryParse(link)?.host ?? link})');
-      }
-    }
-    // Clash `proxy-providers`: most nodes of hub-style subscriptions
-    // live behind these. Fetch each (with its declared User-Agent),
-    // parse it like a subscription, honour its name filters, and
-    // group the nodes under the provider's name — the behaviour
-    // users know from Clash clients.
-    for (final provider in first.providers.take(12)) {
-      try {
-        final inner = await widget.fetcher
-            .fetch(provider.url, userAgent: provider.userAgent);
-        final outcome = await widget.bridge.parseSubscription(inner);
-        final exclude = _clashRegex(provider.excludeFilter);
-        final include = _clashRegex(provider.filter);
-        var added = 0;
-        for (final n in outcome.nodes) {
-          if (exclude != null && exclude.hasMatch(n.name)) continue;
-          if (include != null && !include.hasMatch(n.name)) continue;
-          var node = n.withGroup(provider.name);
-          if (nodes.any((x) => x.name == node.name)) {
-            node = node.withName('${node.name}（${provider.name}）');
-          }
-          if (nodes.any((x) => x.name == node.name)) continue;
-          nodes.add(node);
-          added++;
-        }
-        if (added == 0 && outcome.nodes.isNotEmpty) {
-          skipped.add('节点源「${provider.name}」的节点被过滤规则全部排除');
-        }
-        skipped.addAll(outcome.skipped);
-      } catch (_) {
-        skipped.add('节点源「${provider.name}」拉取失败');
-      }
-    }
-    return ParseOutcome(nodes: nodes, skipped: skipped);
+  Future<void> _createChainDialog() async {
+    if (_running || _busy || _data.nodes.length < 2) return;
+    var entry = 0;
+    var exit = 1;
+    String? error;
+    final name = TextEditingController(text: '链式代理');
+    final result = await showDialog<List<NodeInfo>>(
+      context: context,
+      builder: (context) => StatefulBuilder(builder: (context, update) => AlertDialog(
+        title: const Text('添加链式代理'),
+        content: SizedBox(width: 460, child: Column(mainAxisSize: MainAxisSize.min, children: [
+          const Text('连接顺序：本机 → 前置节点 → 落地节点 → 目标网站。保存独立副本，不随原订阅更新。'),
+          const SizedBox(height: 12),
+          TextField(controller: name, decoration: const InputDecoration(labelText: '链名称')),
+          DropdownButtonFormField<int>(
+            initialValue: entry, isExpanded: true,
+            decoration: const InputDecoration(labelText: '前置节点'),
+            items: [for (var i = 0; i < _data.nodes.length; i++)
+              DropdownMenuItem(value: i, child: Text(_data.nodes[i].name, overflow: TextOverflow.ellipsis))],
+            onChanged: (value) => update(() => entry = value ?? entry),
+          ),
+          DropdownButtonFormField<int>(
+            initialValue: exit, isExpanded: true,
+            decoration: const InputDecoration(labelText: '落地节点'),
+            items: [for (var i = 0; i < _data.nodes.length; i++)
+              DropdownMenuItem(value: i, child: Text(_data.nodes[i].name, overflow: TextOverflow.ellipsis))],
+            onChanged: (value) => update(() => exit = value ?? exit),
+          ),
+          if (error != null) Text(error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
+        ])),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('取消')),
+          FilledButton(onPressed: () {
+            try { Navigator.pop(context, createProxyChain(_data.nodes, entry, exit, name.text)); }
+            on FormatException catch (e) { update(() => error = e.message); }
+          }, child: const Text('添加')),
+        ],
+      )),
+    );
+    name.dispose();
+    if (result == null || !mounted) return;
+    setState(() {
+      _data.nodes = [..._data.nodes, ...result];
+      _data.selectedIndex = _data.nodes.length - 1;
+      _message = '链式代理已添加，已选择落地节点；请保留同组前置节点';
+    });
+    await _persist();
   }
 
   Future<void> _importText(String trimmed) async {
@@ -362,15 +348,8 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
   /// "；另有 N 个暂不支持已跳过（wireguard ×1）" or '' when none.
   String _skippedNote(List<String> skipped) {
     if (skipped.isEmpty) return '';
-    final counts = <String, int>{};
-    for (final entry in skipped) {
-      final m = RegExp(r'\(([^()]*)\)\s*$').firstMatch(entry);
-      final type = m?.group(1) ??
-          (entry.startsWith('子订阅') ? '子订阅失败' : 'unknown');
-      counts[type] = (counts[type] ?? 0) + 1;
-    }
-    final parts = counts.entries.map((e) => '${e.key} ×${e.value}').join('、');
-    return '；另有 ${skipped.length} 个暂不支持已跳过（$parts）';
+    return '；跳过/未完成 ${skipped.length} 项：${skipped.take(5).join('；')}'
+        '${skipped.length > 5 ? '；其余 ${skipped.length - 5} 项' : ''}';
   }
 
   Future<void> _addSubscriptionDialog() async {
@@ -531,7 +510,7 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
     if (_running && index >= 0 && index < _data.nodes.length) {
       final node = _data.nodes[index];
       try {
-        await _clash.select('proxy', node.name);
+        await _clash.select('proxy', assignNodeTags(_data.nodes.map((n) => n.name))[index]);
         _setMessage('已切换到 ${node.name}');
       } catch (_) {
         _setMessage('已选中 ${node.name}（重启内核后生效）');
@@ -754,6 +733,7 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
   Future<void> _toggleCore() async {
     if (_busy) return;
     setState(() => _busy = true);
+    var started = false;
     try {
       if (_running) {
         await widget.bridge.stopCore();
@@ -771,6 +751,14 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
       }
       final binary = await _ensureCoreBinary();
       if (binary == null) return;
+      final oldMixedPort = _data.mixedPort;
+      final oldApiPort = _data.clashApiPort;
+      final mixedPort = await widget.allocatePort(oldMixedPort, {});
+      final apiPort = await widget.allocatePort(oldApiPort, {mixedPort});
+      _data.mixedPort = mixedPort;
+      _data.clashApiPort = apiPort;
+      await _persist();
+      final portsChanged = mixedPort != oldMixedPort || apiPort != oldApiPort;
       final selected = _data.selected;
       final config = await widget.bridge.buildConfig(
         nodes: _data.nodes
@@ -782,13 +770,14 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
         blockAds: _data.blockAds,
         bypassCn: _data.bypassCn,
         dataDir: _dataDir,
-        selectedName: selected?.name,
+        selectedName: selected == null ? null : assignNodeTags(_data.nodes.map((n) => n.name))[_data.selectedIndex],
       );
       final configFile = await widget.store.writeRuntimeConfig(config);
       await widget.bridge.startCore(
         singBoxPath: binary,
         configPath: configFile.path,
       );
+      started = true;
       if (_data.systemProxy) {
         await widget.systemProxy.apply(true, _data.mixedPort);
       }
@@ -798,9 +787,15 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
         _lastExit = null;
         _message = '运行中：${_data.nodes.length} 个节点 · mixed 127.0.0.1:${_data.mixedPort}'
             ' · 面板 127.0.0.1:${_data.clashApiPort}/ui'
-            '${_data.systemProxy ? ' · 系统代理已开启' : ''}';
+            '${_data.systemProxy ? ' · 系统代理已开启' : ''}'
+            '${portsChanged ? ' · 原端口被占用，已自动更换并保存端口' : ''}';
       });
     } catch (e) {
+      if (started) {
+        try { await widget.bridge.stopCore(); } catch (_) {}
+        try { await widget.systemProxy.apply(false, _data.mixedPort); } catch (_) {}
+        if (mounted) setState(() => _running = false);
+      }
       _setMessage('启动失败：$e');
     } finally {
       if (mounted) setState(() => _busy = false);
@@ -931,6 +926,7 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
           onDelete: _deleteNode,
           onImport: _importDialog,
           onMeasureAll: _measureAll,
+          onCreateChain: _createChainDialog,
         );
       case 3:
         page = SubscriptionsPage(

@@ -67,7 +67,42 @@ pub fn start_core(binary_path: String, config_path: String) -> Result<(), String
     }
     let mut core = CoreProcess::new(PathBuf::from(&binary_path));
     core.check_config(std::path::Path::new(&config_path))?;
+    let config: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(&config_path).map_err(|e| e.to_string())?
+    ).map_err(|e| e.to_string())?;
+    let mut listeners = Vec::new();
+    if let Some(inbounds) = config["inbounds"].as_array() {
+        for inbound in inbounds {
+            if inbound["type"] == "mixed" {
+                if let Some(port) = inbound["listen_port"].as_u64() {
+                    listeners.push(format!("{}:{port}", inbound["listen"].as_str().unwrap_or("127.0.0.1")));
+                }
+            }
+        }
+    }
+    if let Some(addr) = config["experimental"]["clash_api"]["external_controller"].as_str() {
+        listeners.push(addr.to_string());
+    }
+    // A config check doesn't bind sockets. Detect occupied ports before spawn,
+    // then wait for actual listeners before the UI enables the system proxy.
+    for addr in &listeners {
+        std::net::TcpListener::bind(addr).map_err(|_| format!(
+            "本地端口 {addr} 被占用或不可用，请修改设置中的端口或关闭占用该端口的软件"))?;
+    }
     core.start(std::path::Path::new(&config_path))?;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        if core.state() == CoreState::Stopped || std::time::Instant::now() >= deadline {
+            let details = core.logs().into_iter().rev().take(8).collect::<Vec<_>>().join("\n");
+            let _ = core.stop();
+            return Err(format!("内核启动失败，监听端口未就绪：{details}"));
+        }
+        if listeners.iter().all(|addr| addr.parse().ok().is_some_and(|address|
+            std::net::TcpStream::connect_timeout(&address, std::time::Duration::from_millis(100)).is_ok())) {
+            break;
+        }
+    }
     *slot = Some(core);
     Ok(())
 }
@@ -188,9 +223,6 @@ pub fn start_ensure_core(data_dir: String) {
                 return;
             }
         }
-        // Rule-sets are local files now; refresh them best-effort
-        // alongside the binary so config generation can use them.
-        core_download::ensure_rule_sets(&dir);
         let result = Ok(core_download::installed_version(&dir).unwrap_or_default());
         match result {
             Ok(version) => set_ensure(EnsureState {
@@ -204,6 +236,9 @@ pub fn start_ensure_core(data_dir: String) {
                 error: Some(e),
             }),
         }
+        // Rule downloads are optional and may take minutes on a blocked
+        // network. Report binary readiness first so startup never waits for them.
+        core_download::ensure_rule_sets(&dir);
         ENSURE_RUNNING.store(false, std::sync::atomic::Ordering::SeqCst);
     });
 }

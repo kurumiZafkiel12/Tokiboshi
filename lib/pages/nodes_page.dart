@@ -32,6 +32,7 @@ class NodesPage extends StatefulWidget {
     required this.onDelete,
     required this.onImport,
     required this.onMeasureAll,
+    this.onCreateChain,
   });
 
   final List<NodeInfo> nodes;
@@ -44,6 +45,7 @@ class NodesPage extends StatefulWidget {
   final ValueChanged<int> onDelete;
   final VoidCallback onImport;
   final VoidCallback onMeasureAll;
+  final VoidCallback? onCreateChain;
 
   @override
   State<NodesPage> createState() => _NodesPageState();
@@ -63,7 +65,7 @@ class _NodesPageState extends State<NodesPage> {
       if (_group.startsWith('provider:')) {
         return n.group == _group.substring('provider:'.length);
       }
-      return n.source == _group && n.group.isEmpty;
+      return n.source == _group;
     }
 
     final visible = <int>[
@@ -91,6 +93,12 @@ class _NodesPageState extends State<NodesPage> {
               Text('节点选择（${widget.nodes.length}）',
                   style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w600)),
               const Spacer(),
+              OutlinedButton.icon(
+                onPressed: widget.busy || widget.running || widget.nodes.length < 2 ? null : widget.onCreateChain,
+                icon: const Icon(Icons.link, size: 18),
+                label: const Text('链式代理'),
+              ),
+              const SizedBox(width: 8),
               OutlinedButton.icon(
                 onPressed: widget.busy ? null : widget.onMeasureAll,
                 icon: const Icon(Icons.speed, size: 18),
@@ -154,23 +162,47 @@ class _NodesPageState extends State<NodesPage> {
               ? const Center(child: Text('还没有节点，点右上角「导入」粘贴链接或订阅地址'))
               : visible.isEmpty
                   ? const Center(child: Text('这个分组里没有匹配的节点'))
-                  : GridView.builder(
-                      padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
-                      gridDelegate:
-                          const SliverGridDelegateWithMaxCrossAxisExtent(
-                        maxCrossAxisExtent: 300,
-                        mainAxisExtent: 96,
-                        crossAxisSpacing: 10,
-                        mainAxisSpacing: 10,
-                      ),
-                      itemCount: visible.length,
-                      itemBuilder: (context, vi) {
-                        final i = visible[vi];
-                        return _nodeCard(context, i, widget.nodes[i]);
-                      },
-                    ),
+                  : _groupedNodes(context, visible),
         ),
       ],
+    );
+  }
+
+  Widget _groupedNodes(BuildContext context, List<int> visible) {
+    final groups = <String, List<int>>{};
+    final labels = <String, String>{};
+    for (final i in visible) {
+      final node = widget.nodes[i];
+      final key = '${node.source}\u0000${node.group}';
+      final subscription = widget.subscriptions.where((s) => s.id == node.source);
+      final sourceName = subscription.isEmpty ? '手动导入' : subscription.first.name;
+      labels[key] = node.group.isEmpty ? sourceName : '$sourceName / ${node.group}';
+      groups.putIfAbsent(key, () => []).add(i);
+    }
+    final keys = groups.keys.toList();
+    return ListView.builder(
+      padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
+      itemCount: keys.length,
+      itemBuilder: (context, index) {
+        final key = keys[index];
+        final indices = groups[key]!;
+        return Card(child: ExpansionTile(
+          key: PageStorageKey('$_group/$_query/$key'),
+          initiallyExpanded: keys.length <= 3 || _group.isNotEmpty || _query.isNotEmpty,
+          title: Text('${labels[key]}（${indices.length}）'),
+          leading: const Icon(Icons.folder_outlined),
+          childrenPadding: const EdgeInsets.all(10),
+          children: [GridView.builder(
+            shrinkWrap: true, physics: const NeverScrollableScrollPhysics(),
+            gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+              maxCrossAxisExtent: 300, mainAxisExtent: 100,
+              crossAxisSpacing: 10, mainAxisSpacing: 10,
+            ),
+            itemCount: indices.length,
+            itemBuilder: (context, i) => _nodeCard(context, indices[i], widget.nodes[indices[i]]),
+          )],
+        ));
+      },
     );
   }
 

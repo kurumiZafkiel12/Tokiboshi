@@ -164,12 +164,17 @@ pub fn build_config_multi(
         return Err("ports must not be 0".to_string());
     }
 
+    if settings.mixed_port == settings.clash_api_port {
+        return Err("mixed and Clash API ports must be different".into());
+    }
+
     let names: Vec<String> = nodes.iter().map(|n| n.name.clone()).collect();
     let tags = assign_tags(&names);
 
     let mut outbounds: Vec<Value> = Vec::new();
     let default_tag = selected_name
-        .and_then(|sel| names.iter().position(|n| n == sel))
+        .and_then(|sel| tags.iter().position(|tag| tag == sel)
+            .or_else(|| names.iter().position(|n| n == sel)))
         .map(|i| tags[i].clone())
         .unwrap_or_else(|| "auto".to_string());
     let mut selector_members = vec![Value::String("auto".to_string())];
@@ -188,6 +193,19 @@ pub fn build_config_multi(
         "interval": "3m",
         "tolerance": 50
     }));
+    // Imported tags and display names can differ; resolve dependencies before
+    // overwriting tags, especially names colliding with our reserved groups.
+    let mut aliases = std::collections::HashMap::<String, String>::new();
+    for (spec, tag) in nodes.iter().zip(tags.iter()) {
+        let ob: Value = serde_json::from_str(&spec.outbound_json)
+            .map_err(|e| format!("node '{}' has invalid outbound JSON: {e}", spec.name))?;
+        for alias in [Some(spec.name.as_str()), ob.get("tag").and_then(Value::as_str)].into_iter().flatten() {
+            aliases.entry(alias.into()).and_modify(|previous| {
+                if previous != tag { previous.clear(); }
+            }).or_insert_with(|| tag.clone());
+        }
+    }
+    let mut dependencies = std::collections::HashMap::<String, String>::new();
     for (spec, tag) in nodes.iter().zip(tags.iter()) {
         let mut ob: Value = serde_json::from_str(&spec.outbound_json)
             .map_err(|e| format!("node '{}' has invalid outbound JSON: {e}", spec.name))?;
@@ -198,8 +216,26 @@ pub fn build_config_multi(
             Some(t) if !t.is_empty() => {}
             _ => return Err(format!("node '{}' outbound missing \"type\"", spec.name)),
         }
+        if let Some(via) = obj.get("detour").and_then(Value::as_str) {
+            let target = match aliases.get(via) {
+                Some(target) if target.is_empty() => return Err(format!("node '{}' has ambiguous detour '{via}'", spec.name)),
+                Some(target) => target.clone(),
+                None if via == "direct" => "direct".to_string(),
+                None => return Err(format!("node '{}' references missing detour '{via}'", spec.name)),
+            };
+            dependencies.insert(tag.clone(), target.clone());
+            obj.insert("detour".into(), Value::String(target));
+        }
         obj.insert("tag".to_string(), Value::String(tag.clone()));
         outbounds.push(ob);
+    }
+    for tag in &tags {
+        let mut seen = std::collections::HashSet::new();
+        let mut current = tag;
+        while let Some(next) = dependencies.get(current) {
+            if !seen.insert(current) { return Err(format!("cyclic proxy chain involving '{tag}'")); }
+            current = next;
+        }
     }
     outbounds.push(json!({ "type": "direct", "tag": "direct" }));
 
@@ -296,9 +332,10 @@ pub fn build_config_multi(
             "cache_file": { "enabled": true, "path": cache_path },
             "clash_api": {
                 "external_controller": format!("127.0.0.1:{}", settings.clash_api_port),
-                "external_ui": "ui",
+                "external_ui": if settings.data_dir.is_empty() { "ui".to_string() }
+                    else { std::path::Path::new(&settings.data_dir).join("ui").to_string_lossy().into_owned() },
                 "external_ui_download_url": ZASHBOARD_DOWNLOAD_URL,
-                "external_ui_download_detour": "proxy",
+                "external_ui_download_detour": "direct",
                 "default_mode": "Rule"
             }
         }
@@ -309,6 +346,19 @@ pub fn build_config_multi(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn chain_references_follow_reserved_tag_renaming() {
+        let nodes = vec![NodeSpec { name: "proxy".into(), outbound_json: r#"{"type":"socks","tag":"entry","server":"127.0.0.1","server_port":1080}"#.into() },
+            NodeSpec { name: "exit".into(), outbound_json: r#"{"type":"socks","server":"127.0.0.1","server_port":1081,"detour":"entry"}"#.into() }];
+        let v: Value = serde_json::from_str(&build_config_multi(&nodes, &CoreSettings::default(), None).unwrap()).unwrap();
+        assert_eq!(v["outbounds"][3]["detour"], "proxy-2");
+        let mut broken = nodes.clone();
+        broken[1].outbound_json = broken[1].outbound_json.replace("entry", "missing");
+        assert!(build_config_multi(&broken, &CoreSettings::default(), None).unwrap_err().contains("missing detour"));
+        broken[1].outbound_json = nodes[1].outbound_json.replace("entry", "exit");
+        assert!(build_config_multi(&broken, &CoreSettings::default(), None).unwrap_err().contains("cyclic"));
+    }
 
     #[test]
     fn rejects_invalid_json() {

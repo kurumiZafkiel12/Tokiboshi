@@ -51,6 +51,7 @@ void main() {
 
     await tester.pumpWidget(
       TokiboshiApp(
+        allocatePort: (port, reserved) async => port,
         bridge: bridge,
         store: store,
         systemProxy: proxy,
@@ -124,6 +125,7 @@ void main() {
     });
     await tester.pumpWidget(
       TokiboshiApp(
+        allocatePort: (port, reserved) async => port,
         bridge: FakeBridge(),
         store: store,
         systemProxy: NoopSystemProxy(),
@@ -162,6 +164,7 @@ void main() {
     });
     await tester.pumpWidget(
       TokiboshiApp(
+        allocatePort: (port, reserved) async => port,
         bridge: FakeBridge(),
         store: store,
         systemProxy: NoopSystemProxy(),

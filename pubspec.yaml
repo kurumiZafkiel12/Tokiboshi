@@ -1,6 +1,9 @@
 name: tokiboshi
 description: "Tokiboshi — a sing-box client. Flutter UI, Rust middle layer, sing-box core."
 publish_to: "none"
+homepage: https://github.com/kurumiZafkiel12/Tokiboshi
+repository: https://github.com/kurumiZafkiel12/Tokiboshi
+issue_tracker: https://github.com/kurumiZafkiel12/Tokiboshi/issues
 version: 0.5.1+10
 
 environment:

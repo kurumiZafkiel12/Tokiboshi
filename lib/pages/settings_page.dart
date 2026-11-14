@@ -65,6 +65,10 @@ class _SettingsPageState extends State<SettingsPage> {
       setState(() => _error = 'Clash API 端口无效：${_clashPortController.text}');
       return;
     }
+    if (port == clashPort) {
+      setState(() => _error = '本地端口与 Clash API 端口不能相同');
+      return;
+    }
     setState(() => _error = null);
     widget.onSave(port, clashPort, _pathController.text.trim());
   }
@@ -201,6 +205,8 @@ class _SettingsPageState extends State<SettingsPage> {
                   const SizedBox(height: 8),
                   const Text('Tokiboshi v0.5.1 · Flutter 壳 + Rust 中间层 + sing-box 内核'),
                   const Text('面板为 zashboard（由 sing-box 托管于 127.0.0.1:9090/ui）；内核 sing-box 1.14.4 按需下载'),
+                  const SelectableText('项目地址：https://github.com/kurumiZafkiel12/Tokiboshi'),
+                  const SelectableText('问题反馈：https://github.com/kurumiZafkiel12/Tokiboshi/issues'),
                   Text('数据文件：${widget.dataFilePath}'),
                 ],
               ),

@@ -45,6 +45,7 @@ fn b64_decode(input: &str) -> Result<Vec<u8>, String> {
     let cleaned: String = input.chars().filter(|c| !c.is_whitespace()).collect();
     base64::engine::general_purpose::STANDARD
         .decode(&cleaned)
+        .or_else(|_| base64::engine::general_purpose::STANDARD_NO_PAD.decode(&cleaned))
         .or_else(|_| base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(&cleaned))
         .or_else(|_| base64::engine::general_purpose::URL_SAFE.decode(&cleaned))
         .map_err(|e| format!("invalid base64: {e}"))
@@ -636,10 +637,9 @@ fn clash_proxy_to_outbound(m: &Map<String, Value>) -> Option<Value> {
     let typ = cs(m, "type")?;
     let server = cs(m, "server")?;
     let ports = clash_ports(m);
-    let port = m
-        .get("port")
-        .and_then(Value::as_u64)
+    let port = m.get("port").and_then(|v| v.as_u64().or_else(|| v.as_str()?.parse().ok()))
         .or_else(|| first_port_of(&ports))?;
+    if port == 0 || port > u16::MAX as u64 { return None; }
     let mut ob = Map::new();
     ob.insert("server".into(), Value::String(server.to_string()));
     ob.insert("server_port".into(), Value::from(port));
@@ -703,7 +703,7 @@ fn clash_proxy_to_outbound(m: &Map<String, Value>) -> Option<Value> {
             ob.insert("password".into(), Value::String(cs(m, "password")?.to_string()));
             ob.insert("tls".into(), Value::Object(clash_tls(m)));
         }
-        "hysteria2" => {
+        "hysteria2" | "hy2" => {
             ob.insert("type".into(), "hysteria2".into());
             let password = cs(m, "password").or_else(|| cs(m, "auth"))?;
             ob.insert("password".into(), Value::String(password.to_string()));
@@ -800,18 +800,22 @@ fn clash_proxy_to_outbound(m: &Map<String, Value>) -> Option<Value> {
         }
         _ => return None,
     }
+    if let Some(via) = cs(m, "dialer-proxy") {
+        ob.insert("detour".into(), Value::String(if via == "DIRECT" { "direct" } else { via }.into()));
+    }
     Some(Value::Object(ob))
 }
 
 /// Parse a Clash YAML subscription (its `proxies:` list becomes nodes).
 pub fn parse_clash_yaml(text: &str) -> Result<ParseOutcome, String> {
-    let doc: serde_yaml::Value =
+    let mut doc: serde_yaml::Value =
         serde_yaml::from_str(text).map_err(|e| format!("invalid YAML: {e}"))?;
+    doc.apply_merge().map_err(|e| format!("invalid YAML merge: {e}"))?;
     let doc = yaml_to_json(&doc);
     let proxies = doc
-        .get("proxies")
+        .get("proxies").or_else(|| doc.get("payload"))
         .and_then(Value::as_array)
-        .ok_or("YAML has no proxies list")?;
+        .map(Vec::as_slice).unwrap_or(&[]);
     let mut nodes = Vec::new();
     let mut skipped = Vec::new();
     for proxy in proxies.iter().filter_map(Value::as_object) {
@@ -869,60 +873,57 @@ pub fn parse_clash_yaml(text: &str) -> Result<ParseOutcome, String> {
 /// Invalid lines are skipped; an error is returned only when nothing
 /// usable was found.
 pub fn parse_subscription(text: &str) -> Result<ParseOutcome, String> {
-    let trimmed = text.trim();
+    parse_subscription_inner(text, 0)
+}
+
+fn parse_subscription_inner(text: &str, depth: usize) -> Result<ParseOutcome, String> {
+    if depth > 4 { return Err("subscription encoding nesting is too deep".into()); }
+    let trimmed = text.trim().trim_start_matches('\u{feff}');
+    if trimmed.starts_with('{') || trimmed.starts_with('[') {
+        let v: Value = serde_json::from_str(trimmed).map_err(|e| format!("invalid JSON: {e}"))?;
+        if v.get("proxies").is_some() || v.get("proxy-providers").is_some() || v.get("payload").is_some() {
+            return parse_clash_yaml(trimmed);
+        }
+        let outbounds = v.get("outbounds").and_then(Value::as_array).or_else(|| v.as_array())
+            .ok_or("JSON config has no outbounds")?;
+        let nodes: Vec<NodeInfo> = outbounds.iter()
+            .filter(|ob| ob.get("server").is_some())
+            .map(|ob| NodeInfo {
+                name: ob.get("tag").and_then(Value::as_str).filter(|s| !s.is_empty())
+                    .unwrap_or_else(|| ob.get("type").and_then(Value::as_str).unwrap_or("node")).into(),
+                outbound_json: ob.to_string(),
+            }).collect();
+        if nodes.is_empty() { return Err("no usable outbounds in JSON config".into()); }
+        return Ok(ParseOutcome { nodes, skipped: vec![], providers: vec![] });
+    }
     if trimmed.lines().any(|l| {
         let t = l.trim_start();
-        t.starts_with("proxies:") || t.starts_with("proxies :")
-    }) {
-        return parse_clash_yaml(trimmed);
+        ["proxies", "proxy-providers", "payload"].iter().any(|key|
+            t.strip_prefix(key).is_some_and(|rest| rest.trim_start().starts_with(':')))
+    }) { return parse_clash_yaml(trimmed); }
+    if !trimmed.contains("://") {
+        let decoded = String::from_utf8(b64_decode(trimmed)?).map_err(|_| "subscription is not UTF-8")?;
+        return parse_subscription_inner(&decoded, depth + 1);
     }
-    if trimmed.starts_with('{') {
-        let v: Value = serde_json::from_str(trimmed).map_err(|e| format!("invalid JSON: {e}"))?;
-        let outbounds = v
-            .get("outbounds")
-            .and_then(Value::as_array)
-            .ok_or("JSON config has no outbounds")?;
-        let nodes: Vec<NodeInfo> = outbounds
-            .iter()
-            .filter(|ob| ob.get("server").is_some())
-            .map(|ob| {
-                let tag = ob.get("tag").and_then(Value::as_str).unwrap_or("");
-                let typ = ob.get("type").and_then(Value::as_str).unwrap_or("node");
-                NodeInfo {
-                    name: if tag.is_empty() { typ.to_string() } else { tag.to_string() },
-                    outbound_json: ob.to_string(),
-                }
-            })
-            .collect();
-        if nodes.is_empty() {
-            return Err("no usable outbounds in JSON config".to_string());
-        }
-        return Ok(ParseOutcome { nodes, skipped: Vec::new(), providers: Vec::new() });
-    }
-    let decoded_text;
-    let content: &str = if trimmed.contains("://") {
-        trimmed
-    } else {
-        decoded_text = String::from_utf8_lossy(&b64_decode(trimmed)?).into_owned();
-        &decoded_text
-    };
     let mut nodes = Vec::new();
     let mut skipped = Vec::new();
-    for line in content.lines().map(str::trim).filter(|l| !l.is_empty()) {
+    let mut providers = Vec::new();
+    for line in trimmed.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#')) {
+        if line.starts_with("https://") || line.starts_with("http://") {
+            providers.push(ProviderInfo { name: String::new(), url: line.into(), user_agent: None,
+                exclude_filter: None, filter: None });
+            continue;
+        }
         match parse_share_link(line) {
             Ok(n) => nodes.push(n),
             Err(_) => {
-                if let Some((scheme, _)) = line.split_once("://") {
-                    skipped.push(format!("未识别链接 ({scheme})"));
-                }
+                let scheme = line.split_once("://").map(|(s, _)| s).unwrap_or("invalid");
+                skipped.push(format!("未识别链接 ({scheme})"));
             }
         }
     }
-    if nodes.is_empty() {
-        Err("no usable share links found".to_string())
-    } else {
-        Ok(ParseOutcome { nodes, skipped, providers: Vec::new() })
-    }
+    if nodes.is_empty() && providers.is_empty() { Err("no usable share links found".into()) }
+    else { Ok(ParseOutcome { nodes, skipped, providers }) }
 }
 
 #[cfg(test)]
@@ -931,6 +932,29 @@ mod tests {
 
     fn out(node: &NodeInfo) -> Value {
         serde_json::from_str(&node.outbound_json).unwrap()
+    }
+
+    #[test]
+    fn provider_only_and_encoded_merged_subscriptions() {
+        use base64::Engine;
+        let text = "proxy-providers:\n  airport:\n    type: http\n    url: https://example.com/sub\n";
+        assert_eq!(parse_subscription(text).unwrap().providers.len(), 1);
+        let encoded = base64::engine::general_purpose::STANDARD_NO_PAD.encode(text);
+        assert_eq!(parse_subscription(&encoded).unwrap().providers.len(), 1);
+        let merged = "https://example.com/a\nhttps://example.com/b\nsocks5://127.0.0.1:1080#local";
+        let outcome = parse_subscription(merged).unwrap();
+        assert_eq!(outcome.providers.len(), 2);
+        assert_eq!(outcome.nodes.len(), 1);
+    }
+
+    #[test]
+    fn clash_json_and_yaml_merges_preserve_chain() {
+        let yaml = "defaults: &base {type: socks5, server: 127.0.0.1, port: '1080'}\nproxies:\n  - {<<: *base, name: exit, dialer-proxy: entry}\n  - {<<: *base, name: entry}\n";
+        let parsed = parse_subscription(yaml).unwrap();
+        assert_eq!(out(&parsed.nodes[0])["detour"], "entry");
+        assert_eq!(out(&parsed.nodes[0])["server_port"], 1080);
+        let json = r#"{"proxies":[{"name":"a","type":"socks5","server":"127.0.0.1","port":1080}]}"#;
+        assert_eq!(parse_subscription(json).unwrap().nodes.len(), 1);
     }
 
     #[test]
