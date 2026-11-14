@@ -193,6 +193,10 @@ class _NodesPageState extends State<NodesPage> {
           leading: const Icon(Icons.folder_outlined),
           childrenPadding: const EdgeInsets.all(10),
           children: [GridView.builder(
+            // ExpansionTile stores a bool in PageStorage; its child scroll
+            // position must have a distinct key to avoid reading that as double.
+            key: PageStorageKey('nodes-grid/$key'),
+            primary: false,
             shrinkWrap: true, physics: const NeverScrollableScrollPhysics(),
             gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
               maxCrossAxisExtent: 300, mainAxisExtent: 100,
