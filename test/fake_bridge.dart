@@ -9,8 +9,9 @@ class FakeBridge implements CoreBridge {
   @override
   Future<NodeInfo> parseShareLink(String link) async {
     if (link.startsWith('ss://')) {
-      return const NodeInfo(
-        name: 'FakeSS',
+      final frag = link.contains('#') ? link.split('#').last : '';
+      return NodeInfo(
+        name: frag.isNotEmpty ? frag : 'FakeSS',
         outboundJson: '{"type":"shadowsocks","server":"127.0.0.1",'
             '"server_port":8388,"method":"aes-256-gcm","password":"pw"}',
       );
@@ -20,6 +21,24 @@ class FakeBridge implements CoreBridge {
 
   @override
   Future<ParseOutcome> parseSubscription(String text) async {
+    if (text.contains('PROVIDERS-DEMO')) {
+      return const ParseOutcome(
+        nodes: [
+          NodeInfo(
+            name: 'Inline',
+            outboundJson: '{"type":"shadowsocks","server":"127.0.0.1",'
+                '"server_port":8388,"method":"aes-256-gcm","password":"pw"}',
+          ),
+        ],
+        providers: [
+          ProviderInfo(
+            name: '源A',
+            url: 'https://provider.example/sub',
+            excludeFilter: '流量',
+          ),
+        ],
+      );
+    }
     final nodes = <NodeInfo>[];
     for (final line in text.split('\n')) {
       if (line.trim().isEmpty) continue;

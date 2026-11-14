@@ -8,7 +8,12 @@ library;
 import 'dart:convert';
 
 class NodeInfo {
-  const NodeInfo({required this.name, required this.outboundJson, this.source = ''});
+  const NodeInfo({
+    required this.name,
+    required this.outboundJson,
+    this.source = '',
+    this.group = '',
+  });
 
   final String name;
 
@@ -18,6 +23,11 @@ class NodeInfo {
   /// '' for manually imported nodes, otherwise the owning
   /// subscription's id.
   final String source;
+
+  /// Display group for nodes that arrived through a subscription's
+  /// Clash `proxy-providers` entry: the provider's name. '' for
+  /// inline/manual nodes.
+  final String group;
 
   Map<String, dynamic> get _outbound {
     try {
@@ -32,26 +42,62 @@ class NodeInfo {
   String get server => (_outbound['server'] as String?) ?? '';
   int get serverPort => (_outbound['server_port'] as num?)?.toInt() ?? 0;
 
-  NodeInfo withSource(String source) =>
-      NodeInfo(name: name, outboundJson: outboundJson, source: source);
+  NodeInfo withSource(String source) => NodeInfo(
+      name: name, outboundJson: outboundJson, source: source, group: group);
 
-  Map<String, dynamic> toJson() =>
-      {'name': name, 'outboundJson': outboundJson, 'source': source};
+  NodeInfo withGroup(String group) => NodeInfo(
+      name: name, outboundJson: outboundJson, source: source, group: group);
+
+  NodeInfo withName(String name) => NodeInfo(
+      name: name, outboundJson: outboundJson, source: source, group: group);
+
+  Map<String, dynamic> toJson() => {
+        'name': name,
+        'outboundJson': outboundJson,
+        'source': source,
+        'group': group,
+      };
 
   factory NodeInfo.fromJson(Map<String, dynamic> json) => NodeInfo(
         name: json['name'] as String,
         outboundJson: json['outboundJson'] as String,
         source: (json['source'] as String?) ?? '',
+        group: (json['group'] as String?) ?? '',
       );
 }
 
 /// Result of parsing subscription content: converted nodes plus one
 /// "name (type)" note per entry skipped as unsupported.
 class ParseOutcome {
-  const ParseOutcome({required this.nodes, this.skipped = const []});
+  const ParseOutcome({
+    required this.nodes,
+    this.skipped = const [],
+    this.providers = const [],
+  });
 
   final List<NodeInfo> nodes;
   final List<String> skipped;
+
+  /// Clash `proxy-providers` entries the caller should fetch and
+  /// parse as further subscriptions (empty for other formats).
+  final List<ProviderInfo> providers;
+}
+
+/// One Clash YAML `proxy-providers` entry (http type).
+class ProviderInfo {
+  const ProviderInfo({
+    required this.name,
+    required this.url,
+    this.userAgent,
+    this.excludeFilter,
+    this.filter,
+  });
+
+  final String name;
+  final String url;
+  final String? userAgent;
+  final String? excludeFilter;
+  final String? filter;
 }
 
 /// One node handed to the config generator.

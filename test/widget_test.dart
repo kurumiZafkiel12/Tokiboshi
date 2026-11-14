@@ -72,7 +72,7 @@ void main() {
     );
     await tester.tap(find.text('导入').last);
     await tester.pumpAndSettle();
-    expect(find.text('FakeSS'), findsOneWidget);
+    expect(find.text('x'), findsOneWidget);
     expect(store.data.nodes, hasLength(1));
     expect(store.data.nodes.single.source, '');
 
@@ -146,5 +146,52 @@ void main() {
     expect(store.data.subscriptions.single.name, 'sub.example.com');
     expect(store.data.nodes, hasLength(1));
     expect(store.data.nodes.single.source, store.data.subscriptions.single.id);
+  });
+
+  testWidgets('subscription proxy-providers are fetched, filtered, grouped',
+      (tester) async {
+    tester.view.physicalSize = const Size(1280, 800);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    final store = MemoryStore();
+    final fetcher = FakeFetcher({
+      'https://hub.example.com/sub': 'PROVIDERS-DEMO',
+      'https://provider.example/sub':
+          'ss://aes-256-gcm:pw@127.0.0.1:8388#香港01\n'
+              'ss://aes-256-gcm:pw@127.0.0.1:8389#剩余流量\n',
+    });
+    await tester.pumpWidget(
+      TokiboshiApp(
+        bridge: FakeBridge(),
+        store: store,
+        systemProxy: NoopSystemProxy(),
+        fetcher: fetcher,
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('订阅').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('添加订阅'));
+    await tester.pumpAndSettle();
+    final dialogFields = find.descendant(
+      of: find.byType(AlertDialog),
+      matching: find.byType(TextField),
+    );
+    await tester.enterText(dialogFields.first, 'HubSub');
+    await tester.enterText(dialogFields.last, 'https://hub.example.com/sub');
+    await tester.tap(find.text('添加'));
+    await tester.pumpAndSettle();
+    expect(
+      fetcher.requested,
+      ['https://hub.example.com/sub', 'https://provider.example/sub'],
+    );
+    // Inline node + provider node; the 剩余流量 info node is excluded
+    // by the provider's exclude-filter.
+    expect(store.data.nodes, hasLength(2));
+    final providerNode =
+        store.data.nodes.singleWhere((n) => n.name == '香港01');
+    expect(providerNode.group, '源A');
+    expect(providerNode.source, store.data.subscriptions.single.id);
+    expect(store.data.nodes.any((n) => n.name.contains('流量')), isFalse);
   });
 }

@@ -47,6 +47,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   Uint8List dco_decode_list_prim_u_8_strict(dynamic raw);
 
   @protected
+  List<ProviderInfo> dco_decode_list_provider_info(dynamic raw);
+
+  @protected
   NodeInfo dco_decode_node_info(dynamic raw);
 
   @protected
@@ -57,6 +60,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   ParseOutcome dco_decode_parse_outcome(dynamic raw);
+
+  @protected
+  ProviderInfo dco_decode_provider_info(dynamic raw);
 
   @protected
   int dco_decode_u_16(dynamic raw);
@@ -95,6 +101,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   Uint8List sse_decode_list_prim_u_8_strict(SseDeserializer deserializer);
 
   @protected
+  List<ProviderInfo> sse_decode_list_provider_info(
+      SseDeserializer deserializer);
+
+  @protected
   NodeInfo sse_decode_node_info(SseDeserializer deserializer);
 
   @protected
@@ -105,6 +115,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   ParseOutcome sse_decode_parse_outcome(SseDeserializer deserializer);
+
+  @protected
+  ProviderInfo sse_decode_provider_info(SseDeserializer deserializer);
 
   @protected
   int sse_decode_u_16(SseDeserializer deserializer);
@@ -147,6 +160,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       Uint8List self, SseSerializer serializer);
 
   @protected
+  void sse_encode_list_provider_info(
+      List<ProviderInfo> self, SseSerializer serializer);
+
+  @protected
   void sse_encode_node_info(NodeInfo self, SseSerializer serializer);
 
   @protected
@@ -157,6 +174,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_parse_outcome(ParseOutcome self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_provider_info(ProviderInfo self, SseSerializer serializer);
 
   @protected
   void sse_encode_u_16(int self, SseSerializer serializer);

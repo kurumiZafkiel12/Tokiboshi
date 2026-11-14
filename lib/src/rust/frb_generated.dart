@@ -586,6 +586,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  List<ProviderInfo> dco_decode_list_provider_info(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_provider_info).toList();
+  }
+
+  @protected
   NodeInfo dco_decode_node_info(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
@@ -619,11 +625,27 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ParseOutcome dco_decode_parse_outcome(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 2)
-      throw Exception('unexpected arr length: expect 2 but see ${arr.length}');
+    if (arr.length != 3)
+      throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
     return ParseOutcome(
       nodes: dco_decode_list_node_info(arr[0]),
       skipped: dco_decode_list_String(arr[1]),
+      providers: dco_decode_list_provider_info(arr[2]),
+    );
+  }
+
+  @protected
+  ProviderInfo dco_decode_provider_info(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 5)
+      throw Exception('unexpected arr length: expect 5 but see ${arr.length}');
+    return ProviderInfo(
+      name: dco_decode_String(arr[0]),
+      url: dco_decode_String(arr[1]),
+      userAgent: dco_decode_opt_String(arr[2]),
+      excludeFilter: dco_decode_opt_String(arr[3]),
+      filter: dco_decode_opt_String(arr[4]),
     );
   }
 
@@ -730,6 +752,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  List<ProviderInfo> sse_decode_list_provider_info(
+      SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <ProviderInfo>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_provider_info(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
   NodeInfo sse_decode_node_info(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var var_name = sse_decode_String(deserializer);
@@ -761,7 +796,25 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var var_nodes = sse_decode_list_node_info(deserializer);
     var var_skipped = sse_decode_list_String(deserializer);
-    return ParseOutcome(nodes: var_nodes, skipped: var_skipped);
+    var var_providers = sse_decode_list_provider_info(deserializer);
+    return ParseOutcome(
+        nodes: var_nodes, skipped: var_skipped, providers: var_providers);
+  }
+
+  @protected
+  ProviderInfo sse_decode_provider_info(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_name = sse_decode_String(deserializer);
+    var var_url = sse_decode_String(deserializer);
+    var var_userAgent = sse_decode_opt_String(deserializer);
+    var var_excludeFilter = sse_decode_opt_String(deserializer);
+    var var_filter = sse_decode_opt_String(deserializer);
+    return ProviderInfo(
+        name: var_name,
+        url: var_url,
+        userAgent: var_userAgent,
+        excludeFilter: var_excludeFilter,
+        filter: var_filter);
   }
 
   @protected
@@ -859,6 +912,16 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_list_provider_info(
+      List<ProviderInfo> self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_provider_info(item, serializer);
+    }
+  }
+
+  @protected
   void sse_encode_node_info(NodeInfo self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_String(self.name, serializer);
@@ -887,6 +950,17 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_list_node_info(self.nodes, serializer);
     sse_encode_list_String(self.skipped, serializer);
+    sse_encode_list_provider_info(self.providers, serializer);
+  }
+
+  @protected
+  void sse_encode_provider_info(ProviderInfo self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.name, serializer);
+    sse_encode_String(self.url, serializer);
+    sse_encode_opt_String(self.userAgent, serializer);
+    sse_encode_opt_String(self.excludeFilter, serializer);
+    sse_encode_opt_String(self.filter, serializer);
   }
 
   @protected

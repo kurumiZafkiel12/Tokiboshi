@@ -36,13 +36,20 @@ class ParseOutcome {
   final List<NodeInfo> nodes;
   final List<String> skipped;
 
+  /// Node sources declared by a Clash YAML `proxy-providers:`
+  /// section. The caller fetches each provider and parses its
+  /// content as another subscription; other formats leave this
+  /// empty.
+  final List<ProviderInfo> providers;
+
   const ParseOutcome({
     required this.nodes,
     required this.skipped,
+    required this.providers,
   });
 
   @override
-  int get hashCode => nodes.hashCode ^ skipped.hashCode;
+  int get hashCode => nodes.hashCode ^ skipped.hashCode ^ providers.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -50,5 +57,42 @@ class ParseOutcome {
       other is ParseOutcome &&
           runtimeType == other.runtimeType &&
           nodes == other.nodes &&
-          skipped == other.skipped;
+          skipped == other.skipped &&
+          providers == other.providers;
+}
+
+/// One entry of a Clash YAML `proxy-providers:` section (http type).
+class ProviderInfo {
+  final String name;
+  final String url;
+  final String? userAgent;
+  final String? excludeFilter;
+  final String? filter;
+
+  const ProviderInfo({
+    required this.name,
+    required this.url,
+    this.userAgent,
+    this.excludeFilter,
+    this.filter,
+  });
+
+  @override
+  int get hashCode =>
+      name.hashCode ^
+      url.hashCode ^
+      userAgent.hashCode ^
+      excludeFilter.hashCode ^
+      filter.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is ProviderInfo &&
+          runtimeType == other.runtimeType &&
+          name == other.name &&
+          url == other.url &&
+          userAgent == other.userAgent &&
+          excludeFilter == other.excludeFilter &&
+          filter == other.filter;
 }

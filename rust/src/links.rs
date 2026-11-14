@@ -22,6 +22,22 @@ pub struct NodeInfo {
 pub struct ParseOutcome {
     pub nodes: Vec<NodeInfo>,
     pub skipped: Vec<String>,
+    /// Node sources declared by a Clash YAML `proxy-providers:`
+    /// section. The caller fetches each provider and parses its
+    /// content as another subscription; other formats leave this
+    /// empty.
+    #[serde(default)]
+    pub providers: Vec<ProviderInfo>,
+}
+
+/// One entry of a Clash YAML `proxy-providers:` section (http type).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ProviderInfo {
+    pub name: String,
+    pub url: String,
+    pub user_agent: Option<String>,
+    pub exclude_filter: Option<String>,
+    pub filter: Option<String>,
 }
 
 fn b64_decode(input: &str) -> Result<Vec<u8>, String> {
@@ -813,10 +829,37 @@ pub fn parse_clash_yaml(text: &str) -> Result<ParseOutcome, String> {
             }
         }
     }
-    if nodes.is_empty() {
+    let mut providers = Vec::new();
+    if let Some(map) = doc.get("proxy-providers").and_then(Value::as_object) {
+        for (pname, pval) in map {
+            let Some(pobj) = pval.as_object() else { continue };
+            let ptype = cs(pobj, "type").unwrap_or("http");
+            let Some(url) = cs(pobj, "url") else { continue };
+            if ptype != "http" || url.is_empty() {
+                continue;
+            }
+            let user_agent = pobj
+                .get("header")
+                .and_then(Value::as_object)
+                .and_then(|h| h.get("User-Agent"))
+                .and_then(|ua| match ua {
+                    Value::String(t) => Some(t.clone()),
+                    Value::Array(items) => items.iter().find_map(Value::as_str).map(str::to_string),
+                    _ => None,
+                });
+            providers.push(ProviderInfo {
+                name: pname.clone(),
+                url: url.to_string(),
+                user_agent,
+                exclude_filter: cs(pobj, "exclude-filter").map(str::to_string),
+                filter: cs(pobj, "filter").map(str::to_string),
+            });
+        }
+    }
+    if nodes.is_empty() && providers.is_empty() {
         Err("no usable proxies in Clash YAML".to_string())
     } else {
-        Ok(ParseOutcome { nodes, skipped })
+        Ok(ParseOutcome { nodes, skipped, providers })
     }
 }
 
@@ -854,7 +897,7 @@ pub fn parse_subscription(text: &str) -> Result<ParseOutcome, String> {
         if nodes.is_empty() {
             return Err("no usable outbounds in JSON config".to_string());
         }
-        return Ok(ParseOutcome { nodes, skipped: Vec::new() });
+        return Ok(ParseOutcome { nodes, skipped: Vec::new(), providers: Vec::new() });
     }
     let decoded_text;
     let content: &str = if trimmed.contains("://") {
@@ -878,7 +921,7 @@ pub fn parse_subscription(text: &str) -> Result<ParseOutcome, String> {
     if nodes.is_empty() {
         Err("no usable share links found".to_string())
     } else {
-        Ok(ParseOutcome { nodes, skipped })
+        Ok(ParseOutcome { nodes, skipped, providers: Vec::new() })
     }
 }
 
@@ -1028,6 +1071,33 @@ proxies:
         assert_eq!(hop["type"], "hysteria2");
         assert_eq!(hop["server_port"], 20000);
         assert_eq!(hop["server_ports"][0], "20000:30000");
+    }
+
+    #[test]
+    fn clash_yaml_extracts_proxy_providers() {
+        let yaml = r#"
+mixed-port: 7890
+proxies:
+  - {name: A, type: socks5, server: 127.0.0.1, port: 1080}
+proxy-providers:
+  ProvOne:
+    type: http
+    url: "https://example.com/sub1"
+    header:
+      User-Agent: ["Clash.Meta"]
+    exclude-filter: "(?i)traffic|expire"
+  ProvTwo:
+    type: file
+    path: ./local.yaml
+"#;
+        let outcome = parse_clash_yaml(yaml).unwrap();
+        assert_eq!(outcome.nodes.len(), 1);
+        assert_eq!(outcome.providers.len(), 1);
+        let p = &outcome.providers[0];
+        assert_eq!(p.name, "ProvOne");
+        assert_eq!(p.url, "https://example.com/sub1");
+        assert_eq!(p.user_agent.as_deref(), Some("Clash.Meta"));
+        assert_eq!(p.exclude_filter.as_deref(), Some("(?i)traffic|expire"));
     }
 
     #[test]

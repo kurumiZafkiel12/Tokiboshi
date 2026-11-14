@@ -219,3 +219,64 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
     }
 }
+
+/// Rule-set files the generated config references as LOCAL files
+/// (tag, download URL). sing-box used to fetch these itself during
+/// startup through the selected node; a slow node then killed the
+/// core before it listened. The app now keeps them on disk instead.
+pub const RULE_SET_FILES: [(&str, &str); 3] = [
+    (
+        "geosite-category-ads-all",
+        "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-category-ads-all.srs",
+    ),
+    (
+        "geosite-cn",
+        "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-cn.srs",
+    ),
+    (
+        "geoip-cn",
+        "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-cn.srs",
+    ),
+];
+
+/// Best-effort: download any missing or stale (>24h) rule-set files
+/// into `<data_dir>/rules/`. Failures are ignored on purpose — the
+/// config generator drops rules whose files are absent, and the
+/// core must never depend on these downloads to start.
+pub fn ensure_rule_sets(data_dir: &Path) {
+    let dir = data_dir.join("rules");
+    if std::fs::create_dir_all(&dir).is_err() {
+        return;
+    }
+    let agent = ureq::AgentBuilder::new()
+        .timeout(std::time::Duration::from_secs(60))
+        .build();
+    for (tag, url) in RULE_SET_FILES {
+        let dest = dir.join(format!("{tag}.srs"));
+        let fresh = std::fs::metadata(&dest)
+            .and_then(|m| m.modified())
+            .map(|t| t.elapsed().map(|e| e.as_secs() < 24 * 3600).unwrap_or(false))
+            .unwrap_or(false);
+        if fresh {
+            continue;
+        }
+        let Ok(response) = agent.get(url).call() else {
+            continue;
+        };
+        let mut bytes = Vec::new();
+        use std::io::Read;
+        if response
+            .into_reader()
+            .take(64 * 1024 * 1024)
+            .read_to_end(&mut bytes)
+            .is_err()
+            || bytes.len() < 16
+        {
+            continue;
+        }
+        let tmp = dir.join(format!("{tag}.srs.tmp"));
+        if std::fs::write(&tmp, &bytes).is_ok() {
+            let _ = std::fs::rename(&tmp, &dest);
+        }
+    }
+}

@@ -20,6 +20,15 @@ class RustCoreBridge implements CoreBridge {
           .map((n) => NodeInfo(name: n.name, outboundJson: n.outboundJson))
           .toList(),
       skipped: outcome.skipped,
+      providers: outcome.providers
+          .map((p) => ProviderInfo(
+                name: p.name,
+                url: p.url,
+                userAgent: p.userAgent,
+                excludeFilter: p.excludeFilter,
+                filter: p.filter,
+              ))
+          .toList(),
     );
   }
 

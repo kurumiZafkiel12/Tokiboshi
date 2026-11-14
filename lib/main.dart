@@ -232,6 +232,26 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
   /// Fetch a subscription URL and parse it; if the returned content
   /// itself lists further subscription URLs (one link containing
   /// many), fetch and merge those too (one level deep).
+  /// Compile a Clash-style name filter (`filter` / `exclude-filter`)
+  /// to a Dart RegExp. Clash filters are regexes, often prefixed
+  /// with an inline `(?i)`; Dart has no inline flags, so strip them
+  /// and switch to case-insensitive matching instead. A filter that
+  /// does not compile is ignored rather than breaking the update.
+  RegExp? _clashRegex(String? pattern) {
+    if (pattern == null || pattern.isEmpty) return null;
+    var p = pattern;
+    var insensitive = false;
+    if (p.contains('(?i)')) {
+      insensitive = true;
+      p = p.replaceAll('(?i)', '');
+    }
+    try {
+      return RegExp(p, caseSensitive: !insensitive);
+    } catch (_) {
+      return null;
+    }
+  }
+
   Future<ParseOutcome> _fetchParseExpand(String url) async {
     final content = await widget.fetcher.fetch(url);
     final first = await widget.bridge.parseSubscription(content);
@@ -250,6 +270,38 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
         skipped.addAll(outcome.skipped);
       } catch (_) {
         skipped.add('子订阅拉取失败 (${Uri.tryParse(link)?.host ?? link})');
+      }
+    }
+    // Clash `proxy-providers`: most nodes of hub-style subscriptions
+    // live behind these. Fetch each (with its declared User-Agent),
+    // parse it like a subscription, honour its name filters, and
+    // group the nodes under the provider's name — the behaviour
+    // users know from Clash clients.
+    for (final provider in first.providers.take(12)) {
+      try {
+        final inner = await widget.fetcher
+            .fetch(provider.url, userAgent: provider.userAgent);
+        final outcome = await widget.bridge.parseSubscription(inner);
+        final exclude = _clashRegex(provider.excludeFilter);
+        final include = _clashRegex(provider.filter);
+        var added = 0;
+        for (final n in outcome.nodes) {
+          if (exclude != null && exclude.hasMatch(n.name)) continue;
+          if (include != null && !include.hasMatch(n.name)) continue;
+          var node = n.withGroup(provider.name);
+          if (nodes.any((x) => x.name == node.name)) {
+            node = node.withName('${node.name}（${provider.name}）');
+          }
+          if (nodes.any((x) => x.name == node.name)) continue;
+          nodes.add(node);
+          added++;
+        }
+        if (added == 0 && outcome.nodes.isNotEmpty) {
+          skipped.add('节点源「${provider.name}」的节点被过滤规则全部排除');
+        }
+        skipped.addAll(outcome.skipped);
+      } catch (_) {
+        skipped.add('节点源「${provider.name}」拉取失败');
       }
     }
     return ParseOutcome(nodes: nodes, skipped: skipped);
@@ -992,7 +1044,7 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
                 if (!_navCollapsed)
                   const Padding(
                     padding: EdgeInsets.all(16),
-                    child: Text('v0.5.0 · sing-box 1.14.4'),
+                    child: Text('v0.5.1 · sing-box 1.14.4'),
                   ),
               ],
             ),

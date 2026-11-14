@@ -228,24 +228,49 @@ pub fn build_config_multi(
 
     // Rule options chosen in the UI: ads rejection and CN bypass are
     // independent toggles; private-address direct always applies.
+    // Rule-sets are LOCAL files the app downloads into
+    // `<data_dir>/rules/` ahead of time (see core_download): a remote
+    // rule-set download runs inside sing-box's startup, and a slow
+    // or unreachable selected node made the whole core exit with a
+    // FATAL before it ever listened. A missing file simply drops
+    // that rule — the core must always be able to start.
+    let local_rule_set = |tag: &str| -> Option<Value> {
+        if settings.data_dir.is_empty() {
+            return None;
+        }
+        let path = std::path::Path::new(&settings.data_dir)
+            .join("rules")
+            .join(format!("{tag}.srs"));
+        if path.is_file() {
+            Some(json!({ "type": "local", "tag": tag, "format": "binary",
+                "path": path.to_string_lossy() }))
+        } else {
+            None
+        }
+    };
     let mut route_rules: Vec<Value> = vec![json!({ "ip_is_private": true, "outbound": "direct" })];
     let mut rule_sets: Vec<Value> = Vec::new();
     let mut dns_rules: Vec<Value> = Vec::new();
     if settings.block_ads {
-        route_rules.push(json!({ "rule_set": ["geosite-category-ads-all"], "action": "reject" }));
-        rule_sets.push(json!({ "type": "remote", "tag": "geosite-category-ads-all", "format": "binary",
-            "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-category-ads-all.srs",
-            "http_client": "rules-hc" }));
+        if let Some(rs) = local_rule_set("geosite-category-ads-all") {
+            route_rules.push(json!({ "rule_set": ["geosite-category-ads-all"], "action": "reject" }));
+            rule_sets.push(rs);
+        }
     }
     if settings.bypass_cn {
-        route_rules.push(json!({ "rule_set": ["geosite-cn", "geoip-cn"], "outbound": "direct" }));
-        rule_sets.push(json!({ "type": "remote", "tag": "geosite-cn", "format": "binary",
-            "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-cn.srs",
-            "http_client": "rules-hc" }));
-        rule_sets.push(json!({ "type": "remote", "tag": "geoip-cn", "format": "binary",
-            "url": "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-cn.srs",
-            "http_client": "rules-hc" }));
-        dns_rules.push(json!({ "rule_set": ["geosite-cn"], "action": "route", "server": "dns-local" }));
+        let mut cn_tags: Vec<Value> = Vec::new();
+        for tag in ["geosite-cn", "geoip-cn"] {
+            if let Some(rs) = local_rule_set(tag) {
+                rule_sets.push(rs);
+                cn_tags.push(Value::String(tag.to_string()));
+            }
+        }
+        if !cn_tags.is_empty() {
+            route_rules.push(json!({ "rule_set": cn_tags, "outbound": "direct" }));
+        }
+        if rule_sets.iter().any(|rs| rs["tag"] == "geosite-cn") {
+            dns_rules.push(json!({ "rule_set": ["geosite-cn"], "action": "route", "server": "dns-local" }));
+        }
     }
 
     let config = json!({
@@ -260,9 +285,6 @@ pub fn build_config_multi(
         },
         "inbounds": inbounds,
         "outbounds": outbounds,
-        "http_clients": [
-            { "tag": "rules-hc", "detour": "proxy" }
-        ],
         "route": {
             "rules": route_rules,
             "rule_set": rule_sets,
@@ -331,6 +353,20 @@ mod tests {
     }
 
     #[test]
+    fn missing_rule_set_files_drop_rules_not_core() {
+        let nodes = vec![spec("节点A", "a.example.com")];
+        let settings = CoreSettings {
+            data_dir: "/nonexistent-tkb".to_string(),
+            ..CoreSettings::default()
+        };
+        let text = build_config_multi(&nodes, &settings, None).unwrap();
+        let v: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(v["route"]["rule_set"].as_array().unwrap().len(), 0);
+        assert_eq!(v["route"]["rules"].as_array().unwrap().len(), 1);
+        assert_eq!(v["dns"]["rules"].as_array().unwrap().len(), 0);
+    }
+
+    #[test]
     fn rule_options_toggle_off() {
         let nodes = vec![NodeSpec {
             name: "n".to_string(),
@@ -351,8 +387,15 @@ mod tests {
     #[test]
     fn multi_config_has_groups_rules_and_clash_api() {
         let nodes = vec![spec("节点A", "a.example.com"), spec("节点B", "b.example.com")];
+        // Local rule-set files present in a scratch data dir.
+        let scratch = std::env::temp_dir().join(format!("tkb-cfg-test-{}", std::process::id()));
+        let rules_dir = scratch.join("rules");
+        std::fs::create_dir_all(&rules_dir).unwrap();
+        for tag in ["geosite-category-ads-all", "geosite-cn", "geoip-cn"] {
+            std::fs::write(rules_dir.join(format!("{tag}.srs")), b"dummy").unwrap();
+        }
         let settings = CoreSettings {
-            data_dir: "/data/app".to_string(),
+            data_dir: scratch.to_string_lossy().into_owned(),
             ..CoreSettings::default()
         };
         let text = build_config_multi(&nodes, &settings, Some("节点B")).unwrap();
@@ -370,12 +413,15 @@ mod tests {
         assert_eq!(rules[1]["action"], "reject");
         assert_eq!(rules[2]["outbound"], "direct");
         assert_eq!(v["route"]["rule_set"].as_array().unwrap().len(), 3);
+        assert_eq!(v["route"]["rule_set"][0]["type"], "local");
+        // No remote-download machinery remains in the config.
+        assert!(v.get("http_clients").is_none());
         // Clash API + zashboard + cache file.
         let api = &v["experimental"]["clash_api"];
         assert_eq!(api["external_controller"], "127.0.0.1:9090");
         assert_eq!(api["external_ui_download_url"], ZASHBOARD_DOWNLOAD_URL);
         assert_eq!(v["experimental"]["cache_file"]["enabled"], true);
-        assert_eq!(v["experimental"]["cache_file"]["path"], "/data/app/cache.db");
+        assert!(v["experimental"]["cache_file"]["path"].as_str().unwrap().ends_with("cache.db"));
         // DNS: new format, remote detours through the selector.
         assert_eq!(v["dns"]["servers"][0]["type"], "https");
         assert_eq!(v["dns"]["servers"][0]["detour"], "proxy");

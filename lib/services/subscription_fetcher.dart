@@ -8,14 +8,14 @@ import 'dart:convert';
 import 'dart:io';
 
 abstract class SubscriptionFetcher {
-  Future<String> fetch(String url);
+  Future<String> fetch(String url, {String? userAgent});
 }
 
 class HttpSubscriptionFetcher implements SubscriptionFetcher {
   const HttpSubscriptionFetcher();
 
   @override
-  Future<String> fetch(String url) async {
+  Future<String> fetch(String url, {String? userAgent}) async {
     final uri = Uri.parse(url);
     if (uri.scheme != 'http' && uri.scheme != 'https') {
       throw const FormatException('订阅链接必须是 http/https');
@@ -23,7 +23,7 @@ class HttpSubscriptionFetcher implements SubscriptionFetcher {
     final client = HttpClient()..connectionTimeout = const Duration(seconds: 15);
     try {
       final request = await client.getUrl(uri);
-      request.headers.set(HttpHeaders.userAgentHeader, 'Tokiboshi/0.3.0');
+      request.headers.set(HttpHeaders.userAgentHeader, userAgent ?? 'Tokiboshi/0.5.1');
       request.headers.set(HttpHeaders.acceptHeader, '*/*');
       final response = await request.close().timeout(const Duration(seconds: 30));
       if (response.statusCode < 200 || response.statusCode >= 300) {
@@ -51,7 +51,7 @@ class FakeFetcher implements SubscriptionFetcher {
   final List<String> requested = [];
 
   @override
-  Future<String> fetch(String url) async {
+  Future<String> fetch(String url, {String? userAgent}) async {
     requested.add(url);
     final body = responses[url];
     if (body == null) throw HttpException('no fake response for $url');

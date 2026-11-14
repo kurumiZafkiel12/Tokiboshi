@@ -253,6 +253,14 @@ return crate::api::core::EnsureState{phase: var_phase, version: var_version, err
         return ans_;}
                 }
                 
+                impl SseDecode for Vec<crate::links::ProviderInfo> {
+                    // Codec=Sse (Serialization based), see doc to use other codecs
+                    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {let mut len_ = <i32>::sse_decode(deserializer);
+        let mut ans_ = vec![];
+        for idx_ in 0..len_ { ans_.push(<crate::links::ProviderInfo>::sse_decode(deserializer)); }
+        return ans_;}
+                }
+                
                 impl SseDecode for crate::links::NodeInfo {
                     // Codec=Sse (Serialization based), see doc to use other codecs
                     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {let mut var_name = <String>::sse_decode(deserializer);
@@ -280,7 +288,18 @@ return crate::config::NodeSpec{name: var_name, outbound_json: var_outboundJson};
                     // Codec=Sse (Serialization based), see doc to use other codecs
                     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {let mut var_nodes = <Vec<crate::links::NodeInfo>>::sse_decode(deserializer);
 let mut var_skipped = <Vec<String>>::sse_decode(deserializer);
-return crate::links::ParseOutcome{nodes: var_nodes, skipped: var_skipped};}
+let mut var_providers = <Vec<crate::links::ProviderInfo>>::sse_decode(deserializer);
+return crate::links::ParseOutcome{nodes: var_nodes, skipped: var_skipped, providers: var_providers};}
+                }
+                
+                impl SseDecode for crate::links::ProviderInfo {
+                    // Codec=Sse (Serialization based), see doc to use other codecs
+                    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {let mut var_name = <String>::sse_decode(deserializer);
+let mut var_url = <String>::sse_decode(deserializer);
+let mut var_userAgent = <Option<String>>::sse_decode(deserializer);
+let mut var_excludeFilter = <Option<String>>::sse_decode(deserializer);
+let mut var_filter = <Option<String>>::sse_decode(deserializer);
+return crate::links::ProviderInfo{name: var_name, url: var_url, user_agent: var_userAgent, exclude_filter: var_excludeFilter, filter: var_filter};}
                 }
                 
                 impl SseDecode for u16 {
@@ -418,13 +437,32 @@ impl flutter_rust_bridge::IntoIntoDart<crate::config::NodeSpec> for crate::confi
                 fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
                     [
                     self.nodes.into_into_dart().into_dart(),
-self.skipped.into_into_dart().into_dart()
+self.skipped.into_into_dart().into_dart(),
+self.providers.into_into_dart().into_dart()
                 ].into_dart()
                 }
             }
             impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive for crate::links::ParseOutcome {}
 impl flutter_rust_bridge::IntoIntoDart<crate::links::ParseOutcome> for crate::links::ParseOutcome {
             fn into_into_dart(self) -> crate::links::ParseOutcome {
+                self
+            }
+        }
+// Codec=Dco (DartCObject based), see doc to use other codecs
+            impl flutter_rust_bridge::IntoDart for crate::links::ProviderInfo {
+                fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+                    [
+                    self.name.into_into_dart().into_dart(),
+self.url.into_into_dart().into_dart(),
+self.user_agent.into_into_dart().into_dart(),
+self.exclude_filter.into_into_dart().into_dart(),
+self.filter.into_into_dart().into_dart()
+                ].into_dart()
+                }
+            }
+            impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive for crate::links::ProviderInfo {}
+impl flutter_rust_bridge::IntoIntoDart<crate::links::ProviderInfo> for crate::links::ProviderInfo {
+            fn into_into_dart(self) -> crate::links::ProviderInfo {
                 self
             }
         }
@@ -477,6 +515,12 @@ impl flutter_rust_bridge::IntoIntoDart<crate::links::ParseOutcome> for crate::li
         for item in self { <u8>::sse_encode(item, serializer); }}
                 }
                 
+                impl SseEncode for Vec<crate::links::ProviderInfo> {
+                    // Codec=Sse (Serialization based), see doc to use other codecs
+                    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {<i32>::sse_encode(self.len() as _, serializer);
+        for item in self { <crate::links::ProviderInfo>::sse_encode(item, serializer); }}
+                }
+                
                 impl SseEncode for crate::links::NodeInfo {
                     // Codec=Sse (Serialization based), see doc to use other codecs
                     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {<String>::sse_encode(self.name, serializer);
@@ -500,7 +544,17 @@ impl flutter_rust_bridge::IntoIntoDart<crate::links::ParseOutcome> for crate::li
                 impl SseEncode for crate::links::ParseOutcome {
                     // Codec=Sse (Serialization based), see doc to use other codecs
                     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {<Vec<crate::links::NodeInfo>>::sse_encode(self.nodes, serializer);
-<Vec<String>>::sse_encode(self.skipped, serializer);}
+<Vec<String>>::sse_encode(self.skipped, serializer);
+<Vec<crate::links::ProviderInfo>>::sse_encode(self.providers, serializer);}
+                }
+                
+                impl SseEncode for crate::links::ProviderInfo {
+                    // Codec=Sse (Serialization based), see doc to use other codecs
+                    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {<String>::sse_encode(self.name, serializer);
+<String>::sse_encode(self.url, serializer);
+<Option<String>>::sse_encode(self.user_agent, serializer);
+<Option<String>>::sse_encode(self.exclude_filter, serializer);
+<Option<String>>::sse_encode(self.filter, serializer);}
                 }
                 
                 impl SseEncode for u16 {

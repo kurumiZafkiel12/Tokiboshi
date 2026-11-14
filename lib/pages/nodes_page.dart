@@ -60,7 +60,10 @@ class _NodesPageState extends State<NodesPage> {
     bool inGroup(NodeInfo n) {
       if (_group.isEmpty) return true;
       if (_group == '__manual') return n.source.isEmpty;
-      return n.source == _group;
+      if (_group.startsWith('provider:')) {
+        return n.group == _group.substring('provider:'.length);
+      }
+      return n.source == _group && n.group.isEmpty;
     }
 
     final visible = <int>[
@@ -72,6 +75,12 @@ class _NodesPageState extends State<NodesPage> {
           i,
     ];
     final hasManual = widget.nodes.any((n) => n.source.isEmpty);
+    final providerNames = <String>[];
+    for (final n in widget.nodes) {
+      if (n.group.isNotEmpty && !providerNames.contains(n.group)) {
+        providerNames.add(n.group);
+      }
+    }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -130,6 +139,12 @@ class _NodesPageState extends State<NodesPage> {
                   label: Text(s.name),
                   selected: _group == s.id,
                   onSelected: (_) => setState(() => _group = s.id),
+                ),
+              for (final name in providerNames)
+                ChoiceChip(
+                  label: Text(name),
+                  selected: _group == 'provider:$name',
+                  onSelected: (_) => setState(() => _group = 'provider:$name'),
                 ),
             ],
           ),

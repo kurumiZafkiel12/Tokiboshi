@@ -170,22 +170,28 @@ pub fn start_ensure_core(data_dir: String) {
         return; // a download is already in flight
     }
     let dir = PathBuf::from(&data_dir);
-    if core_download::is_up_to_date(&dir) {
-        set_ensure(EnsureState {
-            phase: "done".to_string(),
-            version: core_download::installed_version(&dir),
-            error: None,
-        });
-        ENSURE_RUNNING.store(false, std::sync::atomic::Ordering::SeqCst);
-        return;
-    }
     set_ensure(EnsureState {
         phase: "downloading".to_string(),
         version: None,
         error: None,
     });
     std::thread::spawn(move || {
-        let result = core_download::download_and_install(&dir);
+        if !core_download::is_up_to_date(&dir) {
+            let result = core_download::download_and_install(&dir);
+            if let Err(e) = result {
+                set_ensure(EnsureState {
+                    phase: "error".to_string(),
+                    version: None,
+                    error: Some(e),
+                });
+                ENSURE_RUNNING.store(false, std::sync::atomic::Ordering::SeqCst);
+                return;
+            }
+        }
+        // Rule-sets are local files now; refresh them best-effort
+        // alongside the binary so config generation can use them.
+        core_download::ensure_rule_sets(&dir);
+        let result = Ok(core_download::installed_version(&dir).unwrap_or_default());
         match result {
             Ok(version) => set_ensure(EnsureState {
                 phase: "done".to_string(),
