@@ -27,13 +27,6 @@ jobs:
       - name: Build Windows release
         run: flutter build windows --release
 
-      - name: Bundle sing-box core
-        shell: pwsh
-        run: |
-          $ver = "1.11.15"
-          Invoke-WebRequest -Uri "https://github.com/SagerNet/sing-box/releases/download/v$ver/sing-box-$ver-windows-amd64.zip" -OutFile sb.zip
-          Expand-Archive sb.zip -DestinationPath sb
-          Copy-Item "sb/sing-box-$ver-windows-amd64/sing-box.exe" "build/windows/x64/runner/Release/sing-box.exe"
 
       - name: Package
         shell: pwsh
