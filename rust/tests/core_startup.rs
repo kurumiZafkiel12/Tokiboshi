@@ -65,5 +65,84 @@ fn occupied_port_is_reported_and_real_core_forwards_after_reconfiguration() {
     drop(guard);
     assert!(!core::core_running());
     drop(occupied);
+    // Prove the configured detour is used: both local SOCKS relays must see
+    // the next hop, and the origin must receive the HTTP request through them.
+    let origin = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let origin_port = origin.local_addr().unwrap().port();
+    let origin_thread = std::thread::spawn(move || {
+        let (mut stream, _) = origin.accept().unwrap();
+        stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        let mut buf = [0; 4096];
+        stream.read(&mut buf).unwrap();
+        stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\nchain").unwrap();
+    });
+    let exit_listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let exit_port = exit_listener.local_addr().unwrap().port();
+    let exit_thread = socks_relay(exit_listener, origin_port);
+    let entry_listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let entry_port = entry_listener.local_addr().unwrap().port();
+    let entry_thread = socks_relay(entry_listener, exit_port);
+    let free_mixed = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let free_api = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    settings.mixed_port = free_mixed.local_addr().unwrap().port();
+    settings.clash_api_port = free_api.local_addr().unwrap().port();
+    drop((free_mixed, free_api));
+    let nodes = vec![
+        NodeSpec { name: "proxy".into(), outbound_json: format!(
+            r#"{{"type":"socks","server":"127.0.0.1","server_port":{entry_port}}}"#) },
+        NodeSpec { name: "exit".into(), outbound_json: format!(
+            r#"{{"type":"socks","server":"127.0.0.1","server_port":{exit_port},"detour":"proxy"}}"#) },
+    ];
+    let mut config: serde_json::Value = serde_json::from_str(
+        &build_config_multi(&nodes, &settings, Some("exit")).unwrap()).unwrap();
+    // Keep the generated chain, but disable probes and private-address bypass
+    // so this local-only request is required to traverse both SOCKS servers.
+    config["outbounds"].as_array_mut().unwrap().retain(|ob| ob["tag"] != "auto");
+    config["outbounds"][0]["outbounds"] = serde_json::json!(["exit"]);
+    config["route"]["rules"] = serde_json::json!([]);
+    std::fs::write(&path, config.to_string()).unwrap();
+    core::start_core(std::env::var("SING_BOX").unwrap(), path.to_string_lossy().into()).unwrap();
+    let chain_guard = Stop;
+    let response = request(settings.mixed_port, &format!(
+        "GET http://127.0.0.1:{origin_port}/ HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"));
+    assert!(response.ends_with("chain"), "{response}");
+    origin_thread.join().unwrap();
+    entry_thread.join().unwrap();
+    exit_thread.join().unwrap();
+    drop(chain_guard);
     std::fs::remove_dir_all(scratch).unwrap();
+}
+
+
+fn socks_relay(listener: TcpListener, expected_port: u16) -> std::thread::JoinHandle<()> {
+    std::thread::spawn(move || {
+        let (mut client, _) = listener.accept().unwrap();
+        client.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        let mut greeting = [0; 2];
+        client.read_exact(&mut greeting).unwrap();
+        assert_eq!(greeting[0], 5);
+        let mut methods = vec![0; greeting[1] as usize];
+        client.read_exact(&mut methods).unwrap();
+        assert!(methods.contains(&0));
+        client.write_all(&[5, 0]).unwrap();
+        let mut header = [0; 4];
+        client.read_exact(&mut header).unwrap();
+        assert_eq!(header, [5, 1, 0, 1]);
+        let mut target = [0; 6];
+        client.read_exact(&mut target).unwrap();
+        assert_eq!(&target[..4], &[127, 0, 0, 1]);
+        assert_eq!(u16::from_be_bytes([target[4], target[5]]), expected_port);
+        let mut upstream = TcpStream::connect(("127.0.0.1", expected_port)).unwrap();
+        upstream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        client.write_all(&[5, 0, 0, 1, 127, 0, 0, 1, 0, 0]).unwrap();
+        let mut upstream_read = upstream.try_clone().unwrap();
+        let mut client_write = client.try_clone().unwrap();
+        let response = std::thread::spawn(move || {
+            std::io::copy(&mut upstream_read, &mut client_write).unwrap();
+            client_write.shutdown(std::net::Shutdown::Write).unwrap();
+        });
+        std::io::copy(&mut client, &mut upstream).unwrap();
+        upstream.shutdown(std::net::Shutdown::Write).unwrap();
+        response.join().unwrap();
+    })
 }

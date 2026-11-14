@@ -20,19 +20,69 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@v1
 
       - name: Rust middle layer tests
-        run: cargo test --manifest-path rust/Cargo.toml
+        run: |
+          $log = Join-Path $env:RUNNER_TEMP "cargo-test.log"
+          cargo test --manifest-path rust/Cargo.toml 2>&1 | Tee-Object -FilePath $log
+          $code = $LASTEXITCODE
+          if ($code -ne 0) {
+            Get-Content $log -Tail 30 | ForEach-Object {
+              $line = $_.Replace('%', '%25')
+              Write-Output "::error::$line"
+            }
+            exit $code
+          }
 
       - name: Flutter dependencies
-        run: flutter pub get --enforce-lockfile
+        run: |
+          $log = Join-Path $env:RUNNER_TEMP "flutter-pub.log"
+          flutter pub get --enforce-lockfile 2>&1 | Tee-Object -FilePath $log
+          $code = $LASTEXITCODE
+          if ($code -ne 0) {
+            Get-Content $log -Tail 30 | ForEach-Object {
+              $line = $_.Replace('%', '%25')
+              Write-Output "::error::$line"
+            }
+            exit $code
+          }
 
       - name: Flutter analysis
-        run: flutter analyze
+        run: |
+          $log = Join-Path $env:RUNNER_TEMP "flutter-analyze.log"
+          flutter analyze 2>&1 | Tee-Object -FilePath $log
+          $code = $LASTEXITCODE
+          if ($code -ne 0) {
+            Get-Content $log -Tail 30 | ForEach-Object {
+              $line = $_.Replace('%', '%25')
+              Write-Output "::error::$line"
+            }
+            exit $code
+          }
 
       - name: Flutter tests
-        run: flutter test --no-pub
+        run: |
+          $log = Join-Path $env:RUNNER_TEMP "flutter-test.log"
+          flutter test --no-pub 2>&1 | Tee-Object -FilePath $log
+          $code = $LASTEXITCODE
+          if ($code -ne 0) {
+            Get-Content $log -Tail 30 | ForEach-Object {
+              $line = $_.Replace('%', '%25')
+              Write-Output "::error::$line"
+            }
+            exit $code
+          }
 
       - name: Build Windows release
-        run: flutter build windows --release
+        run: |
+          $log = Join-Path $env:RUNNER_TEMP "flutter-build.log"
+          flutter build windows --release 2>&1 | Tee-Object -FilePath $log
+          $code = $LASTEXITCODE
+          if ($code -ne 0) {
+            Get-Content $log -Tail 30 | ForEach-Object {
+              $line = $_.Replace('%', '%25')
+              Write-Output "::error::$line"
+            }
+            exit $code
+          }
 
 
       - name: Package
