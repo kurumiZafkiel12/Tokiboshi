@@ -529,7 +529,7 @@ class _ShellPageState extends State<ShellPage> {
                 const Spacer(),
                 const Padding(
                   padding: EdgeInsets.all(16),
-                  child: Text('v0.2.0 · sing-box 1.11.15'),
+                  child: Text('v0.2.1 · sing-box 1.11.15'),
                 ),
               ],
             ),
