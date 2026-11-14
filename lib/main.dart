@@ -469,7 +469,7 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
           _data.selectedIndex =
               idx >= 0 ? idx : (_data.nodes.isEmpty ? -1 : 0);
         }
-        _message = '订阅「${sub.name}」已更新：${fresh.length} 个节点' + _skippedNote(outcome.skipped);
+        _message = '订阅「${sub.name}」已更新：${fresh.length} 个节点${_skippedNote(outcome.skipped)}';
       });
       await _persist();
     } catch (e) {

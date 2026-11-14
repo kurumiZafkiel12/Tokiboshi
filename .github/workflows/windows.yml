@@ -46,7 +46,9 @@ jobs:
       - name: Flutter analysis
         run: |
           $log = Join-Path $env:RUNNER_TEMP "flutter-analyze.log"
-          flutter analyze 2>&1 | Tee-Object -FilePath $log
+          # Flutter 3.50 marks the compatibility Material barrel as deprecated.
+          # Keep infos visible; errors and warnings still fail this check.
+          flutter analyze --no-fatal-infos 2>&1 | Tee-Object -FilePath $log
           $code = $LASTEXITCODE
           if ($code -ne 0) {
             $details = (Get-Content $log -Tail 100) -join "`n"
