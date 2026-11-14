@@ -25,10 +25,9 @@ jobs:
           cargo test --manifest-path rust/Cargo.toml 2>&1 | Tee-Object -FilePath $log
           $code = $LASTEXITCODE
           if ($code -ne 0) {
-            Get-Content $log -Tail 30 | ForEach-Object {
-              $line = $_.Replace('%', '%25')
-              Write-Output "::error::$line"
-            }
+            $details = (Get-Content $log -Tail 100) -join "`n"
+            $details = $details.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+            Write-Output "::error::$details"
             exit $code
           }
 
@@ -38,10 +37,9 @@ jobs:
           flutter pub get --enforce-lockfile 2>&1 | Tee-Object -FilePath $log
           $code = $LASTEXITCODE
           if ($code -ne 0) {
-            Get-Content $log -Tail 30 | ForEach-Object {
-              $line = $_.Replace('%', '%25')
-              Write-Output "::error::$line"
-            }
+            $details = (Get-Content $log -Tail 100) -join "`n"
+            $details = $details.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+            Write-Output "::error::$details"
             exit $code
           }
 
@@ -51,10 +49,9 @@ jobs:
           flutter analyze 2>&1 | Tee-Object -FilePath $log
           $code = $LASTEXITCODE
           if ($code -ne 0) {
-            Get-Content $log -Tail 30 | ForEach-Object {
-              $line = $_.Replace('%', '%25')
-              Write-Output "::error::$line"
-            }
+            $details = (Get-Content $log -Tail 100) -join "`n"
+            $details = $details.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+            Write-Output "::error::$details"
             exit $code
           }
 
@@ -64,10 +61,9 @@ jobs:
           flutter test --no-pub 2>&1 | Tee-Object -FilePath $log
           $code = $LASTEXITCODE
           if ($code -ne 0) {
-            Get-Content $log -Tail 30 | ForEach-Object {
-              $line = $_.Replace('%', '%25')
-              Write-Output "::error::$line"
-            }
+            $details = (Get-Content $log -Tail 100) -join "`n"
+            $details = $details.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+            Write-Output "::error::$details"
             exit $code
           }
 
@@ -77,10 +73,9 @@ jobs:
           flutter build windows --release 2>&1 | Tee-Object -FilePath $log
           $code = $LASTEXITCODE
           if ($code -ne 0) {
-            Get-Content $log -Tail 30 | ForEach-Object {
-              $line = $_.Replace('%', '%25')
-              Write-Output "::error::$line"
-            }
+            $details = (Get-Content $log -Tail 100) -join "`n"
+            $details = $details.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+            Write-Output "::error::$details"
             exit $code
           }
 
