@@ -40,7 +40,18 @@ jobs:
         run: |
           Compress-Archive -Path "build/windows/x64/runner/Release/*" -DestinationPath "Tokiboshi-windows.zip"
 
+      - name: Build installer
+        shell: pwsh
+        run: |
+          $ver = (Select-String -Path pubspec.yaml -Pattern '^version:\s*([0-9]+\.[0-9]+\.[0-9]+)').Matches[0].Groups[1].Value
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress }
+          & $iscc "/DAppVersion=$ver" installer\tokiboshi.iss
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed with exit code $LASTEXITCODE" }
+
       - uses: actions/upload-artifact@v4
         with:
           name: Tokiboshi-windows
-          path: Tokiboshi-windows.zip
+          path: |
+            Tokiboshi-windows.zip
+            Tokiboshi-Setup-*.exe
