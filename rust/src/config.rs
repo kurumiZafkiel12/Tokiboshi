@@ -331,7 +331,6 @@ mod tests {
     }
 
     #[test]
-    #[test]
     fn rule_options_toggle_off() {
         let nodes = vec![NodeSpec {
             name: "n".to_string(),

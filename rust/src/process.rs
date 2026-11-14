@@ -50,6 +50,8 @@ fn push_log(shared: &Shared, line: String) {
 /// keeps it fully hidden. Its stdout/stderr are piped and captured
 /// either way.
 fn core_command(binary: &Path) -> Command {
+    // `mut` is only exercised by the Windows branch below.
+    #[allow(unused_mut)]
     let mut cmd = Command::new(binary);
     #[cfg(windows)]
     {

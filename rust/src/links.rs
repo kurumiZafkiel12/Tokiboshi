@@ -973,7 +973,6 @@ mod tests {
     }
 
     #[test]
-    #[test]
     fn anytls_link_parses() {
         let n = parse_share_link("anytls://secret@a.example.com:443?sni=a.example.com&insecure=1#我的anytls").unwrap();
         assert_eq!(n.name, "我的anytls");
