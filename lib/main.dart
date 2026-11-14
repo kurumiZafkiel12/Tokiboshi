@@ -500,6 +500,11 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
 
   // ---- nodes ----
 
+  String _nodeTag(NodeInfo node) {
+    final index = _data.nodes.indexOf(node);
+    return index < 0 ? node.name : assignNodeTags(_data.nodes.map((n) => n.name))[index];
+  }
+
   Future<void> _selectNode(int index) async {
     setState(() => _data.selectedIndex = index);
     await _persist();
@@ -510,7 +515,7 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
     if (_running && index >= 0 && index < _data.nodes.length) {
       final node = _data.nodes[index];
       try {
-        await _clash.select('proxy', assignNodeTags(_data.nodes.map((n) => n.name))[index]);
+        await _clash.select('proxy', _nodeTag(node));
         _setMessage('已切换到 ${node.name}');
       } catch (_) {
         _setMessage('已选中 ${node.name}（重启内核后生效）');
@@ -546,7 +551,7 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
     }
     _measuring = true;
     final ms = _running
-        ? await _clash.delay(node.name)
+        ? await _clash.delay(_nodeTag(node))
         : await tcpLatency(node.server, node.serverPort);
     _measuring = false;
     if (mounted) setState(() => _latency[node] = ms);
@@ -562,7 +567,7 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
         continue;
       }
       final ms = _running
-          ? await _clash.delay(node.name)
+          ? await _clash.delay(_nodeTag(node))
           : await tcpLatency(node.server, node.serverPort);
       if (!mounted) {
         _measuring = false;
