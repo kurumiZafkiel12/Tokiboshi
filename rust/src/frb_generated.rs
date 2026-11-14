@@ -63,10 +63,12 @@ fn wire__crate__api__core__bridge_version_impl(port_: flutter_rust_bridge::for_g
 let api_mixed_port = <u16>::sse_decode(&mut deserializer);
 let api_clash_api_port = <u16>::sse_decode(&mut deserializer);
 let api_enable_tun = <bool>::sse_decode(&mut deserializer);
+let api_block_ads = <bool>::sse_decode(&mut deserializer);
+let api_bypass_cn = <bool>::sse_decode(&mut deserializer);
 let api_data_dir = <String>::sse_decode(&mut deserializer);
 let api_selected_name = <Option<String>>::sse_decode(&mut deserializer);deserializer.end(); move |context|  {
                     transform_result_sse::<_, String>((move ||  {
-                         let output_ok = crate::api::core::build_config(api_nodes, api_mixed_port, api_clash_api_port, api_enable_tun, api_data_dir, api_selected_name)?;   Ok(output_ok)
+                         let output_ok = crate::api::core::build_config(api_nodes, api_mixed_port, api_clash_api_port, api_enable_tun, api_block_ads, api_bypass_cn, api_data_dir, api_selected_name)?;   Ok(output_ok)
                     })())
                 } })
             }fn wire__crate__api__core__core_logs_impl(port_: flutter_rust_bridge::for_generated::MessagePort,ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,rust_vec_len_: i32,data_len_: i32)  {

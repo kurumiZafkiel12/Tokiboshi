@@ -17,6 +17,11 @@ pub struct CoreSettings {
     pub clash_api_port: u16,
     /// Whether to enable the TUN inbound (requires platform support).
     pub enable_tun: bool,
+    /// Route rule option: reject advertising domains (rule-set).
+    pub block_ads: bool,
+    /// Route rule option: CN sites/IPs go direct (rule-sets), and CN
+    /// DNS lookups use the local resolver.
+    pub bypass_cn: bool,
     /// Log level passed to sing-box: trace/debug/info/warn/error/fatal/panic.
     pub log_level: String,
     /// App data directory; the cache file lives here so the selector
@@ -30,6 +35,8 @@ impl Default for CoreSettings {
             mixed_port: 7890,
             clash_api_port: 9090,
             enable_tun: false,
+            block_ads: true,
+            bypass_cn: true,
             log_level: "info".to_string(),
             data_dir: String::new(),
         }
@@ -219,6 +226,28 @@ pub fn build_config_multi(
         format!("{}/cache.db", settings.data_dir.trim_end_matches(['/', '\\']))
     };
 
+    // Rule options chosen in the UI: ads rejection and CN bypass are
+    // independent toggles; private-address direct always applies.
+    let mut route_rules: Vec<Value> = vec![json!({ "ip_is_private": true, "outbound": "direct" })];
+    let mut rule_sets: Vec<Value> = Vec::new();
+    let mut dns_rules: Vec<Value> = Vec::new();
+    if settings.block_ads {
+        route_rules.push(json!({ "rule_set": ["geosite-category-ads-all"], "action": "reject" }));
+        rule_sets.push(json!({ "type": "remote", "tag": "geosite-category-ads-all", "format": "binary",
+            "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-category-ads-all.srs",
+            "http_client": "rules-hc" }));
+    }
+    if settings.bypass_cn {
+        route_rules.push(json!({ "rule_set": ["geosite-cn", "geoip-cn"], "outbound": "direct" }));
+        rule_sets.push(json!({ "type": "remote", "tag": "geosite-cn", "format": "binary",
+            "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-cn.srs",
+            "http_client": "rules-hc" }));
+        rule_sets.push(json!({ "type": "remote", "tag": "geoip-cn", "format": "binary",
+            "url": "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-cn.srs",
+            "http_client": "rules-hc" }));
+        dns_rules.push(json!({ "rule_set": ["geosite-cn"], "action": "route", "server": "dns-local" }));
+    }
+
     let config = json!({
         "log": { "level": settings.log_level, "timestamp": true },
         "dns": {
@@ -226,9 +255,7 @@ pub fn build_config_multi(
                 { "type": "https", "tag": "dns-remote", "server": "8.8.8.8", "detour": "proxy" },
                 { "type": "local", "tag": "dns-local" }
             ],
-            "rules": [
-                { "rule_set": ["geosite-cn"], "action": "route", "server": "dns-local" }
-            ],
+            "rules": dns_rules,
             "final": "dns-remote"
         },
         "inbounds": inbounds,
@@ -237,22 +264,8 @@ pub fn build_config_multi(
             { "tag": "rules-hc", "detour": "proxy" }
         ],
         "route": {
-            "rules": [
-                { "ip_is_private": true, "outbound": "direct" },
-                { "rule_set": ["geosite-category-ads-all"], "action": "reject" },
-                { "rule_set": ["geosite-cn", "geoip-cn"], "outbound": "direct" }
-            ],
-            "rule_set": [
-                { "type": "remote", "tag": "geosite-cn", "format": "binary",
-                  "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-cn.srs",
-                  "http_client": "rules-hc" },
-                { "type": "remote", "tag": "geoip-cn", "format": "binary",
-                  "url": "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-cn.srs",
-                  "http_client": "rules-hc" },
-                { "type": "remote", "tag": "geosite-category-ads-all", "format": "binary",
-                  "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-category-ads-all.srs",
-                  "http_client": "rules-hc" }
-            ],
+            "rules": route_rules,
+            "rule_set": rule_sets,
             "final": "proxy",
             "auto_detect_interface": true,
             "default_domain_resolver": "dns-local"
@@ -315,6 +328,25 @@ mod tests {
             })
             .to_string(),
         }
+    }
+
+    #[test]
+    #[test]
+    fn rule_options_toggle_off() {
+        let nodes = vec![NodeSpec {
+            name: "n".to_string(),
+            outbound_json: r#"{"type":"socks","server":"127.0.0.1","server_port":1080}"#.to_string(),
+        }];
+        let settings = CoreSettings { block_ads: false, bypass_cn: false, ..Default::default() };
+        let text = build_config_multi(&nodes, &settings, None).unwrap();
+        let v: Value = serde_json::from_str(&text).unwrap();
+        let rules = v["route"]["rules"].as_array().unwrap();
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0]["ip_is_private"], true);
+        assert_eq!(v["route"]["rule_set"].as_array().unwrap().len(), 0);
+        assert_eq!(v["dns"]["rules"].as_array().unwrap().len(), 0);
+        // Sanity: the leaner config still passes the real core check
+        // where the integration harness runs it.
     }
 
     #[test]

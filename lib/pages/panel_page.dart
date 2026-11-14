@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -5,19 +6,22 @@ import 'package:webview_windows/webview_windows.dart';
 
 /// The zashboard panel, served by sing-box itself at
 /// http://127.0.0.1:<clashApiPort>/ui and embedded in a WebView2
-/// view. This is the primary node-switching / connections UI; the
-/// native pages only manage subscriptions, settings and the core.
+/// view. The UI bundle is downloaded by the core on first start,
+/// so before loading we poll until the core actually serves it
+/// (a blind loadUrl too early sticks forever on an error page).
 class PanelPage extends StatefulWidget {
   const PanelPage({
     super.key,
     required this.running,
     required this.clashApiPort,
     required this.onStart,
+    this.onOpenExternal,
   });
 
   final bool running;
   final int clashApiPort;
   final VoidCallback onStart;
+  final VoidCallback? onOpenExternal;
 
   @override
   State<PanelPage> createState() => _PanelPageState();
@@ -26,7 +30,7 @@ class PanelPage extends StatefulWidget {
 class _PanelPageState extends State<PanelPage> {
   WebviewController? _controller;
   String? _error;
-  bool _loading = false;
+  String _status = '';
 
   String get _url => 'http://127.0.0.1:${widget.clashApiPort}/ui';
 
@@ -45,6 +49,34 @@ class _PanelPageState extends State<PanelPage> {
     if (!widget.running && old.running) {
       _controller?.dispose();
       _controller = null;
+      _error = null;
+    }
+  }
+
+  /// Wait until the core serves the UI (it downloads zashboard on
+  /// first start, which can take a while through the proxy).
+  Future<bool> _waitForUi() async {
+    final client = HttpClient();
+    client.connectionTimeout = const Duration(seconds: 3);
+    try {
+      for (var i = 0; i < 30; i++) {
+        if (!mounted || !widget.running) return false;
+        try {
+          final req = await client.getUrl(Uri.parse('$_url/'));
+          final resp = await req.close();
+          await resp.drain<void>();
+          if (resp.statusCode == 200) return true;
+        } catch (_) {
+          // Not up yet; keep waiting.
+        }
+        if (mounted) {
+          setState(() => _status = '正在等待面板就绪（内核首次启动要先下载面板，约数十秒）… ${i + 1}/30');
+        }
+        await Future<void>.delayed(const Duration(seconds: 1));
+      }
+      return false;
+    } finally {
+      client.close(force: true);
     }
   }
 
@@ -54,14 +86,26 @@ class _PanelPageState extends State<PanelPage> {
       return;
     }
     setState(() {
-      _loading = true;
       _error = null;
+      _status = '正在等待面板就绪…';
     });
+    final ready = await _waitForUi();
+    if (!mounted) return;
+    if (!ready) {
+      setState(() {
+        _status = '';
+        _error = '面板还没就绪：内核可能还没把 zashboard 下载下来。\n'
+            '先看「日志」页有没有下载失败，网络通了点「重新加载」再试。';
+      });
+      return;
+    }
     try {
-      final controller = WebviewController();
-      await controller.initialize();
-      await controller.setBackgroundColor(Colors.transparent);
-      await controller.setPopupWindowPolicy(WebviewPopupWindowPolicy.deny);
+      final controller = _controller ?? WebviewController();
+      if (_controller == null) {
+        await controller.initialize();
+        await controller.setBackgroundColor(Colors.transparent);
+        await controller.setPopupWindowPolicy(WebviewPopupWindowPolicy.deny);
+      }
       await controller.loadUrl(_url);
       if (!mounted) {
         controller.dispose();
@@ -69,13 +113,14 @@ class _PanelPageState extends State<PanelPage> {
       }
       setState(() {
         _controller = controller;
-        _loading = false;
+        _status = '';
+        _error = null;
       });
     } catch (e) {
       if (mounted) {
         setState(() {
           _error = 'WebView 初始化失败（需要 WebView2 运行时）：$e';
-          _loading = false;
+          _status = '';
         });
       }
     }
@@ -103,6 +148,37 @@ class _PanelPageState extends State<PanelPage> {
         ),
       );
     }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 10, 8, 6),
+          child: Row(
+            children: [
+              const Icon(Icons.web_asset_outlined, size: 18),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(_url, style: const TextStyle(fontSize: 12)),
+              ),
+              IconButton(
+                icon: const Icon(Icons.refresh, size: 19),
+                tooltip: '重新加载面板',
+                onPressed: _initWebView,
+              ),
+              IconButton(
+                icon: const Icon(Icons.open_in_browser, size: 19),
+                tooltip: '在浏览器打开',
+                onPressed: widget.onOpenExternal,
+              ),
+            ],
+          ),
+        ),
+        Expanded(child: _body(context)),
+      ],
+    );
+  }
+
+  Widget _body(BuildContext context) {
     if (_error != null) {
       return Center(
         child: Padding(
@@ -112,15 +188,33 @@ class _PanelPageState extends State<PanelPage> {
             children: [
               Text(_error!, textAlign: TextAlign.center),
               const SizedBox(height: 12),
-              Text('可手动在浏览器打开：$_url'),
+              Wrap(
+                spacing: 8,
+                children: [
+                  FilledButton(onPressed: _initWebView, child: const Text('重新加载')),
+                  OutlinedButton(
+                    onPressed: widget.onOpenExternal,
+                    child: const Text('在浏览器打开'),
+                  ),
+                ],
+              ),
             ],
           ),
         ),
       );
     }
     final controller = _controller;
-    if (_loading || controller == null) {
-      return const Center(child: CircularProgressIndicator());
+    if (controller == null) {
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const CircularProgressIndicator(),
+            const SizedBox(height: 12),
+            Text(_status, textAlign: TextAlign.center),
+          ],
+        ),
+      );
     }
     return Webview(controller);
   }

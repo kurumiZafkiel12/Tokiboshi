@@ -97,6 +97,8 @@ abstract class CoreBridge {
     int mixedPort = 7890,
     int clashApiPort = 9090,
     bool enableTun = false,
+    bool blockAds = true,
+    bool bypassCn = true,
     String dataDir = '',
     String? selectedName,
   });

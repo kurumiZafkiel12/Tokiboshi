@@ -106,6 +106,35 @@ fn q<'a>(parts: &'a LinkParts, key: &str) -> Option<&'a str> {
     parts.query.get(key).and_then(Value::as_str).filter(|s| !s.is_empty())
 }
 
+/// "20000-30000,30001" -> ["20000:30000", "30001"] (sing-box
+/// `server_ports` syntax uses colons for ranges).
+fn parse_port_ranges(raw: &str) -> Vec<String> {
+    raw.split(',')
+        .map(|t| t.trim().replace('-', ":"))
+        .filter(|t| !t.is_empty())
+        .collect()
+}
+
+/// Clash `ports:` value (string or list) -> sing-box server_ports.
+fn clash_ports(m: &Map<String, Value>) -> Vec<String> {
+    match m.get("ports") {
+        Some(Value::String(s)) => parse_port_ranges(s),
+        Some(Value::Array(a)) => a
+            .iter()
+            .flat_map(|v| match v {
+                Value::String(s) => parse_port_ranges(s),
+                Value::Number(n) => vec![n.to_string()],
+                _ => Vec::new(),
+            })
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+fn first_port_of(ranges: &[String]) -> Option<u64> {
+    ranges.first()?.split(':').next()?.parse().ok()
+}
+
 fn tls_object(parts: &LinkParts, enabled: bool) -> Value {
     let mut tls = Map::new();
     tls.insert("enabled".into(), Value::Bool(enabled));
@@ -227,7 +256,109 @@ pub fn parse_share_link(link: &str) -> Result<NodeInfo, String> {
             }
             ob.insert("obfs".into(), Value::Object(obfs));
         }
+        if let Some(mport) = q(&p, "mport") {
+            let ranges = parse_port_ranges(mport);
+            if !ranges.is_empty() {
+                ob.insert("server_ports".into(), json!(ranges));
+            }
+        }
         return Ok(node(p.name.clone(), &format!("hysteria2-{}:{}", p.host, p.port), Value::Object(ob)));
+    }
+    if link.starts_with("anytls://") {
+        let p = split_link(link, "anytls")?;
+        let mut ob = Map::new();
+        ob.insert("type".into(), "anytls".into());
+        ob.insert("server".into(), p.host.clone().into());
+        ob.insert("server_port".into(), p.port.into());
+        ob.insert("password".into(), p.userinfo.clone().into());
+        let mut tls = tls_object(&p, true);
+        if let Some(m) = tls.as_object_mut() {
+            m.insert(
+                "utls".into(),
+                json!({"enabled": true, "fingerprint": q(&p, "fp").unwrap_or("chrome")}),
+            );
+        }
+        ob.insert("tls".into(), tls);
+        return Ok(node(p.name.clone(), &format!("anytls-{}:{}", p.host, p.port), Value::Object(ob)));
+    }
+    if link.starts_with("tuic://") {
+        let p = split_link(link, "tuic")?;
+        let (uuid, password) = match p.userinfo.split_once(':') {
+            Some((u, pw)) => (u.to_string(), pw.to_string()),
+            None => (p.userinfo.clone(), String::new()),
+        };
+        let mut ob = Map::new();
+        ob.insert("type".into(), "tuic".into());
+        ob.insert("server".into(), p.host.clone().into());
+        ob.insert("server_port".into(), p.port.into());
+        ob.insert("uuid".into(), uuid.into());
+        if !password.is_empty() {
+            ob.insert("password".into(), password.into());
+        }
+        ob.insert(
+            "congestion_control".into(),
+            Value::String(q(&p, "congestion_control").unwrap_or("bbr").to_string()),
+        );
+        ob.insert(
+            "udp_relay_mode".into(),
+            Value::String(q(&p, "udp_relay_mode").unwrap_or("native").to_string()),
+        );
+        let mut tls = tls_object(&p, true);
+        if let Some(m) = tls.as_object_mut() {
+            if !m.contains_key("alpn") {
+                m.insert("alpn".into(), json!(["h3"]));
+            }
+        }
+        ob.insert("tls".into(), tls);
+        return Ok(node(p.name.clone(), &format!("tuic-{}:{}", p.host, p.port), Value::Object(ob)));
+    }
+    if link.starts_with("hysteria://") {
+        // v1 links carry no userinfo; auth is a query parameter.
+        let rest = link.strip_prefix("hysteria://").unwrap();
+        let (before_frag, name) = match rest.split_once('#') {
+            Some((b, f)) => (b, percent_decode(f)),
+            None => (rest, String::new()),
+        };
+        let (authority, query_str) = match before_frag.split_once('?') {
+            Some((a, q)) => (a, q),
+            None => (before_frag, ""),
+        };
+        let authority = authority.split('/').next().unwrap_or(authority);
+        let (host, port_str) = match authority.rsplit_once(':') {
+            Some((h, p)) => (h.to_string(), p.to_string()),
+            None => (authority.to_string(), String::new()),
+        };
+        let port: u16 = port_str.parse().map_err(|_| format!("invalid port: {port_str}"))?;
+        let mut query = Map::new();
+        for pair in query_str.split('&').filter(|x| !x.is_empty()) {
+            let (k, v) = pair.split_once('=').unwrap_or((pair, ""));
+            query.insert(percent_decode(k), Value::String(percent_decode(v)));
+        }
+        let p = LinkParts { userinfo: String::new(), host: host.clone(), port, query, name: name.clone() };
+        let mut ob = Map::new();
+        ob.insert("type".into(), "hysteria".into());
+        ob.insert("server".into(), host.clone().into());
+        ob.insert("server_port".into(), port.into());
+        if let Some(auth) = q(&p, "auth") {
+            ob.insert("auth_str".into(), Value::String(auth.to_string()));
+        }
+        if let Some(up) = q(&p, "upmbps").and_then(|v| v.parse::<u64>().ok()) {
+            ob.insert("up_mbps".into(), Value::from(up));
+        }
+        if let Some(down) = q(&p, "downmbps").and_then(|v| v.parse::<u64>().ok()) {
+            ob.insert("down_mbps".into(), Value::from(down));
+        }
+        if let Some(obfs) = q(&p, "obfs") {
+            ob.insert("obfs".into(), Value::String(obfs.to_string()));
+        }
+        if let Some(mport) = q(&p, "mport") {
+            let ranges = parse_port_ranges(mport);
+            if !ranges.is_empty() {
+                ob.insert("server_ports".into(), json!(ranges));
+            }
+        }
+        ob.insert("tls".into(), tls_object(&p, true));
+        return Ok(node(name, &format!("hysteria-{host}:{port}"), Value::Object(ob)));
     }
     if link.starts_with("ss://") {
         let p = split_link(link, "ss")?;
@@ -436,6 +567,14 @@ fn clash_tls(m: &Map<String, Value>) -> Map<String, Value> {
             json!({"enabled": true, "fingerprint": cs(m, "client-fingerprint").unwrap_or("chrome")}),
         );
     }
+    if !tls.contains_key("utls") {
+        if let Some(fp) = cs(m, "client-fingerprint") {
+            tls.insert(
+                "utls".into(),
+                json!({"enabled": true, "fingerprint": fp}),
+            );
+        }
+    }
     tls
 }
 
@@ -480,7 +619,11 @@ fn clash_transport(m: &Map<String, Value>) -> Option<Value> {
 fn clash_proxy_to_outbound(m: &Map<String, Value>) -> Option<Value> {
     let typ = cs(m, "type")?;
     let server = cs(m, "server")?;
-    let port = m.get("port").and_then(Value::as_u64)?;
+    let ports = clash_ports(m);
+    let port = m
+        .get("port")
+        .and_then(Value::as_u64)
+        .or_else(|| first_port_of(&ports))?;
     let mut ob = Map::new();
     ob.insert("server".into(), Value::String(server.to_string()));
     ob.insert("server_port".into(), Value::from(port));
@@ -539,11 +682,19 @@ fn clash_proxy_to_outbound(m: &Map<String, Value>) -> Option<Value> {
                 ob.insert("transport".into(), t);
             }
         }
+        "anytls" => {
+            ob.insert("type".into(), "anytls".into());
+            ob.insert("password".into(), Value::String(cs(m, "password")?.to_string()));
+            ob.insert("tls".into(), Value::Object(clash_tls(m)));
+        }
         "hysteria2" => {
             ob.insert("type".into(), "hysteria2".into());
             let password = cs(m, "password").or_else(|| cs(m, "auth"))?;
             ob.insert("password".into(), Value::String(password.to_string()));
             ob.insert("tls".into(), Value::Object(clash_tls(m)));
+            if !ports.is_empty() {
+                ob.insert("server_ports".into(), json!(ports));
+            }
             if let Some(obfs_type) = cs(m, "obfs") {
                 let mut obfs = Map::new();
                 obfs.insert("type".into(), Value::String(obfs_type.to_string()));
@@ -599,6 +750,9 @@ fn clash_proxy_to_outbound(m: &Map<String, Value>) -> Option<Value> {
             }
             if let Some(obfs) = cs(m, "obfs") {
                 ob.insert("obfs".into(), Value::String(obfs.to_string()));
+            }
+            if !ports.is_empty() {
+                ob.insert("server_ports".into(), json!(ports));
             }
             ob.insert("tls".into(), Value::Object(clash_tls(m)));
         }
@@ -816,6 +970,65 @@ mod tests {
         let ob = out(&n);
         assert_eq!(ob["type"], "hysteria2");
         assert_eq!(n.name, "A2");
+    }
+
+    #[test]
+    #[test]
+    fn anytls_link_parses() {
+        let n = parse_share_link("anytls://secret@a.example.com:443?sni=a.example.com&insecure=1#我的anytls").unwrap();
+        assert_eq!(n.name, "我的anytls");
+        let ob: Value = serde_json::from_str(&n.outbound_json).unwrap();
+        assert_eq!(ob["type"], "anytls");
+        assert_eq!(ob["password"], "secret");
+        assert_eq!(ob["tls"]["server_name"], "a.example.com");
+        assert_eq!(ob["tls"]["insecure"], true);
+        assert_eq!(ob["tls"]["utls"]["fingerprint"], "chrome");
+    }
+
+    #[test]
+    fn tuic_link_parses() {
+        let n = parse_share_link("tuic://11111111-2222-3333-4444-555555555555:pw@t.example.com:443?congestion_control=cubic&sni=t.example.com#tuic1").unwrap();
+        let ob: Value = serde_json::from_str(&n.outbound_json).unwrap();
+        assert_eq!(ob["type"], "tuic");
+        assert_eq!(ob["uuid"], "11111111-2222-3333-4444-555555555555");
+        assert_eq!(ob["password"], "pw");
+        assert_eq!(ob["congestion_control"], "cubic");
+        assert_eq!(ob["tls"]["alpn"][0], "h3");
+    }
+
+    #[test]
+    fn hysteria_v1_link_parses() {
+        let n = parse_share_link("hysteria://h.example.com:443?auth=tok&peer=h.example.com&upmbps=50&downmbps=200&insecure=1#hy1").unwrap();
+        let ob: Value = serde_json::from_str(&n.outbound_json).unwrap();
+        assert_eq!(ob["type"], "hysteria");
+        assert_eq!(ob["auth_str"], "tok");
+        assert_eq!(ob["up_mbps"], 50);
+        assert_eq!(ob["down_mbps"], 200);
+    }
+
+    #[test]
+    fn hy2_link_mport_becomes_server_ports() {
+        let n = parse_share_link("hysteria2://pw@h.example.com:443?mport=20000-30000&sni=h.example.com#hop").unwrap();
+        let ob: Value = serde_json::from_str(&n.outbound_json).unwrap();
+        assert_eq!(ob["server_ports"][0], "20000:30000");
+    }
+
+    #[test]
+    fn clash_yaml_anytls_and_ports_only_hy2() {
+        let text = r#"
+proxies:
+  - {name: at1, type: anytls, server: a.example.com, port: 443, password: secret, sni: a.example.com, skip-cert-verify: true, client-fingerprint: chrome}
+  - {name: hop1, type: hysteria2, server: h.example.com, ports: "20000-30000", password: pw, sni: h.example.com}
+"#;
+        let out = parse_clash_yaml(text).unwrap();
+        assert_eq!(out.nodes.len(), 2, "skipped: {:?}", out.skipped);
+        let at: Value = serde_json::from_str(&out.nodes[0].outbound_json).unwrap();
+        assert_eq!(at["type"], "anytls");
+        assert_eq!(at["tls"]["utls"]["fingerprint"], "chrome");
+        let hop: Value = serde_json::from_str(&out.nodes[1].outbound_json).unwrap();
+        assert_eq!(hop["type"], "hysteria2");
+        assert_eq!(hop["server_port"], 20000);
+        assert_eq!(hop["server_ports"][0], "20000:30000");
     }
 
     #[test]

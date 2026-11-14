@@ -55,6 +55,8 @@ class AppData {
     this.singBoxPath = '',
     this.systemProxy = true,
     this.enableTun = false,
+    this.blockAds = true,
+    this.bypassCn = true,
   });
 
   List<NodeInfo> nodes;
@@ -72,6 +74,10 @@ class AppData {
   /// TUN inbound (virtual NIC). Needs an elevated process on
   /// Windows; applied when the core (re)starts.
   bool enableTun;
+
+  /// Route rule options (applied when the core (re)starts).
+  bool blockAds;
+  bool bypassCn;
 
   NodeInfo? get selected =>
       (selectedIndex >= 0 && selectedIndex < nodes.length)
@@ -115,6 +121,8 @@ class Store {
         singBoxPath: (map['singBoxPath'] as String?) ?? '',
         systemProxy: (map['systemProxy'] as bool?) ?? true,
         enableTun: (map['enableTun'] as bool?) ?? false,
+        blockAds: (map['blockAds'] as bool?) ?? true,
+        bypassCn: (map['bypassCn'] as bool?) ?? true,
       );
     } catch (_) {
       return AppData();
@@ -132,6 +140,8 @@ class Store {
       'singBoxPath': data.singBoxPath,
       'systemProxy': data.systemProxy,
       'enableTun': data.enableTun,
+      'blockAds': data.blockAds,
+      'bypassCn': data.bypassCn,
     };
     await _file.writeAsString(jsonEncode(map));
   }

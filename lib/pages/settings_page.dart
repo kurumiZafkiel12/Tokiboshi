@@ -14,6 +14,10 @@ class SettingsPage extends StatefulWidget {
     required this.onSystemProxyChanged,
     this.coreVersion,
     this.onEnsureCore,
+    this.blockAds = true,
+    this.bypassCn = true,
+    this.onBlockAdsChanged,
+    this.onBypassCnChanged,
   });
 
   final int mixedPort;
@@ -26,6 +30,10 @@ class SettingsPage extends StatefulWidget {
   final ValueChanged<bool> onSystemProxyChanged;
   final String? coreVersion;
   final VoidCallback? onEnsureCore;
+  final bool blockAds;
+  final bool bypassCn;
+  final ValueChanged<bool>? onBlockAdsChanged;
+  final ValueChanged<bool>? onBypassCnChanged;
 
   @override
   State<SettingsPage> createState() => _SettingsPageState();
@@ -153,6 +161,37 @@ class _SettingsPageState extends State<SettingsPage> {
           ),
           const SizedBox(height: 12),
           Card(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const Padding(
+                  padding: EdgeInsets.fromLTRB(16, 14, 16, 2),
+                  child: Text('分流规则', style: TextStyle(fontWeight: FontWeight.w600)),
+                ),
+                const Padding(
+                  padding: EdgeInsets.fromLTRB(16, 0, 16, 4),
+                  child: Text(
+                    '固定规则：私有/局域网地址直连、其余流量走代理（规则模式下）。下面两项可开关，改动后重启内核生效。',
+                    style: TextStyle(fontSize: 12),
+                  ),
+                ),
+                SwitchListTile(
+                  title: const Text('广告拦截'),
+                  subtitle: const Text('广告域名直接拒绝（geosite-category-ads-all 规则集）'),
+                  value: widget.blockAds,
+                  onChanged: widget.onBlockAdsChanged,
+                ),
+                SwitchListTile(
+                  title: const Text('国内直连'),
+                  subtitle: const Text('国内网站与 IP 直连（geosite-cn / geoip-cn 规则集），DNS 同步走本地解析'),
+                  value: widget.bypassCn,
+                  onChanged: widget.onBypassCnChanged,
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          Card(
             child: Padding(
               padding: const EdgeInsets.all(16),
               child: Column(
@@ -160,7 +199,7 @@ class _SettingsPageState extends State<SettingsPage> {
                 children: [
                   const Text('关于', style: TextStyle(fontWeight: FontWeight.w600)),
                   const SizedBox(height: 8),
-                  const Text('Tokiboshi v0.4.0 · Flutter 壳 + Rust 中间层 + sing-box 内核'),
+                  const Text('Tokiboshi v0.5.0 · Flutter 壳 + Rust 中间层 + sing-box 内核'),
                   const Text('面板为 zashboard（由 sing-box 托管于 127.0.0.1:9090/ui）；内核 sing-box 1.14.4 按需下载'),
                   Text('数据文件：${widget.dataFilePath}'),
                 ],

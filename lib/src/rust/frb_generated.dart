@@ -90,6 +90,8 @@ abstract class RustLibApi extends BaseApi {
       required int mixedPort,
       required int clashApiPort,
       required bool enableTun,
+      required bool blockAds,
+      required bool bypassCn,
       required String dataDir,
       String? selectedName});
 
@@ -158,6 +160,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       required int mixedPort,
       required int clashApiPort,
       required bool enableTun,
+      required bool blockAds,
+      required bool bypassCn,
       required String dataDir,
       String? selectedName}) {
     return handler.executeNormal(NormalTask(
@@ -167,6 +171,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_u_16(mixedPort, serializer);
         sse_encode_u_16(clashApiPort, serializer);
         sse_encode_bool(enableTun, serializer);
+        sse_encode_bool(blockAds, serializer);
+        sse_encode_bool(bypassCn, serializer);
         sse_encode_String(dataDir, serializer);
         sse_encode_opt_String(selectedName, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
@@ -182,6 +188,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         mixedPort,
         clashApiPort,
         enableTun,
+        blockAds,
+        bypassCn,
         dataDir,
         selectedName
       ],
@@ -196,6 +204,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           "mixedPort",
           "clashApiPort",
           "enableTun",
+          "blockAds",
+          "bypassCn",
           "dataDir",
           "selectedName"
         ],

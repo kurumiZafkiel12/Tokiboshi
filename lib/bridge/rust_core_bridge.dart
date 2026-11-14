@@ -29,6 +29,8 @@ class RustCoreBridge implements CoreBridge {
     int mixedPort = 7890,
     int clashApiPort = 9090,
     bool enableTun = false,
+    bool blockAds = true,
+    bool bypassCn = true,
     String dataDir = '',
     String? selectedName,
   }) {
@@ -42,6 +44,8 @@ class RustCoreBridge implements CoreBridge {
       mixedPort: mixedPort,
       clashApiPort: clashApiPort,
       enableTun: enableTun,
+      blockAds: blockAds,
+      bypassCn: bypassCn,
       dataDir: dataDir,
       selectedName: selectedName,
     );

@@ -23,6 +23,8 @@ Future<String> buildConfig(
         required int mixedPort,
         required int clashApiPort,
         required bool enableTun,
+        required bool blockAds,
+        required bool bypassCn,
         required String dataDir,
         String? selectedName}) =>
     RustLib.instance.api.crateApiCoreBuildConfig(
@@ -30,6 +32,8 @@ Future<String> buildConfig(
         mixedPort: mixedPort,
         clashApiPort: clashApiPort,
         enableTun: enableTun,
+        blockAds: blockAds,
+        bypassCn: bypassCn,
         dataDir: dataDir,
         selectedName: selectedName);
 

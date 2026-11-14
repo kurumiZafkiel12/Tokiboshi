@@ -1,6 +1,10 @@
 import 'package:flutter/material.dart';
 
 import 'dart:async';
+import 'dart:io';
+
+import 'package:tray_manager/tray_manager.dart';
+import 'package:window_manager/window_manager.dart';
 
 import 'bridge/core_bridge.dart';
 import 'bridge/rust_core_bridge.dart';
@@ -19,6 +23,13 @@ import 'src/rust/frb_generated.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  if (Platform.isWindows) {
+    try {
+      await windowManager.ensureInitialized();
+    } catch (_) {
+      // Window/tray niceties are optional; never block startup.
+    }
+  }
   await RustLib.init();
   runApp(TokiboshiApp(bridge: RustCoreBridge()));
 }
@@ -76,7 +87,7 @@ class ShellPage extends StatefulWidget {
   State<ShellPage> createState() => _ShellPageState();
 }
 
-class _ShellPageState extends State<ShellPage> {
+class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener {
   AppData _data = AppData();
   bool _running = false;
   bool _busy = false;
@@ -98,6 +109,7 @@ class _ShellPageState extends State<ShellPage> {
   void initState() {
     super.initState();
     _load();
+    _initTray();
     _statusTimer =
         Timer.periodic(const Duration(seconds: 2), (_) => _syncCoreStatus());
   }
@@ -152,12 +164,14 @@ class _ShellPageState extends State<ShellPage> {
           _restartCount = status.restartCount;
           _lastExit = status.lastExit;
         });
+        _refreshTray();
       }
       if (_running && status.running) {
         try {
           final mode = await _clash.mode();
           if (mounted && mode != null && mode != _clashMode) {
             setState(() => _clashMode = mode);
+            _refreshTray();
           }
         } catch (_) {
           // Clash API not up yet (UI download can take a while).
@@ -471,6 +485,7 @@ class _ShellPageState extends State<ShellPage> {
         _setMessage('已选中 ${node.name}（重启内核后生效）');
       }
     }
+    _refreshTray();
   }
 
   Future<void> _deleteNode(int index) async {
@@ -485,16 +500,23 @@ class _ShellPageState extends State<ShellPage> {
     await _persist();
   }
 
+  static const _udpProtocols = {'hysteria', 'hysteria2', 'tuic'};
+
+  /// While the core runs, measure through the Clash API delay
+  /// endpoint (the real outbound). While stopped, only TCP-based
+  /// protocols can be probed honestly — a TCP connect to a UDP
+  /// (hy2/tuic) port says nothing, so those are skipped instead of
+  /// being reported as failures.
   Future<void> _measureNode(NodeInfo node) async {
     if (_measuring) return;
-    _measuring = true;
-    // Prefer the Clash API delay endpoint while the core runs (it
-    // measures through the real outbound); fall back to TCP connect.
-    int? ms;
-    if (_running) {
-      ms = await _clash.delay(node.name);
+    if (!_running && _udpProtocols.contains(node.protocol)) {
+      _setMessage('内核未启动：${node.protocol} 是 UDP 协议，测速需先启动内核');
+      return;
     }
-    ms ??= await tcpLatency(node.server, node.serverPort);
+    _measuring = true;
+    final ms = _running
+        ? await _clash.delay(node.name)
+        : await tcpLatency(node.server, node.serverPort);
     _measuring = false;
     if (mounted) setState(() => _latency[node] = ms);
   }
@@ -502,8 +524,15 @@ class _ShellPageState extends State<ShellPage> {
   Future<void> _measureAll() async {
     if (_measuring) return;
     _measuring = true;
+    var skipped = 0;
     for (final node in List.of(_data.nodes)) {
-      final ms = await tcpLatency(node.server, node.serverPort);
+      if (!_running && _udpProtocols.contains(node.protocol)) {
+        skipped++;
+        continue;
+      }
+      final ms = _running
+          ? await _clash.delay(node.name)
+          : await tcpLatency(node.server, node.serverPort);
       if (!mounted) {
         _measuring = false;
         return;
@@ -511,6 +540,131 @@ class _ShellPageState extends State<ShellPage> {
       setState(() => _latency[node] = ms);
     }
     _measuring = false;
+    if (skipped > 0) {
+      _setMessage('已跳过 $skipped 个 UDP 协议节点（内核未启动时测不准），启动内核后可测全部');
+    }
+  }
+
+  Future<void> _openExternalPanel() async {
+    final url = 'http://127.0.0.1:${_data.clashApiPort}/ui';
+    try {
+      if (Platform.isWindows) {
+        await Process.run('cmd', ['/c', 'start', '', url]);
+      }
+    } catch (e) {
+      _setMessage('打开浏览器失败：$e（可手动访问 $url）');
+    }
+  }
+
+  // ---- tray (Windows) ----
+
+  bool _trayReady = false;
+
+  Future<void> _initTray() async {
+    if (!Platform.isWindows) return;
+    try {
+      await windowManager.setPreventClose(true);
+      windowManager.addListener(this);
+      trayManager.addListener(this);
+      final exeDir = File(Platform.resolvedExecutable).parent.path;
+      final iconFile = File('$exeDir\\icon.ico');
+      await trayManager.setIcon(
+        iconFile.existsSync() ? iconFile.path : 'assets/icon.ico',
+      );
+      await trayManager.setToolTip('Tokiboshi');
+      _trayReady = true;
+      await _refreshTray();
+    } catch (_) {
+      // Tray is a convenience only; ignore failures.
+    }
+  }
+
+  Future<void> _refreshTray() async {
+    if (!_trayReady) return;
+    try {
+      final selected = _data.selected;
+      final items = <MenuItem>[
+        MenuItem(
+          label: _running
+              ? '运行中${selected == null ? '' : ' · ${selected.name}'}'
+              : '内核已停止',
+          disabled: true,
+        ),
+        MenuItem.separator(),
+        MenuItem(key: 'toggle', label: _running ? '停止内核' : '启动内核'),
+        MenuItem.separator(),
+        MenuItem(key: 'mode_rule', label: '规则模式', checked: _clashMode != 'Global' && _clashMode != 'Direct', disabled: !_running),
+        MenuItem(key: 'mode_global', label: '全局模式', checked: _clashMode == 'Global', disabled: !_running),
+        MenuItem(key: 'mode_direct', label: '直连模式', checked: _clashMode == 'Direct', disabled: !_running),
+        MenuItem.separator(),
+        for (var i = 0; i < _data.nodes.length && i < 15; i++)
+          MenuItem(
+            key: 'node_$i',
+            label: _data.nodes[i].name,
+            checked: i == _data.selectedIndex,
+          ),
+        if (_data.nodes.isNotEmpty) MenuItem.separator(),
+        MenuItem(key: 'sysproxy', label: '系统代理', checked: _data.systemProxy),
+        MenuItem.separator(),
+        MenuItem(key: 'show', label: '显示主窗口'),
+        MenuItem(key: 'quit', label: '退出 Tokiboshi'),
+      ];
+      await trayManager.setContextMenu(Menu(items: items));
+    } catch (_) {}
+  }
+
+  @override
+  void onTrayIconMouseDown() {
+    windowManager.show();
+    windowManager.focus();
+  }
+
+  @override
+  void onTrayIconRightMouseDown() {
+    trayManager.popUpContextMenu();
+  }
+
+  @override
+  void onTrayMenuItemClick(MenuItem menuItem) {
+    final key = menuItem.key ?? '';
+    if (key == 'toggle') {
+      _toggleCore();
+    } else if (key == 'mode_rule') {
+      _setMode('Rule');
+    } else if (key == 'mode_global') {
+      _setMode('Global');
+    } else if (key == 'mode_direct') {
+      _setMode('Direct');
+    } else if (key.startsWith('node_')) {
+      final i = int.tryParse(key.substring(5));
+      if (i != null && i >= 0 && i < _data.nodes.length) _selectNode(i);
+    } else if (key == 'sysproxy') {
+      _setSystemProxy(!_data.systemProxy);
+    } else if (key == 'show') {
+      windowManager.show();
+      windowManager.focus();
+    } else if (key == 'quit') {
+      _quitApp();
+    }
+  }
+
+  @override
+  void onWindowClose() {
+    // Close button hides to the tray instead of quitting.
+    windowManager.hide();
+  }
+
+  Future<void> _quitApp() async {
+    try {
+      if (_running) {
+        await widget.bridge.stopCore();
+        if (_data.systemProxy) {
+          await widget.systemProxy.apply(false, _data.mixedPort);
+        }
+      }
+      await trayManager.destroy();
+    } catch (_) {}
+    await windowManager.destroy();
   }
 
   // ---- core ----
@@ -573,6 +727,8 @@ class _ShellPageState extends State<ShellPage> {
         mixedPort: _data.mixedPort,
         clashApiPort: _data.clashApiPort,
         enableTun: _data.enableTun,
+        blockAds: _data.blockAds,
+        bypassCn: _data.bypassCn,
         dataDir: _dataDir,
         selectedName: selected?.name,
       );
@@ -670,8 +826,23 @@ class _ShellPageState extends State<ShellPage> {
     try {
       await _clash.setMode(mode);
       if (mounted) setState(() => _clashMode = mode);
+      _refreshTray();
     } catch (e) {
       _setMessage('切换模式失败：$e');
+    }
+  }
+
+  Future<void> _setRuleOption({bool? blockAds, bool? bypassCn}) async {
+    setState(() {
+      if (blockAds != null) _data.blockAds = blockAds;
+      if (bypassCn != null) _data.bypassCn = bypassCn;
+    });
+    await _persist();
+    if (_running) {
+      _setMessage('分流规则已更新，正在重启内核…');
+      await _restartCore();
+    } else {
+      _setMessage('分流规则已更新（下次启动生效）');
     }
   }
 
@@ -694,6 +865,7 @@ class _ShellPageState extends State<ShellPage> {
           running: _running,
           clashApiPort: _data.clashApiPort,
           onStart: _toggleCore,
+          onOpenExternal: _openExternalPanel,
         );
       case 2:
         page = NodesPage(
@@ -732,6 +904,10 @@ class _ShellPageState extends State<ShellPage> {
           onSave: _saveSettings,
           onSystemProxyChanged: _setSystemProxy,
           onEnsureCore: _ensureFromSettings,
+          blockAds: _data.blockAds,
+          bypassCn: _data.bypassCn,
+          onBlockAdsChanged: (v) => _setRuleOption(blockAds: v),
+          onBypassCnChanged: (v) => _setRuleOption(bypassCn: v),
         );
       default:
         page = DashboardPage(
@@ -816,7 +992,7 @@ class _ShellPageState extends State<ShellPage> {
                 if (!_navCollapsed)
                   const Padding(
                     padding: EdgeInsets.all(16),
-                    child: Text('v0.4.0 · sing-box 1.14.4'),
+                    child: Text('v0.5.0 · sing-box 1.14.4'),
                   ),
               ],
             ),

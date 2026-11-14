@@ -21,6 +21,8 @@ pub fn build_config(
     mixed_port: u16,
     clash_api_port: u16,
     enable_tun: bool,
+    block_ads: bool,
+    bypass_cn: bool,
     data_dir: String,
     selected_name: Option<String>,
 ) -> Result<String, String> {
@@ -28,6 +30,8 @@ pub fn build_config(
         mixed_port,
         clash_api_port,
         enable_tun,
+        block_ads,
+        bypass_cn,
         data_dir,
         ..CoreSettings::default()
     };
