@@ -1,0 +1,157 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:tokiboshi/main_v007_audit.dart' as app;
+import 'package:tokiboshi/bridge/core_bridge.dart';
+import 'package:tokiboshi/services/store.dart';
+import 'package:tokiboshi/services/subscription_fetcher.dart';
+import 'package:tokiboshi/services/system_proxy.dart';
+import 'fake_bridge.dart';
+
+final evidence=<String,dynamic>{};
+final events=<String>[];
+class Memory extends Store {
+ Memory():super(File('v007-synthetic-memory.json'));
+ final data=AppData();
+ bool failSave=false;
+ final saved=<Map<String,dynamic>>[];
+ @override Directory get dir=>Directory.systemTemp;
+ @override Future<AppData> load() async=>data;
+ @override Future<void> save(AppData v) async {
+  events.add('save');
+  if(failSave) throw StateError('synthetic save failure');
+  saved.add({'cleanExit':v.cleanExit,'runningAtExit':v.runningAtExit,'enableTun':v.enableTun,'resumeConnect':v.resumeConnect});
+ }
+ @override Future<File> writeRuntimeConfig(String s) async=>File('synthetic-config.json');
+}
+class Bridge extends FakeBridge {
+ @override Future<void> stopCore() async {events.add('stopCore'); await super.stopCore();}
+}
+class Proxy extends NoopSystemProxy {
+ @override Future<void> apply(bool enabled,int port) async {
+  events.add('proxy:$enabled'); await super.apply(enabled,port);
+ }
+}
+void main(){
+ TestWidgetsFlutterBinding.ensureInitialized();
+ setUp(() {
+  events.clear(); app.auditExitCode=null;
+  app.auditProcessRun=(exe,args) async {
+   events.add(exe);
+   return ProcessResult(1,exe=='net'?2:0,'','');
+  };
+  for(final name in ['tray_manager','window_manager']) {
+   TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+    .setMockMethodCallHandler(MethodChannel(name),(call) async {
+     events.add('$name.${call.method}'); return null;
+    });
+  }
+ });
+ tearDownAll(() async {
+  await File('v007-widget-results.json').writeAsString(const JsonEncoder.withIndent('  ').convert(evidence));
+ });
+ Future<(State,Memory,Bridge,Proxy)> mount(WidgetTester t,{bool running=false,bool tun=true,bool auto=false,bool oldRunning=false,bool resume=false}) async {
+  t.view.physicalSize=const Size(1280,900);t.view.devicePixelRatio=1;
+  addTearDown(t.view.reset);
+  final m=Memory();m.data.enableTun=tun;m.data.autoConnect=auto;m.data.runningAtExit=oldRunning;m.data.resumeConnect=resume;
+  m.data.nodes=const[NodeInfo(name:'fixture',outboundJson:'{"type":"socks","server":"127.0.0.1","server_port":1}')];
+  m.data.systemProxy=true;
+  final b=Bridge()..running=running;final proxy=Proxy();
+  final key=GlobalKey();
+  await t.pumpWidget(MaterialApp(home:app.ShellPage(key:key,bridge:b,store:m,systemProxy:proxy,
+   fetcher:FakeFetcher({}),allocatePort:(port,reserved) async=>port)));
+  await t.pumpAndSettle();
+  app.auditPrepare(key.currentState!,running:running);
+  events.clear();
+  return(key.currentState!,m,b,proxy);
+ }
+ testWidgets('net session original predicate exit0/exit2/exception', (t) async {
+  final vals=<dynamic>[];
+  app.auditProcessRun=(e,a) async=>ProcessResult(1,0,'','');vals.add(await app.auditElevation());
+  app.auditProcessRun=(e,a) async=>ProcessResult(1,2,'','');vals.add(await app.auditElevation());
+  app.auditProcessRun=(e,a) async=>throw StateError('not found');vals.add(await app.auditElevation());
+  evidence['elevation_mocked_predicate']=vals;expect(vals,[true,false,false]);
+ });
+ testWidgets('startup auto-connect TUN unprivileged skips safely', (t) async {
+  final (s,m,b,p)=await mount(t,auto:true,oldRunning:true);
+  evidence['autoconnect_gate']=app.auditSnapshot(s);
+  expect(b.running,false);expect(app.auditSnapshot(s)['message'],contains('自动连接已跳过'));
+  await t.pumpWidget(const SizedBox());
+ });
+ testWidgets('start dialog cancel leaves stopped without launch', (t) async {
+  final (s,m,b,p)=await mount(t);
+  final f=app.auditToggle(s);await t.pump();await t.pump(const Duration(milliseconds:350));
+  expect(find.text('关闭虚拟网卡并继续'),findsOneWidget);
+  await t.tap(find.text('取消'));await t.pumpAndSettle();await f;
+  evidence['start_dialog_cancel']={'state':app.auditSnapshot(s),'events':List.of(events)};
+  expect(b.running,false);expect(events.contains('powershell'),false);expect(m.data.enableTun,true);
+  await t.pumpWidget(const SizedBox());
+ });
+ testWidgets('start dialog disable TUN then actually starts fake core', (t) async {
+  final (s,m,b,p)=await mount(t);
+  final f=app.auditToggle(s);await t.pump();await t.pump(const Duration(milliseconds:350));
+  await t.tap(find.text('关闭虚拟网卡并继续'));await t.pumpAndSettle();await f;
+  evidence['start_dialog_disable']={'state':app.auditSnapshot(s),'events':List.of(events)};
+  expect(b.running,true);expect(m.data.enableTun,false);expect(events.contains('powershell'),false);
+  await t.pumpWidget(const SizedBox());
+ });
+ testWidgets('fixed explicit stopped relaunch carries one-shot intent', (t) async {
+  final (s,m,b,p)=await mount(t);
+  final f=app.auditToggle(s);await t.pump();await t.pump(const Duration(milliseconds:350));
+  await t.tap(find.text('以管理员身份重启'));await t.pumpAndSettle();await f;
+  evidence['stopped_relaunch']={'state':app.auditSnapshot(s),'saved':m.saved,'events':List.of(events),'exit':app.auditExitCode};
+  expect(m.saved.last['runningAtExit'],false);expect(m.saved.last['resumeConnect'],true);expect(app.auditExitCode,0);
+  await t.pumpWidget(const SizedBox());
+ });
+ testWidgets('elevated reload with false runningAtExit does not auto-connect', (t) async {
+  app.auditProcessRun=(e,a) async=>ProcessResult(1,0,'','');
+  final(s,m,b,p)=await mount(t,auto:true,oldRunning:false);
+  evidence['elevated_reload_false_resume']={'state':app.auditSnapshot(s),'coreRunning':b.running};
+  expect(b.running,false);await t.pumpWidget(const SizedBox());
+ });
+ testWidgets('running TUN dialog cancel keeps core alive restores switch', (t) async {
+  final(s,m,b,p)=await mount(t,running:true,tun:false);
+  final f=app.auditTun(s,true);await t.pumpAndSettle();
+  await t.tap(find.text('取消（恢复关闭）'));await t.pumpAndSettle();await f;
+  evidence['running_tun_cancel']={'state':app.auditSnapshot(s),'coreRunning':b.running,'events':List.of(events)};
+  expect(m.data.enableTun,false);expect(b.running,true);expect(events.contains('stopCore'),false);
+  await t.pumpWidget(const SizedBox());
+ });
+ testWidgets('UAC cancel preserves core and tray but residual state differs', (t) async {
+  final(s,m,b,p)=await mount(t,running:true,tun:false);
+  app.auditProcessRun=(e,a) async {events.add(e);return ProcessResult(1,e=='net'?2:1,'','synthetic UAC cancelled');};
+  final f=app.auditTun(s,true);await t.pumpAndSettle();
+  await t.tap(find.text('以管理员身份重启'));await t.pumpAndSettle();await f;
+  evidence['uac_cancel']={'state':app.auditSnapshot(s),'coreRunning':b.running,'saved':m.saved,'events':List.of(events),'exit':app.auditExitCode};
+  expect(app.auditExitCode,null);expect(b.running,true);expect(app.auditSnapshot(s)['running'],true);
+  expect(m.data.enableTun,true);expect(m.data.cleanExit,true);
+  expect(events.contains('tray_manager.destroy'),false);expect(events.contains('proxy:false'),false);expect(m.data.resumeConnect,false);
+  await t.pumpWidget(const SizedBox());
+ });
+ testWidgets('fixed persist failure aborts process launch but leaves in-memory intent', (t) async {
+  final(s,m,b,p)=await mount(t,running:true);m.failSave=true;
+  await app.auditRelaunch(s);await t.pumpAndSettle();
+  evidence['save_failure_relaunch']={'state':app.auditSnapshot(s),'coreRunning':b.running,'events':List.of(events),'exit':app.auditExitCode};
+  expect(app.auditSnapshot(s)['saveFailed'],true);expect(events.contains('powershell'),false);expect(app.auditExitCode,null);expect(b.running,true);expect(m.data.resumeConnect,true);
+  await t.pumpWidget(const SizedBox());
+ });
+ testWidgets('DEFECT autoConnect off still off after successful running relaunch', (t) async {
+  final(s,m,b,p)=await mount(t,running:true,auto:false);
+  await app.auditRelaunch(s);await t.pumpAndSettle();
+  evidence['auto_off_relaunch']={'autoConnect':m.data.autoConnect,'saved':m.saved,'events':List.of(events)};
+  expect(m.data.autoConnect,false);expect(m.saved.last['runningAtExit'],true);
+  await t.pumpWidget(const SizedBox());
+ });
+ testWidgets('DEFECT one-shot consumed only in memory, persisted resume remains true', (t) async {
+  app.auditProcessRun=(e,a) async=>ProcessResult(1,0,'','');
+  final(s,m,b,p)=await mount(t,auto:false,oldRunning:false,resume:true);
+  evidence['resume_consume_persistence']={'state':app.auditSnapshot(s),'saved':m.saved,'coreRunning':b.running};
+  expect(b.running,true);expect(m.data.resumeConnect,false);
+  expect(m.saved.last['resumeConnect'],true);
+  await t.pumpWidget(const SizedBox());
+ });
+
+}

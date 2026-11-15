@@ -1,0 +1,43 @@
+name: CV007 fixes independent recheck (no publish)
+on:
+  push:
+    branches: ['audit/cv007-fixes-codex']
+permissions:
+  contents: read
+jobs:
+  audit:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: work
+      - uses: actions/checkout@v4
+        with:
+          ref: f31f331
+          path: published
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.50.0
+          channel: stable
+      - name: Frozen dependencies and original method fixtures
+        shell: pwsh
+        run: |
+          Set-Location published
+          flutter pub get --enforce-lockfile
+          if ($LASTEXITCODE -ne 0) { throw 'Frozen dependencies failed' }
+          Set-Location ..
+          python work/tool/recheck_cv007_fixes/prepare_widget.py published
+          if ($LASTEXITCODE -ne 0) { throw 'Fixture generation failed' }
+          Set-Location published
+          flutter test --no-pub test/v007_elevation_test.dart --reporter expanded 2>&1 | Tee-Object "$env:RUNNER_TEMP/cv007-fixes-widget.log"
+          if ($LASTEXITCODE -ne 0) { throw 'Fixture assertions failed' }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cv007-fixes-audit
+          path: |
+            published/lib/main_v007_audit.dart
+            published/test/v007_elevation_test.dart
+            published/v007-widget-results.json
+            ${{ runner.temp }}/cv007-fixes-widget.log
