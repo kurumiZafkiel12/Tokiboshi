@@ -800,6 +800,7 @@ mod tests {
             rule_sets: vec![],
             final_outbound: Some("HK".into()),
             dns: None,
+            dns_native: false,
             unsupported: vec![],
             rules_total: 4,
         };
@@ -827,6 +828,7 @@ mod tests {
             rule_sets: vec![],
             final_outbound: None,
             dns: None,
+            dns_native: false,
             unsupported: vec![],
             rules_total: 1,
         };
@@ -842,6 +844,7 @@ mod tests {
             rule_sets: vec![],
             final_outbound: None,
             dns: Some(json!({"servers":[{"type":"https","tag":"dns-sub-1","server":"doh.pub","server_port":443}]})),
+            dns_native: false,
             unsupported: vec![],
             rules_total: 0,
         };
