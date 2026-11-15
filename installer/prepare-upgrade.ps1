@@ -11,7 +11,7 @@ $ErrorActionPreference = 'Stop'
 $root = [IO.Path]::GetFullPath($InstallDir).TrimEnd('\')
 $data = [IO.Path]::GetFullPath($DataDir).TrimEnd('\')
 function Manifest([string]$Path) {
-    $entries = @(Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json)
+    $entries = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json
     foreach ($entry in $entries) {
         if ($entry -isnot [string] -or [IO.Path]::IsPathRooted($entry) -or $entry -match '(^|[\\/])\.\.([\\/]|$)' -or $entry.Contains(':')) { throw 'Unsafe installed-file manifest' }
         $full = [IO.Path]::GetFullPath((Join-Path $root $entry))

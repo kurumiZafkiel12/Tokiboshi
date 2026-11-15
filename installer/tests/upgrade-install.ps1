@@ -14,7 +14,7 @@ $code='using System.Threading; class OldGui { static void Main(){Thread.Sleep(60
 $stub=Join-Path $root 'stub.exe';Add-Type -TypeDefinition $code -OutputAssembly $stub -OutputType ConsoleApplication
 Copy-Item $stub "$app/tokiboshi.exe" -Force
 $gui=Start-Process "$app/tokiboshi.exe" -PassThru
-$oldFiles=@(Get-Content (Join-Path $PSScriptRoot '../legacy-v005-files.json') -Raw | ConvertFrom-Json)
+$oldFiles=Get-Content (Join-Path $PSScriptRoot '../legacy-v005-files.json') -Raw | ConvertFrom-Json
 $oldFiles+=@('retired-plugin.dll','data/retired.asset')
 ConvertTo-Json -InputObject $oldFiles | Set-Content "$app/installer-files.json"
 Set-Content "$app/retired-plugin.dll" 'synthetic retired plugin';Set-Content "$app/data/retired.asset" 'synthetic retired asset';Set-Content "$app/user-notes.txt" 'user file remains'
