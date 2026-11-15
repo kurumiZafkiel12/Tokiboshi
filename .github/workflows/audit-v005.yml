@@ -1,0 +1,53 @@
+name: Audit released v0.0.5
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  audit:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: work
+      - uses: actions/checkout@v4
+        with:
+          ref: a2bbaf34eb4dab54c272bda02a46d2c15f4bdb28
+          path: published
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.50.0
+          channel: stable
+      - name: Resolve frozen dependencies of the published source
+        working-directory: published
+        run: flutter pub get --enforce-lockfile
+      - name: Verify release and run native audit
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $env:AUDIT_ROOT = Join-Path $env:RUNNER_TEMP 'v005-audit'
+          New-Item $env:AUDIT_ROOT -ItemType Directory -Force | Out-Null
+          gh api repos/$env:GH_REPO/releases/tags/v0.0.5 > "$env:AUDIT_ROOT/release.json"
+          gh release download v0.0.5 --pattern Tokiboshi-windows.zip --dir $env:AUDIT_ROOT
+          if ($LASTEXITCODE -ne 0) { throw 'Release download failed' }
+          $zip = Join-Path $env:AUDIT_ROOT 'Tokiboshi-windows.zip'
+          $actual = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -ne '69fea32a5e0b11c314a79e71ab4ce9ed670220c0ba5e902279f57044a5890804') { throw 'Release checksum mismatch' }
+          Expand-Archive $zip "$env:AUDIT_ROOT/portable"
+          $env:AUDIT_DLL = (Get-ChildItem "$env:AUDIT_ROOT/portable" -Filter rust_lib_tokiboshi.dll -Recurse | Select-Object -First 1).FullName
+          $env:AUDIT_CORE = (Get-ChildItem "$env:AUDIT_ROOT/portable" -Filter sing-box.exe -Recurse | Select-Object -First 1).FullName
+          $env:AUDIT_SOURCE = Join-Path $env:GITHUB_WORKSPACE 'published'
+          $env:DART_BIN = (Get-Command dart).Source
+          python work/tool/recheck_v005/run.py
+          if ($LASTEXITCODE -ne 0) { throw 'Native audit checks failed; inspect result artifact' }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: v005-native-recheck
+          path: |
+            ${{ runner.temp }}/v005-audit/results/
+            ${{ runner.temp }}/v005-audit/release.json
