@@ -343,7 +343,6 @@ pub fn parse_singbox_profile(text: &str) -> Result<Option<ParsedProfile>, String
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
 
     #[test]
     fn clash_rules_convert_in_order_with_targets() {

@@ -365,6 +365,14 @@ pub fn build_config_multi(
         json!({ "clash_mode": "Direct", "server": "dns-local" }),
         json!({ "clash_mode": "Global", "server": "dns-remote" }),
     ];
+    // App-owned route rules: private direct + mode rules, always
+    // first. A subscription profile (T069) appends its own rules after
+    // these and replaces the ads/CN template below.
+    let mut route_rules: Vec<Value> = vec![
+        json!({ "ip_is_private": true, "outbound": "direct" }),
+        json!({ "clash_mode": "Direct", "outbound": "direct" }),
+        json!({ "clash_mode": "Global", "outbound": "proxy" }),
+    ];
     match profile {
         Some(p) => {
             for rs in &p.rule_sets {
