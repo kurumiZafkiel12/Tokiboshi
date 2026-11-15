@@ -1,5 +1,8 @@
 name: Audit released v0.0.5
 on:
+  push:
+    branches: ['fix/v005-recheck-installer']
+    paths: ['tool/recheck_v005/**', '.github/workflows/audit-v005.yml']
   workflow_dispatch:
 permissions:
   contents: read
