@@ -74,6 +74,7 @@ mod job {
     }
 
     #[repr(C)]
+    #[derive(Default)]
     struct BasicLimitInformation {
         per_process_user_time_limit: i64,
         per_job_user_time_limit: i64,
