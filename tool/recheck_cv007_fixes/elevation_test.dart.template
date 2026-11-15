@@ -64,7 +64,7 @@ void main(){
   await t.pumpWidget(MaterialApp(home:app.ShellPage(key:key,bridge:b,store:m,systemProxy:proxy,
    fetcher:FakeFetcher({}),allocatePort:(port,reserved) async=>port)));
   await t.pumpAndSettle();
-  app.auditPrepare(key.currentState!,running:running);
+  app.auditPrepare(key.currentState!,running:b.running);
   events.clear();
   return(key.currentState!,m,b,proxy);
  }
