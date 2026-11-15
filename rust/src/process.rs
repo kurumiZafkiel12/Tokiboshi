@@ -40,36 +40,107 @@ struct Shared {
     last_exit: Mutex<Option<String>>,
 }
 
+/// Minimal kernel32 Job Object FFI. Declared locally instead of via
+/// a crate so the ABI-critical definitions live in this file and no
+/// external dependency version can move them under us.
 #[cfg(windows)]
-fn job_assign(child: &Child) -> Result<isize, String> {
+mod job {
     use std::os::windows::io::AsRawHandle;
-    use windows_sys::Win32::System::JobObjects::{
-        AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
-        SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
-        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-    };
-    unsafe {
-        let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
-        if job.is_null() {
-            return Err("CreateJobObjectW failed".to_string());
+    use std::process::Child;
+
+    pub type JobHandle = isize;
+    type Raw = *mut core::ffi::c_void;
+
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn CreateJobObjectW(attrs: *const core::ffi::c_void, name: *const u16) -> Raw;
+        fn SetInformationJobObject(job: Raw, class: u32, info: *const core::ffi::c_void, len: u32) -> i32;
+        fn AssignProcessToJobObject(job: Raw, process: Raw) -> i32;
+        fn CloseHandle(handle: Raw) -> i32;
+    }
+
+    const JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE: u32 = 0x0000_2000;
+    const JOB_OBJECT_EXTENDED_LIMIT_INFORMATION: u32 = 9;
+
+    #[repr(C)]
+    #[derive(Default)]
+    struct IoCounters {
+        read_operation_count: u64,
+        write_operation_count: u64,
+        other_operation_count: u64,
+        read_transfer_count: u64,
+        write_transfer_count: u64,
+        other_transfer_count: u64,
+    }
+
+    #[repr(C)]
+    struct BasicLimitInformation {
+        per_process_user_time_limit: i64,
+        per_job_user_time_limit: i64,
+        limit_flags: u32,
+        minimum_working_set_size: usize,
+        maximum_working_set_size: usize,
+        active_process_limit: u32,
+        affinity: usize,
+        priority_class: u32,
+        ui_restrictions_class: u32,
+        io_priority: u32,
+    }
+
+    #[repr(C)]
+    struct ExtendedLimitInformation {
+        basic: BasicLimitInformation,
+        io: IoCounters,
+        process_memory_limit: usize,
+        job_memory_limit: usize,
+        peak_process_memory_used: usize,
+        peak_job_memory_used: usize,
+    }
+
+    /// Create a kill-on-close job and move `child` into it. The job
+    /// has exactly one handle (ours); when this process dies or we
+    /// close the handle, every process inside the job is terminated.
+    pub fn assign(child: &Child) -> Result<JobHandle, String> {
+        unsafe {
+            let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
+            if job.is_null() {
+                return Err("CreateJobObjectW failed".to_string());
+            }
+            let mut info = ExtendedLimitInformation {
+                basic: BasicLimitInformation {
+                    limit_flags: JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+                    ..Default::default()
+                },
+                io: IoCounters::default(),
+                process_memory_limit: 0,
+                job_memory_limit: 0,
+                peak_process_memory_used: 0,
+                peak_job_memory_used: 0,
+            };
+            if SetInformationJobObject(
+                job,
+                JOB_OBJECT_EXTENDED_LIMIT_INFORMATION,
+                &info as *const _ as *const core::ffi::c_void,
+                std::mem::size_of::<ExtendedLimitInformation>() as u32,
+            ) == 0
+            {
+                CloseHandle(job);
+                return Err("SetInformationJobObject failed".to_string());
+            }
+            if AssignProcessToJobObject(job, child.as_raw_handle() as Raw) == 0 {
+                CloseHandle(job);
+                return Err("AssignProcessToJobObject failed".to_string());
+            }
+            Ok(job as JobHandle)
         }
-        let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
-        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-        if SetInformationJobObject(
-            job,
-            JobObjectExtendedLimitInformation,
-            &info as *const _ as *const core::ffi::c_void,
-            std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
-        ) == 0
-        {
-            windows_sys::Win32::Foundation::CloseHandle(job);
-            return Err("SetInformationJobObject failed".to_string());
+    }
+
+    /// Close the job handle; with KILL_ON_JOB_CLOSE this terminates
+    /// any process still inside the job.
+    pub fn close(handle: JobHandle) {
+        unsafe {
+            CloseHandle(handle as Raw);
         }
-        if AssignProcessToJobObject(job, child.raw_handle() as _) == 0 {
-            windows_sys::Win32::Foundation::CloseHandle(job);
-            return Err("AssignProcessToJobObject failed".to_string());
-        }
-        Ok(job as isize)
     }
 }
 
@@ -80,7 +151,7 @@ fn job_assign(child: &Child) -> Result<isize, String> {
 fn job_close(shared: &Shared) {
     if let Ok(mut slot) = shared.job.lock() {
         if let Some(handle) = slot.take() {
-            unsafe { windows_sys::Win32::Foundation::CloseHandle(handle as _) };
+            job::close(handle);
         }
     }
 }
@@ -150,10 +221,10 @@ fn spawn_child(
         // safe and cannot kill anything.
         if let Ok(mut slot) = shared.job.lock() {
             if let Some(old) = slot.take() {
-                unsafe { windows_sys::Win32::Foundation::CloseHandle(old as _) };
+                job::close(old);
             }
         }
-        match job_assign(&child) {
+        match job::assign(&child) {
             Ok(handle) => {
                 if let Ok(mut slot) = shared.job.lock() {
                     *slot = Some(handle);
