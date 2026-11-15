@@ -371,16 +371,28 @@ pub const RULE_SET_FILES: [(&str, &str); 3] = [
 /// into `<data_dir>/rules/`. Failures are ignored on purpose — the
 /// config generator drops rules whose files are absent, and the
 /// core must never depend on these downloads to start.
-pub fn ensure_rule_sets(data_dir: &Path) {
+/// Outcome of a rule-set maintenance round, so callers can report
+/// accurately instead of claiming readiness (HF053-02).
+#[derive(Debug, Clone, Copy)]
+pub struct RuleSetSummary {
+    pub ready: usize,
+    pub total: usize,
+    /// Files downloaded (or refreshed) during this round.
+    pub updated: usize,
+    pub dir_ok: bool,
+}
+
+pub fn ensure_rule_sets(data_dir: &Path) -> RuleSetSummary {
     let dir = data_dir.join("rules");
     if std::fs::create_dir_all(&dir).is_err() {
         push_extra_log("[rules] 无法创建规则目录，分流/拦截规则不可用".into());
-        return;
+        return RuleSetSummary { ready: 0, total: RULE_SET_FILES.len(), updated: 0, dir_ok: false };
     }
     let agent = ureq::AgentBuilder::new()
         .timeout(std::time::Duration::from_secs(60))
         .build();
     let mut ready = 0usize;
+    let mut updated = 0usize;
     for (tag, url) in RULE_SET_FILES {
         let dest = dir.join(format!("{tag}.srs"));
         let fresh = std::fs::metadata(&dest)
@@ -414,10 +426,20 @@ pub fn ensure_rule_sets(data_dir: &Path) {
         if std::fs::write(&tmp, &bytes).is_ok() {
             let _ = std::fs::rename(&tmp, &dest);
             ready += 1;
+            updated += 1;
             push_extra_log(format!("[rules] {tag} 已更新"));
         }
     }
-    push_extra_log(format!("[rules] 规则集就绪 {ready}/{}", RULE_SET_FILES.len()));
+    let total = RULE_SET_FILES.len();
+    if ready == total {
+        push_extra_log(format!("[rules] 规则集 {ready}/{total} 就绪"));
+    } else {
+        push_extra_log(format!(
+            "[rules] 规则集 {ready}/{total} 可用（{} 个缺失，对应分流规则不生效）",
+            total - ready
+        ));
+    }
+    RuleSetSummary { ready, total, updated, dir_ok: true }
 }
 
 

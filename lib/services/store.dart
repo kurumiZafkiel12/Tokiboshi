@@ -145,11 +145,13 @@ class Store {
     if (backup != null) {
       // Repair the main copy from the backup right away; otherwise
       // the next save() would rotate the still-corrupt main file
-      // into .bak and destroy the only good copy (HF053-11).
+      // into .bak and destroy the only good copy (HF053-11). If the
+      // repair fails (e.g. read-only main), save() validates before
+      // rotating and quarantines the bad file instead.
       try {
         await _bakFile.copy(_file.path);
       } catch (_) {
-        // Repair is best effort; save() will rewrite main anyway.
+        // Repair is best effort; save() validates before rotating.
       }
       return backup;
     }
@@ -201,7 +203,24 @@ class Store {
     }
   }
 
-  Future<void> save(AppData data) async {
+  /// Serializes save() calls so two rapid saves cannot interleave
+  /// the tmp/rename rotation.
+  Future<void> _saveQueue = Future.value();
+
+  /// Validate the current main file. A corrupt main must NEVER be
+  /// rotated into the backup (HF053-11: repair-failure scenario).
+  Future<bool> _mainIsHealthy() async {
+    if (!await _file.exists()) return false;
+    return await _tryLoad(_file) != null;
+  }
+
+  Future<void> save(AppData data) {
+    final next = _saveQueue.then((_) => _saveNow(data));
+    _saveQueue = next.then((_) {}, onError: (_) {});
+    return next;
+  }
+
+  Future<void> _saveNow(AppData data) async {
     await dir.create(recursive: true);
     final map = {
       'nodes': data.nodes.map((n) => n.toJson()).toList(),
@@ -219,28 +238,42 @@ class Store {
       'cleanExit': data.cleanExit,
       'runningAtExit': data.runningAtExit,
     };
-    // Atomic rotation: the previous main file BECOMES the backup
-    // (rename, not copy — a corrupt main can never pollute .bak,
-    // HF053-11), then tmp becomes main. Between the two renames main
-    // is briefly absent; load() falls back to the backup for that
-    // window, and a failed rotation falls back to a direct rewrite.
     await _tmpFile.writeAsString(jsonEncode(map), flush: true);
+    // Rotation: previous main BECOMES the backup (rename, not copy),
+    // then tmp becomes main. An unhealthy main is quarantined as
+    // .corrupt instead — the last valid backup must survive.
+    final mainHealthy = await _mainIsHealthy();
     try {
       if (await _bakFile.exists()) {
         await _bakFile.delete();
       }
       if (await _file.exists()) {
-        await _file.rename(_bakFile.path);
+        if (mainHealthy) {
+          await _file.rename(_bakFile.path);
+        } else {
+          try {
+            await _file.rename('${_file.path}.corrupt');
+          } catch (_) {
+            try {
+              await _file.delete();
+            } catch (_) {}
+          }
+        }
       }
       await _tmpFile.rename(_file.path);
     } catch (_) {
       // Windows rename can race an indexer; a direct rewrite is still
-      // better than losing the data.
-      await _file.writeAsString(jsonEncode(map), flush: true);
-      if (await _tmpFile.exists()) {
-        try {
-          await _tmpFile.delete();
-        } catch (_) {}
+      // better than losing the data (the backup stays untouched here).
+      try {
+        await _file.writeAsString(jsonEncode(map), flush: true);
+        if (await _tmpFile.exists()) {
+          try {
+            await _tmpFile.delete();
+          } catch (_) {}
+        }
+      } catch (_) {
+        // Both paths failed: the new data survives in tmp; main and
+        // the last valid backup are untouched.
       }
     }
   }

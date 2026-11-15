@@ -262,10 +262,15 @@ pub fn start_ensure_core(data_dir: String) {
         }
         // Rule downloads are optional and may take minutes on a blocked
         // network. Report binary readiness first so startup never waits for them.
-        core_download::ensure_rule_sets(&dir);
-        if core_running() {
+        let rules = core_download::ensure_rule_sets(&dir);
+        // Only claim "restart to apply" when this round actually
+        // changed something or left gaps — a fully fresh set with no
+        // updates needs no restart hint (HF053-02: no false-ready).
+        if core_running()
+            && (rules.updated > 0 || rules.ready < rules.total || !rules.dir_ok)
+        {
             core_download::log_extra(
-                "[rules] 规则集已就绪；重启内核后分流规则即生效".into(),
+                "[rules] 运行中的配置未包含本轮规则变化，重启内核后应用".into(),
             );
         }
         if let Some(e) = download_error {

@@ -189,4 +189,26 @@ void main() {
     expect(parseProxyServerFromRegOutput('The system was unable to find the specified registry key.'),
         isNull);
   });
+
+  test('unhealthy main is quarantined, backup preserved (HF053-11)', () async {
+    final tmp = await Directory.systemTemp.createTemp('tokiboshi-store8');
+    addTearDown(() => tmp.delete(recursive: true));
+    final file = File('${tmp.path}/data.json');
+    final store = Store(file);
+    await store.save(AppData()..mixedPort = 7911);
+    await store.save(AppData()..mixedPort = 7912);
+    // Simulate the repair-failure branch: main corrupt, no load()
+    // repair happened (e.g. read-only main made the copy fail).
+    await file.writeAsString('{corrupt-primary');
+    // The next save must quarantine the bad main, NOT rotate it into
+    // the good backup.
+    await store.save(AppData()..mixedPort = 7913);
+    final bak = jsonDecode(
+        await File('${file.path}.bak').readAsString()) as Map<String, dynamic>;
+    expect(bak['mixedPort'], 7911, reason: 'good backup must survive');
+    expect(jsonDecode(await file.readAsString())['mixedPort'], 7913);
+    // And the recovery chain still works after a second corruption.
+    await file.writeAsString('{broken again');
+    expect((await store.load()).mixedPort, 7911);
+  });
 }

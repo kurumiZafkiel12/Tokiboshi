@@ -47,9 +47,16 @@ Future<void> main() async {
       // unrelated service may hold some other port, so the second
       // instance requires an ack before it exits.
       lock.listen((socket) {
-        socket.listen((data) {
+        socket.listen((data) async {
           if (String.fromCharCodes(data).contains('tokiboshi-show')) {
             socket.write('tokiboshi-ok');
+            try {
+              await socket.flush();
+              // Give the peer a moment to read the ack before the
+              // socket goes away.
+              await Future<void>.delayed(const Duration(milliseconds: 120));
+            } catch (_) {}
+            socket.destroy();
             windowManager.show().catchError((_) {});
             windowManager.focus().catchError((_) {});
           }
@@ -63,10 +70,16 @@ Future<void> main() async {
           kInstanceLockPort,
           timeout: const Duration(milliseconds: 800),
         );
-        socket.write('tokiboshi-show');
-        final ack = await socket.first.timeout(const Duration(milliseconds: 800));
-        woke = String.fromCharCodes(ack).contains('tokiboshi-ok');
-        socket.destroy();
+        try {
+          socket.write('tokiboshi-show');
+          final ack = await socket.first.timeout(const Duration(milliseconds: 800));
+          woke = String.fromCharCodes(ack).contains('tokiboshi-ok');
+        } finally {
+          // Always release the probe socket, even on ack timeout —
+          // leaving it open kept a test event loop alive (Hermes
+          // v0.0.2 recheck observation).
+          socket.destroy();
+        }
       } catch (_) {
         // No valid ack: the port is held by something that is not
         // Tokiboshi. Start unlocked rather than refusing to run.
@@ -941,16 +954,14 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
           .writeRuntimeConfig(injectClashSecret(config, _data.clashApiSecret));
       // Rule-set downloads run in the background after app start; if
       // they have not landed yet this config carries no 分流 rules.
-      // Say so instead of letting the toggles lie (HF053-02).
+      // The warning is appended to the RUNNING status message so it
+      // survives the start (HF053-02: transient _setMessage loses it).
       final rulesDir = Directory('$_dataDir\\rules');
-      final rulesReady = const [
+      final rulesPending = !const [
         'geosite-category-ads-all.srs',
         'geosite-cn.srs',
         'geoip-cn.srs',
       ].every((f) => File('${rulesDir.path}\\$f').existsSync());
-      if (!rulesReady) {
-        _setMessage('规则集仍在后台下载，本次启动暂无分流规则；就绪后重启内核即生效');
-      }
       await widget.bridge.startCore(
         singBoxPath: binary,
         configPath: configFile.path,
@@ -971,7 +982,8 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
         _message = '运行中：${_data.nodes.where((n) => !n.isPolicy).length} 个节点 · mixed 127.0.0.1:${_data.mixedPort}'
             ' · 面板 127.0.0.1:${_data.clashApiPort}/ui'
             '${_data.systemProxy ? ' · 系统代理已开启' : ''}'
-            '${portsChanged ? ' · 原端口被占用，已自动更换并保存端口' : ''}';
+            '${portsChanged ? ' · 原端口被占用，已自动更换并保存端口' : ''}'
+            '${rulesPending ? ' · ⚠ 规则集未就绪，重启内核后分流生效' : ''}';
       });
     } catch (e) {
       if (started) {
