@@ -124,6 +124,16 @@ class TokiboshiApp extends StatelessWidget {
           brightness: Brightness.dark,
         ),
         useMaterial3: true,
+        visualDensity: VisualDensity.standard,
+        snackBarTheme: const SnackBarThemeData(
+          behavior: SnackBarBehavior.floating,
+          width: 420,
+        ),
+        dialogTheme: const DialogThemeData(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.all(Radius.circular(16)),
+          ),
+        ),
       ),
       home: ShellPage(
         bridge: bridge,
@@ -220,7 +230,7 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
         final server = await widget.systemProxy.readProxyServer();
         if (isStaleProxy(server, data.mixedPort)) {
           await widget.systemProxy.apply(false, data.mixedPort);
-          _message = '检测到上次异常退出遗留的系统代理，已自动关闭';
+          _message = _compose('检测到上次异常退出遗留的系统代理，已自动关闭');
         }
       } catch (_) {
         // Best effort; the core startup path reports real failures.
@@ -282,9 +292,9 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
           _coreDownSince = null;
           changed = true;
           await widget.systemProxy.apply(false, _data.mixedPort);
-          _message = status.lastExit != null
+          _message = _compose(status.lastExit != null
               ? '内核已退出：${status.lastExit}'
-              : '内核已停止';
+              : '内核已停止');
         }
       } else if (status.running && !_running && !_userStopped) {
         // Supervisor restarted the core on its own: recover the UI
@@ -295,7 +305,7 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
         if (_data.systemProxy) {
           await widget.systemProxy.apply(true, _data.mixedPort);
         }
-        _message = '内核已自动重启，代理已恢复';
+        _message = _compose('内核已自动重启，代理已恢复');
       } else if (status.running && _running) {
         _coreDownSince = null;
       }
@@ -322,19 +332,37 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
     }
   }
 
-  Future<void> _persist() async {
+  /// True while the last persist attempt failed. Appended to every
+  /// status message so a save failure is never masked by a later
+  /// success message (HV003-01 UI subitem).
+  bool _saveFailed = false;
+
+  /// Compose a status message with the save-failure warning when the
+  /// last write failed.
+  String _compose(String text) =>
+      text + (_saveFailed ? '（⚠ 配置保存失败，重启后设置将回退）' : '');
+
+  /// Persist [AppData]. Returns false (and surfaces the error on the
+  /// status bar) when the write failed — callers compose their
+  /// runtime-applied messages with this result so "runtime applied"
+  /// and "settings saved" are presented separately (HV003-01).
+  Future<bool> _persist() async {
     try {
       await widget.store.save(_data);
+      if (_saveFailed) {
+        _saveFailed = false;
+        if (mounted) setState(() {});
+      }
+      return true;
     } catch (e) {
-      // save() only throws when main AND the fallback both failed —
-      // surface it instead of pretending it saved (HV003-01). tmp
-      // holds the newest data for auto-recovery on next launch.
+      _saveFailed = true;
       _setMessage('配置保存失败：$e');
+      return false;
     }
   }
 
   void _setMessage(String? text) {
-    if (mounted) setState(() => _message = text);
+    if (mounted) setState(() => _message = text == null ? null : _compose(text));
   }
 
   // ---- import / subscriptions ----
@@ -428,7 +456,7 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
     setState(() {
       _data.nodes = [..._data.nodes, ...result];
       _data.selectedIndex = _data.nodes.length - 1;
-      _message = '链式代理已添加，已选择落地节点；请保留同组前置节点';
+      _message = _compose('链式代理已添加，已选择落地节点；请保留同组前置节点');
     });
     await _persist();
   }
@@ -475,7 +503,8 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
         if (_data.selectedIndex < 0 && _data.nodes.isNotEmpty) {
           _data.selectedIndex = 0;
         }
-        _message = '已导入 ${imported.length} 个节点${_skippedNote(skipped)}';
+        _message = _compose(
+            '已导入 ${imported.length} 个节点${_skippedNote(skipped)}');
       });
       await _persist();
     } catch (e) {
@@ -580,8 +609,8 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
         if (_data.selectedIndex < 0 && _data.nodes.isNotEmpty) {
           _data.selectedIndex = 0;
         }
-        _message =
-            '订阅「$name」已添加：${nodes.where((n) => !n.isPolicy).length} 个节点${_skippedNote(outcome.skipped)}';
+        _message = _compose(
+            '订阅「$name」已添加：${nodes.where((n) => !n.isPolicy).length} 个节点${_skippedNote(outcome.skipped)}');
       });
       await _persist();
     } catch (e) {
@@ -625,7 +654,8 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
           _data.selectedIndex =
               idx >= 0 ? idx : (_data.nodes.isEmpty ? -1 : 0);
         }
-        _message = '订阅「${sub.name}」已更新：${fresh.where((n) => !n.isPolicy).length} 个节点${_skippedNote(outcome.skipped)}';
+        _message = _compose(
+            '订阅「${sub.name}」已更新：${fresh.where((n) => !n.isPolicy).length} 个节点${_skippedNote(outcome.skipped)}');
       });
       await _persist();
     } catch (e) {
@@ -649,7 +679,7 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
       _data.selectedIndex = selected == null || selected.source == sub.id
           ? (_data.nodes.isEmpty ? -1 : 0)
           : _data.nodes.indexOf(selected);
-      _message = '订阅「${sub.name}」已删除';
+      _message = _compose('订阅「${sub.name}」已删除');
     });
     await _persist();
   }
@@ -988,11 +1018,12 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
         _running = true;
         _restartCount = 0;
         _lastExit = null;
-        _message = '运行中：${_data.nodes.where((n) => !n.isPolicy).length} 个节点 · mixed 127.0.0.1:${_data.mixedPort}'
+        _message = _compose(
+            '运行中：${_data.nodes.where((n) => !n.isPolicy).length} 个节点 · mixed 127.0.0.1:${_data.mixedPort}'
             ' · 面板 127.0.0.1:${_data.clashApiPort}/ui'
             '${_data.systemProxy ? ' · 系统代理已开启' : ''}'
             '${portsChanged ? ' · 原端口被占用，已自动更换并保存端口' : ''}'
-            '${rulesPending ? ' · ⚠ 规则集未就绪，重启内核后分流生效' : ''}';
+            '${rulesPending ? ' · ⚠ 规则集未就绪，重启内核后分流生效' : ''}');
       });
     } catch (e) {
       if (started) {
@@ -1044,19 +1075,21 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
       _data.mixedPort = port;
       _data.clashApiPort = clashApiPort;
       _data.singBoxPath = singBoxPath;
-      _message = '设置已保存';
     });
-    await _persist();
+    final saved = await _persist();
+    _setMessage(saved ? '设置已保存' : '设置保存失败（见上方错误）');
   }
 
   Future<void> _setSystemProxy(bool value) async {
     setState(() {
       _data.systemProxy = value;
     });
-    await _persist();
+    final saved = await _persist();
     if (_running) {
       await widget.systemProxy.apply(value, _data.mixedPort);
-      _setMessage(value ? '系统代理已开启' : '系统代理已关闭');
+      // 运行时已应用 ≠ 已持久化：分开呈现（HV003-01）。
+      _setMessage(
+          '${value ? '系统代理已开启' : '系统代理已关闭'}${saved ? '' : '（⚠ 配置未保存）'}');
     }
   }
 
@@ -1064,12 +1097,14 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
     setState(() {
       _data.enableTun = value;
     });
-    await _persist();
+    final saved = await _persist();
     if (_running) {
-      _setMessage(value ? '虚拟网卡已开启，正在重启内核…' : '虚拟网卡已关闭，正在重启内核…');
+      _setMessage(
+          '${value ? '虚拟网卡已开启，正在重启内核…' : '虚拟网卡已关闭，正在重启内核…'}${saved ? '' : '（⚠ 配置保存失败）'}');
       await _restartCore();
     } else {
-      _setMessage(value ? '虚拟网卡已开启（下次启动生效）' : '虚拟网卡已关闭');
+      _setMessage(
+          '${value ? '虚拟网卡已开启（下次启动生效）' : '虚拟网卡已关闭'}${saved ? '' : '（⚠ 配置未保存）'}');
     }
   }
 
@@ -1271,9 +1306,38 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
               children: [
                 if (_message != null)
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-                    color: scheme.surfaceContainerHighest,
-                    child: Text(_message!),
+                    margin: const EdgeInsets.fromLTRB(12, 10, 12, 4),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                    decoration: BoxDecoration(
+                      color: scheme.surfaceContainerHighest,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Icon(
+                          _saveFailed
+                              ? Icons.error_outline
+                              : Icons.info_outline,
+                          size: 18,
+                          color: _saveFailed
+                              ? scheme.error
+                              : scheme.primary,
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            _message!,
+                            style: TextStyle(
+                              fontSize: 13,
+                              height: 1.35,
+                              color: scheme.onSurface,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 if (_busy) const LinearProgressIndicator(minHeight: 2),
                 Expanded(child: page),
