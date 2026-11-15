@@ -164,6 +164,12 @@ class Store {
       final subscriptions = (map['subscriptions'] as List<dynamic>? ?? [])
           .map((e) => Subscription.fromJson(e as Map<String, dynamic>))
           .toList();
+      final runningAtExitRaw = map['runningAtExit'] as bool?;
+      // Migration: data written before the runningAtExit flag existed
+      // had autoConnect mean "always auto-start"; keep that behavior
+      // instead of silently never auto-starting after an upgrade.
+      final migratedRunningAtExit =
+          (map['autoConnect'] as bool?) == true;
       return AppData(
         nodes: nodes,
         subscriptions: subscriptions,
@@ -178,7 +184,7 @@ class Store {
         bypassCn: (map['bypassCn'] as bool?) ?? true,
         clashApiSecret: (map['clashApiSecret'] as String?) ?? '',
         cleanExit: (map['cleanExit'] as bool?) ?? true,
-        runningAtExit: (map['runningAtExit'] as bool?) ?? false,
+        runningAtExit: runningAtExitRaw ?? migratedRunningAtExit,
       );
     } catch (_) {
       return null;

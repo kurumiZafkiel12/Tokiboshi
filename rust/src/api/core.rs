@@ -50,7 +50,7 @@ pub fn parse_share_link(link: String) -> Result<crate::links::NodeInfo, String> 
 
 // ---- sing-box core process (global, owned by the middle layer) ----
 
-use crate::process::{CoreProcess, CoreState};
+use crate::process::{is_elevated, CoreProcess, CoreState};
 use std::path::PathBuf;
 use std::sync::Mutex;
 
@@ -79,6 +79,18 @@ pub fn start_core(binary_path: String, config_path: String) -> Result<(), String
                 }
             }
         }
+    }
+    // TUN preflight: without admin the core would FATAL on interface
+    // setup immediately after listening. Refuse with a clear message
+    // instead of looping a kernel that can never come up.
+    let wants_tun = config["inbounds"].as_array().is_some_and(|list| {
+        list.iter().any(|inbound| inbound["type"] == "tun")
+    });
+    if wants_tun && !is_elevated() {
+        return Err(
+            "虚拟网卡（TUN）需要管理员权限：请在仪表盘关闭虚拟网卡开关，或以管理员身份重新运行 Tokiboshi"
+                .to_string(),
+        );
     }
     if let Some(addr) = config["experimental"]["clash_api"]["external_controller"].as_str() {
         listeners.push(addr.to_string());

@@ -74,6 +74,24 @@ void main() {
     expect(loaded.systemProxy, isTrue);
   });
 
+  test('pre-runningAtExit data migrates autoConnect into runningAtExit',
+      () async {
+    final tmp = await Directory.systemTemp.createTemp('tokiboshi-store7');
+    addTearDown(() => tmp.delete(recursive: true));
+    final file = File('${tmp.path}/data.json');
+    // Old-format file: autoConnect on, no runningAtExit key at all.
+    await file.writeAsString('{"nodes":[],"autoConnect":true,"mixedPort":7890}');
+    final loaded = await Store(file).load();
+    expect(loaded.runningAtExit, isTrue,
+        reason: 'old autoConnect users must keep auto-start after upgrade');
+
+    // New-format data keeps its explicit value.
+    await file.writeAsString(
+        '{"nodes":[],"autoConnect":true,"runningAtExit":false,"mixedPort":7890}');
+    final fresh = await Store(file).load();
+    expect(fresh.runningAtExit, isFalse);
+  });
+
   test('save keeps a backup of the previous good copy', () async {
     final tmp = await Directory.systemTemp.createTemp('tokiboshi-store4');
     addTearDown(() => tmp.delete(recursive: true));

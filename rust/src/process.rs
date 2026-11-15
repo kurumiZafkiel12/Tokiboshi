@@ -43,6 +43,10 @@ struct Shared {
     stop_requested: AtomicBool,
     restart_count: AtomicU32,
     last_exit: Mutex<Option<String>>,
+    /// When the current child was spawned. A core that dies within
+    /// two seconds of spawn has a config/permission problem; the
+    /// supervisor must not burn restarts on it.
+    spawned_at: Mutex<Option<std::time::Instant>>,
 }
 
 /// Minimal kernel32 Job Object FFI. Declared locally instead of via
@@ -164,6 +168,56 @@ fn job_close(shared: &Shared) {
 #[cfg(not(windows))]
 fn job_close(_shared: &Shared) {}
 
+/// True when the current process token is elevated (admin). TUN
+/// needs admin to configure the interface; without the preflight the
+/// core would FATAL at startup on every attempt.
+#[cfg(windows)]
+pub fn is_elevated() -> bool {
+    #[link(name = "advapi32")]
+    extern "system" {
+        fn OpenProcessToken(
+            process: *mut core::ffi::c_void,
+            desired_access: u32,
+            token: *mut *mut core::ffi::c_void,
+        ) -> i32;
+        fn GetTokenInformation(
+            token: *mut core::ffi::c_void,
+            class: u32,
+            info: *mut core::ffi::c_void,
+            len: u32,
+            ret_len: *mut u32,
+        ) -> i32;
+        fn CloseHandle(handle: *mut core::ffi::c_void) -> i32;
+    }
+    extern "system" {
+        fn GetCurrentProcess() -> *mut core::ffi::c_void;
+    }
+    const TOKEN_QUERY: u32 = 0x0008;
+    const TOKEN_ELEVATION: u32 = 20;
+    unsafe {
+        let mut token: *mut core::ffi::c_void = std::ptr::null_mut();
+        if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) == 0 {
+            return false;
+        }
+        let mut elevation: u32 = 0;
+        let mut ret: u32 = 0;
+        let ok = GetTokenInformation(
+            token,
+            TOKEN_ELEVATION,
+            &mut elevation as *mut u32 as *mut core::ffi::c_void,
+            4,
+            &mut ret,
+        );
+        CloseHandle(token);
+        ok != 0 && elevation != 0
+    }
+}
+
+#[cfg(not(windows))]
+pub fn is_elevated() -> bool {
+    true
+}
+
 fn plain_log(line: &str) -> String {
     let mut chars = line.chars().peekable();
     let mut out = String::new();
@@ -219,6 +273,9 @@ fn spawn_child(
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| format!("cannot start sing-box: {e}"))?;
+    if let Ok(mut slot) = shared.spawned_at.lock() {
+        *slot = Some(std::time::Instant::now());
+    }
     #[cfg(windows)]
     {
         // A previous handle can only still exist here on the restart
@@ -402,6 +459,24 @@ impl CoreProcess {
             if shared.stop_requested.load(Ordering::SeqCst) {
                 break;
             }
+            // A core that dies almost immediately after spawn has a
+            // config or permission problem (FATAL). Restarting cannot
+            // fix it, so fail fast instead of burning the budget.
+            let instant = shared
+                .spawned_at
+                .lock()
+                .ok()
+                .and_then(|slot| *slot)
+                .map(|t| t.elapsed() < std::time::Duration::from_secs(2))
+                .unwrap_or(false);
+            if instant {
+                let msg = "内核启动即退出（FATAL，多为配置或权限问题），已停止自动重启";
+                if let Ok(mut le) = shared.last_exit.lock() {
+                    *le = Some(msg.to_string());
+                }
+                push_log(&shared, format!("[core] {msg}"));
+                break;
+            }
             let count = shared.restart_count.load(Ordering::SeqCst);
             if count >= MAX_RESTARTS {
                 let msg = format!("sing-box exited ({status}) and restart limit reached");
@@ -508,7 +583,8 @@ mod tests {
         path
     }
 
-    /// A stand-in that crashes immediately on `run`.
+    /// A stand-in that dies instantly on `run`: a FATAL-shaped crash
+    /// the supervisor must NOT restart.
     #[cfg(windows)]
     fn crashing_binary(dir: &Path) -> PathBuf {
         let path = dir.join("crash-sing-box.cmd");
@@ -525,6 +601,34 @@ mod tests {
         let mut f = std::fs::File::create(&path).unwrap();
         writeln!(f, "#!/bin/sh").unwrap();
         writeln!(f, "if [ \"$1\" = \"run\" ]; then exit 3; fi").unwrap();
+        writeln!(f, "exit 0").unwrap();
+        drop(f);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        path
+    }
+
+    /// A stand-in that runs ~3s and then exits nonzero: a late crash
+    /// inside the restart budget's jurisdiction.
+    #[cfg(windows)]
+    fn slow_crashing_binary(dir: &Path) -> PathBuf {
+        let path = dir.join("slow-crash-sing-box.cmd");
+        let mut f = std::fs::File::create(&path).unwrap();
+        writeln!(f, "@echo off").unwrap();
+        writeln!(f, "if \"%1\"==\"run\" (ping -n 4 127.0.0.1 >nul & exit /b 3)").unwrap();
+        writeln!(f, "exit /b 0").unwrap();
+        path
+    }
+
+    #[cfg(not(windows))]
+    fn slow_crashing_binary(dir: &Path) -> PathBuf {
+        let path = dir.join("slow-crash-sing-box");
+        let mut f = std::fs::File::create(&path).unwrap();
+        writeln!(f, "#!/bin/sh").unwrap();
+        writeln!(f, "if [ \"$1\" = \"run\" ]; then sleep 3; exit 3; fi").unwrap();
         writeln!(f, "exit 0").unwrap();
         drop(f);
         #[cfg(unix)]
@@ -567,15 +671,46 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
     }
 
+    /// An instant (FATAL-shaped) crash must NOT be restarted: the
+    /// supervisor records it and gives up at once.
     #[test]
-    fn crash_is_restarted_up_to_the_limit_then_reported() {
-        let dir = test_dir("crash");
+    fn instant_crash_is_not_restarted_and_is_reported() {
+        let dir = test_dir("instant");
         let config = dir.join("config.json");
         std::fs::write(&config, "{}").unwrap();
 
         let mut core = CoreProcess::new(crashing_binary(&dir));
         core.start(&config).unwrap();
-        let deadline = std::time::Instant::now() + Duration::from_secs(20);
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            if core.last_exit().is_some() {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "instant crash was never reported: count={}",
+                core.restart_count()
+            );
+            std::thread::sleep(Duration::from_millis(200));
+        }
+        assert_eq!(core.restart_count(), 0, "FATAL-shaped crash must not be restarted");
+        assert!(core.last_exit().unwrap().contains("启动即退出"));
+        assert_eq!(core.state(), CoreState::Stopped);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A late crash (after the instant-exit window) still gets the
+    /// full restart budget before being reported.
+    #[test]
+    fn late_crash_is_restarted_up_to_the_limit_then_reported() {
+        let dir = test_dir("latecrash");
+        let config = dir.join("config.json");
+        std::fs::write(&config, "{}").unwrap();
+
+        let mut core = CoreProcess::new(slow_crashing_binary(&dir));
+        core.start(&config).unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(45);
         loop {
             let _ = core.state();
             if core.restart_count() >= MAX_RESTARTS && core.last_exit().is_some() {
