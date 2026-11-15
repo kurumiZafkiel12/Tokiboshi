@@ -423,30 +423,10 @@ pub fn ensure_rule_sets(data_dir: &Path) -> RuleSetSummary {
             push_extra_log(format!(
                 "[rules] {tag} 下载失败（直连 GitHub；缺失时对应分流规则不会生效）"
             ));
-            continue;
-        };
-        let mut bytes = Vec::new();
-        use std::io::Read;
-        if response
-            .into_reader()
-            .take(64 * 1024 * 1024)
-            .read_to_end(&mut bytes)
-            .is_err()
-            || bytes.len() < 16
-        {
-            push_extra_log(format!("[rules] {tag} 下载内容无效"));
-            continue;
-        }
-        push_extra_log(format!("[rules] 下载 {tag} …"));
-        let Ok(response) = agent.get(url).call() else {
-            push_extra_log(format!(
-                "[rules] {tag} 下载失败（直连 GitHub；缺失时对应分流规则不会生效）"
-            ));
             missing += 1;
             continue;
         };
         let mut bytes = Vec::new();
-        use std::io::Read;
         if response
             .into_reader()
             .take(64 * 1024 * 1024)
