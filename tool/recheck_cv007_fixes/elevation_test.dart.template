@@ -145,12 +145,19 @@ void main(){
   expect(m.data.autoConnect,false);expect(m.saved.last['runningAtExit'],true);
   await t.pumpWidget(const SizedBox());
  });
- testWidgets('DEFECT one-shot consumed only in memory, persisted resume remains true', (t) async {
+ testWidgets('fixed one-shot resumes despite autoConnect off and start persists consumption', (t) async {
   app.auditProcessRun=(e,a) async=>ProcessResult(1,0,'','');
   final(s,m,b,p)=await mount(t,auto:false,oldRunning:false,resume:true);
   evidence['resume_consume_persistence']={'state':app.auditSnapshot(s),'saved':m.saved,'coreRunning':b.running};
   expect(b.running,true);expect(m.data.resumeConnect,false);
-  expect(m.saved.last['resumeConnect'],true);
+  expect(m.saved.last['resumeConnect'],false);
+  await t.pumpWidget(const SizedBox());
+ });
+
+ testWidgets('residual blocked resume consumed in memory but not saved', (t) async {
+  final(s,m,b,p)=await mount(t,auto:false,oldRunning:false,resume:true);
+  evidence['blocked_resume_persistence']={'state':app.auditSnapshot(s),'saved':m.saved,'coreRunning':b.running};
+  expect(b.running,false);expect(m.data.resumeConnect,false);expect(m.saved.last['resumeConnect'],true);
   await t.pumpWidget(const SizedBox());
  });
 
