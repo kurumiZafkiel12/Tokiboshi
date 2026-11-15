@@ -1,0 +1,80 @@
+name: Recheck released v0.0.7 (no publish)
+on:
+  push:
+    branches: ['audit/v007-codex']
+    paths: ['tool/recheck_v007/**', '.github/workflows/audit-v007.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  audit:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: work
+      - uses: actions/checkout@v4
+        with:
+          ref: 259f9e345f921f23ba508a121798768af58229c1
+          path: published
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.50.0
+          channel: stable
+      - name: Resolve frozen dependencies of the published source
+        working-directory: published
+        run: flutter pub get --enforce-lockfile
+      - name: Verify release and run native audit
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $env:AUDIT_ROOT = Join-Path $env:RUNNER_TEMP 'v007-audit'
+          New-Item $env:AUDIT_ROOT -ItemType Directory -Force | Out-Null
+          gh api repos/$env:GH_REPO/releases/tags/v0.0.7 > "$env:AUDIT_ROOT/release.json"
+          gh release download v0.0.7 --pattern Tokiboshi-windows.zip --dir $env:AUDIT_ROOT
+          if ($LASTEXITCODE -ne 0) { throw 'Release download failed' }
+          $zip = Join-Path $env:AUDIT_ROOT 'Tokiboshi-windows.zip'
+          $actual = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -ne '9d725931ffb4bef705b6c24a39db29b4f71748d05c533493219b122458a9a9f3') { throw 'Release checksum mismatch' }
+          Expand-Archive $zip "$env:AUDIT_ROOT/portable"
+          $env:AUDIT_DLL = (Get-ChildItem "$env:AUDIT_ROOT/portable" -Filter rust_lib_tokiboshi.dll -Recurse | Select-Object -First 1).FullName
+          $env:AUDIT_CORE = (Get-ChildItem "$env:AUDIT_ROOT/portable" -Filter sing-box.exe -Recurse | Select-Object -First 1).FullName
+          $env:AUDIT_SOURCE = Join-Path $env:GITHUB_WORKSPACE 'published'
+          $flutterBin = Split-Path (Get-Command flutter).Source -Parent
+          $env:DART_BIN = Join-Path $flutterBin 'cache/dart-sdk/bin/dart.exe'
+          if(-not(Test-Path $env:DART_BIN)){throw 'Native Dart executable missing'}
+          python work/tool/recheck_v007/run.py
+          if ($LASTEXITCODE -ne 0) { throw 'Native audit checks failed; inspect result artifact' }
+      - name: Exercise immutable original elevation methods through test seams
+        if: always()
+        shell: pwsh
+        run: |
+          python work/tool/recheck_v007/prepare_widget.py published
+          if ($LASTEXITCODE -ne 0) { throw 'Fixture generation failed' }
+          Set-Location published
+          flutter test --no-pub test/v007_elevation_test.dart --reporter expanded *> "$env:RUNNER_TEMP/v007-widget.log"
+          $testExit = $LASTEXITCODE
+          Get-Content "$env:RUNNER_TEMP/v007-widget.log"
+          if ($testExit -ne 0) { throw 'Elevation fixture failed' }
+      - name: Native Windows token, shell and single-instance controls
+        if: always()
+        shell: pwsh
+        run: |
+          python work/tool/recheck_v007/native_controls.py
+          if ($LASTEXITCODE -ne 0) { throw 'Native control fixture failed' }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: v007-native-recheck
+          path: |
+            ${{ runner.temp }}/v007-audit/results/
+            ${{ runner.temp }}/v007-audit/release.json
+            ${{ runner.temp }}/v007-widget.log
+            ${{ runner.temp }}/v007-native-controls.json
+            published/lib/main_v007_audit.dart
+            published/test/v007_elevation_test.dart
+            published/v007-widget-results.json

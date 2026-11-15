@@ -1,0 +1,56 @@
+import 'dart:convert';
+import 'dart:io';
+import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
+import '@@SOURCE@@/lib/src/rust/frb_generated.dart';
+import '@@SOURCE@@/lib/bridge/rust_core_bridge.dart';
+import '@@SOURCE@@/lib/bridge/core_bridge.dart';
+import '@@SOURCE@@/lib/services/store.dart';
+
+Future<void> main(List<String> args) async {
+  final mode = args[0];
+  final root = Directory(args[1]);
+  if (mode.startsWith('store-')) {
+    final main = File('${root.path}/data.json');
+    final store = Store(main);
+    if (mode == 'store-load') {
+      final value = await store.load();
+      print(jsonEncode({'loadedPort': value.mixedPort, 'tmpExists': await File('${main.path}.tmp').exists(), 'mainPort': jsonDecode(await main.readAsString())['mixedPort']}));
+      return;
+    }
+    String? errorType;
+    try { await store.save(AppData(mixedPort: 18992)); }
+    catch (e) { errorType = e.runtimeType.toString(); }
+    final tmp = File('${main.path}.tmp');
+    final loaded = await store.load();
+    print(jsonEncode({'errorType': errorType, 'tmpExists': await tmp.exists(),
+      'tmpPort': await tmp.exists() ? jsonDecode(await tmp.readAsString())['mixedPort'] : null,
+      'mainPort': jsonDecode(await main.readAsString())['mixedPort'], 'loadedWhileLocked': loaded.mixedPort}));
+    return;
+  }
+  await RustLib.init(externalLibrary: ExternalLibrary.open(Platform.environment['AUDIT_DLL']!));
+  final bridge = RustCoreBridge();
+  try {
+    await bridge.startEnsureCore(root.path);
+    List<String> logs = [];
+    var complete = false;
+    for (var i = 0; i < 2100; i++) {
+      logs = await bridge.coreLogs();
+      if (logs.any((line) => line.startsWith('[rules] 规则集 '))) { complete = true; break; }
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    }
+    final tags = ['geosite-category-ads-all','geosite-cn','geoip-cn'];
+    final result = <String,dynamic>{'complete': complete, 'logs': logs.where((l) => l.startsWith('[rules]')).toList(),
+      'files': [for (final tag in tags) if(await File('${root.path}/rules/$tag.srs').exists()) tag],
+      'tmpFiles': [for(final tag in tags) if(await File('${root.path}/rules/$tag.srs.tmp').exists()) tag]};
+    if (mode == 'rules-download') {
+      final config = await bridge.buildConfig(nodes: const [NodeSpec(name:'fixture',outboundJson:'{"type":"socks","server":"127.0.0.1","server_port":1}')],
+        mixedPort: 19891, clashApiPort: 19892, dataDir: root.path, blockAds: true, bypassCn: true);
+      final path = File('${root.path}/check-config.json'); await path.writeAsString(config);
+      final check = await Process.run(Platform.environment['AUDIT_CORE']!, ['check','-c',path.path]);
+      result['configCheckExit'] = check.exitCode;
+      result['generatedTags'] = [for(final rule in (jsonDecode(config)['route']['rule_set'] as List)) rule['tag']];
+    }
+    result['coreRunning'] = await bridge.coreRunning();
+    print(jsonEncode(result));
+  } finally { await bridge.stopCore(); RustLib.dispose(); }
+}
