@@ -380,19 +380,34 @@ pub struct RuleSetSummary {
     /// Files downloaded (or refreshed) during this round.
     pub updated: usize,
     pub dir_ok: bool,
+    /// Download failed or content invalid — no usable old file.
+    pub missing: usize,
+    /// Download succeeded but the commit (rename) was rejected — the
+    /// previous valid file is kept. Distinct from [missing] in the
+    /// summary wording (CV005-01).
+    pub commit_failed: usize,
 }
 
 pub fn ensure_rule_sets(data_dir: &Path) -> RuleSetSummary {
     let dir = data_dir.join("rules");
     if std::fs::create_dir_all(&dir).is_err() {
         push_extra_log("[rules] 无法创建规则目录，分流/拦截规则不可用".into());
-        return RuleSetSummary { ready: 0, total: RULE_SET_FILES.len(), updated: 0, dir_ok: false };
+        return RuleSetSummary {
+            ready: 0,
+            total: RULE_SET_FILES.len(),
+            updated: 0,
+            dir_ok: false,
+            missing: RULE_SET_FILES.len(),
+            commit_failed: 0,
+        };
     }
     let agent = ureq::AgentBuilder::new()
         .timeout(std::time::Duration::from_secs(60))
         .build();
     let mut ready = 0usize;
     let mut updated = 0usize;
+    let mut missing = 0usize;
+    let mut commit_failed = 0usize;
     for (tag, url) in RULE_SET_FILES {
         let dest = dir.join(format!("{tag}.srs"));
         let fresh = std::fs::metadata(&dest)
@@ -422,6 +437,27 @@ pub fn ensure_rule_sets(data_dir: &Path) -> RuleSetSummary {
             push_extra_log(format!("[rules] {tag} 下载内容无效"));
             continue;
         }
+        push_extra_log(format!("[rules] 下载 {tag} …"));
+        let Ok(response) = agent.get(url).call() else {
+            push_extra_log(format!(
+                "[rules] {tag} 下载失败（直连 GitHub；缺失时对应分流规则不会生效）"
+            ));
+            missing += 1;
+            continue;
+        };
+        let mut bytes = Vec::new();
+        use std::io::Read;
+        if response
+            .into_reader()
+            .take(64 * 1024 * 1024)
+            .read_to_end(&mut bytes)
+            .is_err()
+            || bytes.len() < 16
+        {
+            push_extra_log(format!("[rules] {tag} 下载内容无效"));
+            missing += 1;
+            continue;
+        }
         let tmp = dir.join(format!("{tag}.srs.tmp"));
         // Full commit chain: write the downloaded bytes to tmp, THEN
         // rename onto the real file (HV004-01: the write step was
@@ -429,6 +465,7 @@ pub fn ensure_rule_sets(data_dir: &Path) -> RuleSetSummary {
         // non-existent tmp and failing every rule).
         if let Err(e) = std::fs::write(&tmp, &bytes) {
             push_extra_log(format!("[rules] {tag} 临时文件写入失败：{e}"));
+            missing += 1;
             continue;
         }
         // The rename can fail when the target file is held/locked.
@@ -444,6 +481,7 @@ pub fn ensure_rule_sets(data_dir: &Path) -> RuleSetSummary {
                 push_extra_log(format!(
                     "[rules] {tag} 提交失败：{e}；保留现有有效文件"
                 ));
+                commit_failed += 1;
                 let _ = std::fs::remove_file(&tmp);
             }
         }
@@ -452,12 +490,29 @@ pub fn ensure_rule_sets(data_dir: &Path) -> RuleSetSummary {
     if ready == total {
         push_extra_log(format!("[rules] 规则集 {ready}/{total} 就绪"));
     } else {
+        // Word failures precisely (CV005-01): "缺失" (never downloaded)
+        // and "提交失败" (downloaded but the old file is locked) are
+        // different states with different remedies.
+        let mut parts = Vec::new();
+        if missing > 0 {
+            parts.push(format!("{missing} 个缺失（下载失败，对应分流规则不生效）"));
+        }
+        if commit_failed > 0 {
+            parts.push(format!("{commit_failed} 个提交失败（旧文件被占用，现有文件已保留）"));
+        }
         push_extra_log(format!(
-            "[rules] 规则集 {ready}/{total} 可用（{} 个缺失，对应分流规则不生效）",
-            total - ready
+            "[rules] 规则集 {ready}/{total} 可用（{}）",
+            parts.join("；")
         ));
     }
-    RuleSetSummary { ready, total, updated, dir_ok: true }
+    RuleSetSummary {
+        ready,
+        total,
+        updated,
+        dir_ok: true,
+        missing,
+        commit_failed,
+    }
 }
 
 
