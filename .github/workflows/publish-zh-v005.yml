@@ -1,0 +1,56 @@
+name: Publish Chinese v0.0.5 installer add-on
+on:
+  workflow_dispatch:
+permissions:
+  actions: read
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify native audit and installer build
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh run view 43721726337 --json headSha,conclusion > audit.json
+          jq -e '.headSha=="164fe252beb48b8d88883e8c845fdb1092384022" and .conclusion=="success"' audit.json
+          gh run view 43721559117 --json headSha,conclusion > build.json
+          jq -e '.headSha=="e63b05e1bcb9202412ce4d37f3d56b037c712e38" and .conclusion=="success"' build.json
+          gh run download 43721559117 --name v005-chinese-installer --dir assets
+          python - <<'PY'
+          import pathlib,hashlib,os
+          files=list(pathlib.Path('assets').rglob('Tokiboshi-Setup-0.0.5-zh.exe'))
+          assert len(files)==1
+          expected='10f23805c208961d300d9b1b46a6c27a6fba39626bb50cb72f1bc5eb9b73e17b'
+          assert hashlib.sha256(files[0].read_bytes()).hexdigest()==expected
+          pathlib.Path('SHA256SUMS-zh.txt').write_text(expected+'  '+files[0].name+'\n')
+          with open(os.environ['GITHUB_ENV'],'a') as out:out.write('INSTALLER_EXE='+str(files[0])+'\n')
+          PY
+      - name: Add Chinese installer without replacing the original release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh api repos/$GH_REPO/releases/tags/v0.0.5 > release.json
+          python - <<'PY'
+          import json
+          x=json.load(open('release.json'))
+          assert not x['draft'] and x['target_commitish']=='a2bbaf34eb4dab54c272bda02a46d2c15f4bdb28'
+          assert any(a['name']=='Tokiboshi-Setup-0.0.5.exe' for a in x['assets'])
+          PY
+          gh release upload v0.0.5 "$INSTALLER_EXE" SHA256SUMS-zh.txt
+          gh api repos/$GH_REPO/releases/tags/v0.0.5 > release.json
+          python - <<'PY'
+          import json,pathlib
+          x=json.load(open('release.json'))
+          body=x['body'] or ''
+          heading='## 中文自动升级安装包与 Codex 五轮复诊'
+          if heading not in body:
+              body+='\n\n'+heading+'\n\n新增 `Tokiboshi-Setup-0.0.5-zh.exe`：简体中文安装界面，自动关闭本安装目录的旧进程，覆盖升级并按已安装文件清单清理旧程序文件，保留节点、订阅、设置及恢复文件。原安装包与 tag 保持不变，应用内容逐文件 SHA256 与原 v0.0.5 便携包一致。\n\nWindows 复诊九个夹具通过：规则正常下载 3/3、锁文件 rename 失败、0/3/2/3/3/3 汇总、锁 main 的备份/tmp 保护与解锁恢复、tmp mtime 新/旧/相等。中文安装器通过旧安装包覆盖、自动关进程、清理与重复安装测试；完整用户 GUI、管理员 TUN、真实节点/UDP 与聚焦仍待验收。\n\n中文安装包 SHA256：`10f23805c208961d300d9b1b46a6c27a6fba39626bb50cb72f1bc5eb9b73e17b`。\n'
+          pathlib.Path('notes.md').write_text(body)
+          PY
+          gh release edit v0.0.5 --notes-file notes.md
