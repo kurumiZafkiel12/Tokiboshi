@@ -86,7 +86,17 @@ class SubscriptionResolver {
           failedGroups.add(provider.name);
         }
       }
-      return ParseOutcome(nodes: nodes, skipped: skipped, failedGroups: failedGroups);
+      // Named node providers cannot replace the root routing profile.
+      final profile = first.profileJson;
+      if (profile != null) {
+        final parsed = jsonDecode(profile) as Map<String, dynamic>;
+        final unsupported = (parsed['unsupported'] as List?) ?? const [];
+        if (unsupported.isNotEmpty) {
+          throw FormatException('订阅规则不兼容，保留上次配置：${unsupported.join('；')}');
+        }
+      }
+      return ParseOutcome(nodes: nodes, skipped: skipped,
+          failedGroups: failedGroups, profileJson: profile);
     }
 
     return expand(url, null, 0, {});

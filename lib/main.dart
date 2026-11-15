@@ -533,6 +533,9 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
       var skipped = const <String>[];
       if (trimmed.contains('\n') || !trimmed.contains('://')) {
         final outcome = await widget.bridge.parseSubscription(trimmed);
+        if (outcome.profileJson != null) {
+          throw const FormatException('完整配置请通过订阅 URL 导入；本次未导入，避免丢失分流规则');
+        }
         imported = outcome.nodes;
         skipped = outcome.skipped;
       } else {
@@ -649,6 +652,8 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
             url: url,
             updatedAt: DateTime.now().toIso8601String(),
             lastReport: _subscriptionReport(outcome),
+            profileJson: outcome.profileJson,
+            profileState: outcome.profileJson == null ? 'nodes-only' : 'parsed',
           ),
         ];
         _data.nodes = [..._data.nodes, ...nodes];
@@ -686,7 +691,10 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
         _data.subscriptions = [
           for (final s in _data.subscriptions)
             if (s.id == sub.id)
-              s.copyWith(updatedAt: DateTime.now().toIso8601String(),
+              Subscription(id: s.id, name: s.name, url: s.url,
+                  profileJson: outcome.profileJson,
+                  profileState: outcome.profileJson == null ? 'nodes-only' : 'parsed',
+                  updatedAt: DateTime.now().toIso8601String(),
                   lastReport: '${_subscriptionReport(outcome)}${retained.isEmpty ? '' : '\n保留上次成功获取的 ${retained.length} 个节点（相关来源更新失败）'}')
             else
               s,
@@ -1066,8 +1074,19 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
       await _persist();
       final portsChanged = mixedPort != oldMixedPort || apiPort != oldApiPort;
       final selected = _data.selected;
+      // Do not invent a multi-profile priority or bind names across sources.
+      final profiles = _data.subscriptions.where((s) => s.profileJson != null).toList();
+      if (profiles.length > 1) {
+        throw const FormatException('多个订阅包含规则，尚未指定激活配置；拒绝按更新时间隐式切换');
+      }
+      final profile = profiles.isEmpty ? null : profiles.single;
+      final configNodes = profile == null ? _data.nodes
+          : _data.nodes.where((n) => n.source == profile.id).toList();
+      if (profile != null && selected != null && selected.source != profile.id) {
+        throw const FormatException('当前节点不属于规则订阅，请选择该订阅的节点或策略组');
+      }
       final config = await widget.bridge.buildConfig(
-        nodes: _data.nodes
+        nodes: configNodes
             .map((n) => NodeSpec(name: n.name, outboundJson: n.outboundJson))
             .toList(),
         mixedPort: _data.mixedPort,
@@ -1076,7 +1095,8 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
         blockAds: _data.blockAds,
         bypassCn: _data.bypassCn,
         dataDir: _dataDir,
-        selectedName: selected == null ? null : assignNodeTags(_data.nodes.map((n) => n.name))[_data.selectedIndex],
+        selectedName: selected == null ? null : assignNodeTags(configNodes.map((n) => n.name))[configNodes.indexOf(selected)],
+        profileJson: profile?.profileJson ?? '',
       );
       final configFile = await widget.store
           .writeRuntimeConfig(injectClashSecret(config, _data.clashApiSecret));
@@ -1110,9 +1130,10 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
         _message = _compose(
             '运行中：${_data.nodes.where((n) => !n.isPolicy).length} 个节点 · mixed 127.0.0.1:${_data.mixedPort}'
             ' · 面板 127.0.0.1:${_data.clashApiPort}/ui'
+            ' · 分流：${profile == null ? '仅节点订阅/内置模板' : '订阅自带规则'}'
             '${_data.systemProxy ? ' · 系统代理已开启' : ''}'
             '${portsChanged ? ' · 原端口被占用，已自动更换并保存端口' : ''}'
-            '${rulesPending ? ' · ⚠ 规则集未就绪，重启内核后分流生效' : ''}');
+            '${profile == null && rulesPending ? ' · ⚠ 规则集未就绪，重启内核后分流生效' : ''}');
       });
     } catch (e) {
       if (started) {
