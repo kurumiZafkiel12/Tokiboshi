@@ -30,6 +30,23 @@ import 'src/rust/frb_generated.dart';
 /// finds the port taken, pokes the primary ("show"), and exits.
 const int kInstanceLockPort = 46513;
 
+/// Actions offered when the user enables/starts with TUN while the
+/// app is not elevated.
+enum _TunAction { relaunch, disableTun, cancel }
+
+/// Windows elevation check: `net session` requires an elevated token
+/// (exit 0 = admin). Cheap, no extra dependencies. Non-Windows is
+/// always treated as elevated.
+Future<bool> _isElevated() async {
+  if (!Platform.isWindows) return true;
+  try {
+    final r = await Process.run('net', ['session']);
+    return r.exitCode == 0;
+  } catch (_) {
+    return false;
+  }
+}
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   if (Platform.isWindows) {
@@ -251,13 +268,21 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
     unawaited(widget.bridge.startEnsureCore(_dataDir));
     await _refreshCoreVersion();
     // 自动连接 = 上一次正常退出且内核在运行（崩溃后不自启，HV001-01）。
+    // TUN 开着但应用非管理员时跳过自动连接：提权需要用户在点「启动」
+    // 时确认（启动时弹 UAC 不适合在自动连接里静默触发）。
+    final tunBlocked = _data.enableTun && !await _isElevated();
     if (mounted &&
         !_running &&
         _data.autoConnect &&
         previousCleanExit &&
         _data.runningAtExit &&
         _data.nodes.isNotEmpty) {
-      await _toggleCore();
+      if (tunBlocked) {
+        _setMessage(
+            '自动连接已跳过：虚拟网卡需要管理员权限，请点「启动」并选择「以管理员身份重启」');
+      } else {
+        await _toggleCore();
+      }
     }
   }
 
@@ -954,6 +979,45 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
         _setMessage('先导入节点');
         return;
       }
+      // TUN needs an elevated token; offer a one-click elevated
+      // restart instead of letting the core FATAL later (user
+      // request: 不能启动默认请求管理员吗 → 按需 UAC).
+      if (_data.enableTun && !await _isElevated()) {
+        final action = await showDialog<_TunAction>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('需要管理员权限'),
+            content: const Text(
+                '虚拟网卡（TUN）需要以管理员身份运行才能接管全局流量。\n\n'
+                '「以管理员身份重启」会弹出 UAC 授权并重启应用，重启后自动连接并启用 TUN。'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, _TunAction.cancel),
+                child: const Text('取消'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(context, _TunAction.disableTun),
+                child: const Text('关闭虚拟网卡并继续'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(context, _TunAction.relaunch),
+                child: const Text('以管理员身份重启'),
+              ),
+            ],
+          ),
+        );
+        if (!mounted) return;
+        if (action == _TunAction.relaunch) {
+          await _relaunchElevated();
+          return;
+        }
+        if (action == _TunAction.disableTun) {
+          setState(() => _data.enableTun = false);
+          await _persist();
+        } else {
+          return; // cancel
+        }
+      }
       // A stop may have silently failed or the supervisor may have
       // just revived the core: adopt it instead of failing later with
       // "already running".
@@ -1097,6 +1161,38 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
     setState(() {
       _data.enableTun = value;
     });
+    // Enabling TUN while the core is running requires an elevated
+    // restart — offer it instead of restarting into a FATAL.
+    if (value && _running && !await _isElevated()) {
+      final relaunch = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('需要管理员权限'),
+          content: const Text(
+              '虚拟网卡（TUN）需要以管理员身份运行。\n\n「以管理员身份重启」会弹出 UAC 授权并重启应用，重启后自动连接并启用 TUN。'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('取消（恢复关闭）'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('以管理员身份重启'),
+            ),
+          ],
+        ),
+      );
+      if (!mounted) return;
+      if (relaunch == true) {
+        await _relaunchElevated();
+        return;
+      }
+      setState(() {
+        _data.enableTun = false;
+        _message = _compose('已取消：虚拟网卡需要管理员权限，开关已恢复为关闭');
+      });
+      return;
+    }
     final saved = await _persist();
     if (_running) {
       _setMessage(
@@ -1105,6 +1201,38 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
     } else {
       _setMessage(
           '${value ? '虚拟网卡已开启（下次启动生效）' : '虚拟网卡已关闭'}${saved ? '' : '（⚠ 配置未保存）'}');
+    }
+  }
+
+  /// Stop everything cleanly, persist "was running" state, then
+  /// relaunch this app with an elevated token (UAC prompt). The
+  /// elevated instance auto-connects and brings TUN up.
+  Future<void> _relaunchElevated() async {
+    try {
+      if (_running) {
+        await widget.bridge.stopCore();
+        if (_data.systemProxy) {
+          await widget.systemProxy.apply(false, _data.mixedPort);
+        }
+      }
+      _data.cleanExit = true;
+      _data.runningAtExit = _running;
+      await _persist();
+      await trayManager.destroy();
+      final exe = Platform.resolvedExecutable;
+      final result = await Process.run('powershell', [
+        '-NoProfile',
+        '-Command',
+        'Start-Process -FilePath "$exe" -Verb RunAs',
+      ]);
+      if (result.exitCode != 0) {
+        _setMessage('已取消管理员授权（未重启）');
+        return;
+      }
+      await windowManager.destroy();
+      exit(0);
+    } catch (e) {
+      _setMessage('提权重启失败：$e');
     }
   }
 
