@@ -47,6 +47,7 @@ jobs:
           $flutterBin = Split-Path (Get-Command flutter).Source -Parent
           $env:DART_BIN = Join-Path $flutterBin 'cache/dart-sdk/bin/dart.exe'
           if(-not(Test-Path $env:DART_BIN)){throw 'Native Dart executable missing'}
+          "DART_BIN=$env:DART_BIN" >> $env:GITHUB_ENV
           python work/tool/recheck_v007/run.py
           if ($LASTEXITCODE -ne 0) { throw 'Native audit checks failed; inspect result artifact' }
       - name: Exercise immutable original elevation methods through test seams
