@@ -54,8 +54,8 @@ pub struct NodeSpec {
 pub const ZASHBOARD_DOWNLOAD_URL: &str =
     "https://github.com/Zephyruso/zashboard/releases/latest/download/dist.zip";
 
-const RESERVED_TAGS: [&str; 7] = [
-    "proxy", "auto", "direct", "mixed-in", "tun-in", "dns-remote", "dns-local",
+const RESERVED_TAGS: [&str; 8] = [
+    "proxy", "auto", "direct", "mixed-in", "tun-in", "dns-remote", "dns-local", "__tokiboshi_reject",
 ];
 
 /// Deterministic, collision-free outbound tags for node names.
@@ -205,7 +205,7 @@ pub fn build_config_multi(
             }).or_insert_with(|| tag.clone());
         }
     }
-    let mut dependencies = std::collections::HashMap::<String, String>::new();
+    let mut dependencies = std::collections::HashMap::<String, Vec<String>>::new();
     for (spec, tag) in nodes.iter().zip(tags.iter()) {
         let mut ob: Value = serde_json::from_str(&spec.outbound_json)
             .map_err(|e| format!("node '{}' has invalid outbound JSON: {e}", spec.name))?;
@@ -223,19 +223,55 @@ pub fn build_config_multi(
                 None if via == "direct" => "direct".to_string(),
                 None => return Err(format!("node '{}' references missing detour '{via}'", spec.name)),
             };
-            dependencies.insert(tag.clone(), target.clone());
+            dependencies.entry(tag.clone()).or_default().push(target.clone());
             obj.insert("detour".into(), Value::String(target));
         }
+        if let Some(members) = obj.get("outbounds").and_then(Value::as_array) {
+            let mut resolved = Vec::new();
+            for member in members {
+                let name = member.as_str().ok_or("policy group member must be a name")?;
+                let target = match name {
+                    "DIRECT" => "direct".to_string(),
+                    "REJECT" => "__tokiboshi_reject".to_string(),
+                    _ => match aliases.get(name) {
+                        Some(target) if !target.is_empty() => target.clone(),
+                        _ if name == "direct" => "direct".into(),
+                        _ => return Err(format!("policy '{}' references missing or ambiguous member '{name}'", spec.name)),
+                    }
+                };
+                dependencies.entry(tag.clone()).or_default().push(target.clone());
+                resolved.push(Value::String(target));
+            }
+            if resolved.is_empty() { resolved.push(json!("__tokiboshi_reject")); }
+            obj.insert("outbounds".into(), Value::Array(resolved));
+            if let Some(default) = obj.get("default").and_then(Value::as_str) {
+                let resolved = aliases.get(default).filter(|s| !s.is_empty()).cloned()
+                    .or_else(|| match default { "DIRECT" | "direct" => Some("direct".into()), "REJECT" => Some("__tokiboshi_reject".into()), _ => None })
+                    .ok_or_else(|| format!("policy '{}' has invalid default", spec.name))?;
+                obj.insert("default".into(), Value::String(resolved));
+            }
+        }
+        obj.retain(|key, _| !key.starts_with("_clash_"));
         obj.insert("tag".to_string(), Value::String(tag.clone()));
         outbounds.push(ob);
     }
+    // One graph covers both dialer chains and imported policy membership.
+    let mut complete = std::collections::HashSet::new();
     for tag in &tags {
-        let mut seen = std::collections::HashSet::new();
-        let mut current = tag;
-        while let Some(next) = dependencies.get(current) {
-            if !seen.insert(current) { return Err(format!("cyclic proxy chain involving '{tag}'")); }
-            current = next;
+        let mut active = std::collections::HashSet::new();
+        let mut stack = vec![(tag.clone(), false)];
+        while let Some((current, leaving)) = stack.pop() {
+            if leaving { active.remove(&current); complete.insert(current); continue; }
+            if complete.contains(&current) { continue; }
+            if !active.insert(current.clone()) { return Err(format!("cyclic proxy chain or policy involving '{current}'")); }
+            stack.push((current.clone(), true));
+            if let Some(next) = dependencies.get(&current) {
+                for child in next { stack.push((child.clone(), false)); }
+            }
         }
+    }
+    if outbounds.iter().any(|ob| ob.get("outbounds").and_then(Value::as_array).is_some_and(|members| members.iter().any(|member| member == "__tokiboshi_reject"))) {
+        outbounds.push(json!({"type":"block", "tag":"__tokiboshi_reject"}));
     }
     outbounds.push(json!({ "type": "direct", "tag": "direct" }));
 
@@ -369,6 +405,19 @@ mod tests {
     fn rejects_missing_outbounds() {
         let problems = validate_config("{}");
         assert!(problems.iter().any(|p| p.contains("outbounds")));
+    }
+
+    #[test]
+    fn policy_members_follow_generated_tags_and_keep_reject_semantics() {
+        let nodes = vec![
+            NodeSpec {name:"direct".into(),outbound_json:r#"{"type":"socks","server":"127.0.0.1","server_port":1080}"#.into()},
+            NodeSpec {name:"group".into(),outbound_json:r#"{"type":"selector","outbounds":["direct","DIRECT","REJECT"],"_clash_proxies":["direct","DIRECT","REJECT"]}"#.into()},
+        ];
+        let config: Value = serde_json::from_str(&build_config_multi(&nodes,&CoreSettings::default(),Some("group")).unwrap()).unwrap();
+        let group = config["outbounds"].as_array().unwrap().iter().find(|n| n["tag"]=="group").unwrap();
+        assert_eq!(group["outbounds"],json!(["direct-2","direct","__tokiboshi_reject"]));
+        assert!(group.get("_clash_proxies").is_none());
+        assert!(config["outbounds"].as_array().unwrap().iter().any(|n| n["type"]=="block"));
     }
 
     #[test]

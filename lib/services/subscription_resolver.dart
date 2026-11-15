@@ -98,3 +98,47 @@ List<NodeInfo> retainFailedSourceNodes(List<NodeInfo> previous, List<NodeInfo> f
     if (failedGroups.any((group) => group.isEmpty || node.group == group || node.group.startsWith('$group / ')) &&
         !fresh.any((n) => n.group == node.group && n.name == node.name)) node,
 ];
+
+
+/// Expand imported strategy groups after all sources (including cached sources)
+/// are available. Preserve the source declaration for future subscription updates.
+List<NodeInfo> resolvePolicyGroups(List<NodeInfo> nodes) => [for (final node in nodes)
+  if (!node.isPolicy || !node.outbound.containsKey('_clash_proxies')) node else _resolvePolicy(node, nodes),
+];
+
+NodeInfo _resolvePolicy(NodeInfo node, List<NodeInfo> nodes) {
+  final ob = Map<String, dynamic>.from(node.outbound);
+  final members = <String>{...((ob['_clash_proxies'] as List?) ?? const []).cast<String>()};
+  final sources = ((ob['_clash_use'] as List?) ?? const []).cast<String>();
+  for (final candidate in nodes) {
+    if (!candidate.isPolicy && candidate.source == node.source && sources.any((s) => candidate.group == s || candidate.group.startsWith('$s / '))) {
+      members.add(candidate.name);
+    }
+  }
+  RegExp? pattern(String key) {
+    final text = ob[key] as String?;
+    if (text == null || text.isEmpty) return null;
+    return RegExp(text.replaceAll('(?i)', ''), caseSensitive: !text.contains('(?i)'));
+  }
+  final include = pattern('_clash_filter');
+  final exclude = pattern('_clash_exclude_filter');
+  final filtered = members.where((name) => (include == null || include.hasMatch(name)) && (exclude == null || !exclude.hasMatch(name))).toList();
+  ob['outbounds'] = filtered.isEmpty ? ['REJECT'] : filtered;
+  return NodeInfo(name: node.name, outboundJson: jsonEncode(ob), source: node.source, group: node.group);
+}
+
+Set<int> policyNodeIndices(List<NodeInfo> nodes, int policyIndex) {
+  final seen = <int>{};
+  final result = <int>{};
+  void visit(int index) {
+    if (!seen.add(index)) return;
+    final node = nodes[index];
+    if (!node.isPolicy) { result.add(index); return; }
+    final members = ((node.outbound['outbounds'] as List?) ?? const []).cast<String>();
+    for (var i = 0; i < nodes.length; i++) {
+      if (nodes[i].source == node.source && members.contains(nodes[i].name)) visit(i);
+    }
+  }
+  visit(policyIndex);
+  return result;
+}

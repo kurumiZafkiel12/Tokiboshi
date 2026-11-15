@@ -14,6 +14,20 @@ class ContentBridge extends FakeBridge {
 }
 
 void main() {
+  test('policy use expands provider nodes and nested policy membership', () {
+    final nodes = resolvePolicyGroups([
+      const NodeInfo(name: 'inline', outboundJson: '{"type":"socks"}'),
+      const NodeInfo(name: 'remote', group: 'airport', outboundJson: '{"type":"vless"}'),
+      const NodeInfo(name: 'notice', group: 'airport', outboundJson: '{"type":"socks"}'),
+      const NodeInfo(name: 'root', outboundJson: '{"type":"selector","_clash_proxies":["inline","nested"],"_clash_use":["airport"],"_clash_exclude_filter":"notice"}'),
+      const NodeInfo(name: 'nested', outboundJson: '{"type":"selector","_clash_proxies":["remote"],"_clash_use":[]}'),
+      const NodeInfo(name: 'unavailable', outboundJson: '{"type":"selector","_clash_proxies":[],"_clash_use":["missing"]}'),
+    ]);
+    expect(nodes[3].outbound['outbounds'], ['inline','nested','remote']);
+    expect(policyNodeIndices(nodes,3), {0,1});
+    expect(nodes[5].outbound['outbounds'], ['REJECT']);
+  });
+
   test('partial provider failures retain only that sources previous nodes', () async {
     final fetcher = FakeFetcher({'https://test.example/root': 'root'});
     final bridge = ContentBridge({'root': const ParseOutcome(nodes: [], providers: [

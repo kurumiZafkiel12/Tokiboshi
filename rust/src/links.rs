@@ -808,10 +808,14 @@ fn clash_proxy_to_outbound(m: &Map<String, Value>) -> Option<Value> {
 
 /// Parse a Clash YAML subscription (its `proxies:` list becomes nodes).
 pub fn parse_clash_yaml(text: &str) -> Result<ParseOutcome, String> {
-    let mut doc: serde_yaml::Value =
-        serde_yaml::from_str(text).map_err(|e| format!("invalid YAML: {e}"))?;
-    doc.apply_merge().map_err(|e| format!("invalid YAML merge: {e}"))?;
-    let doc = yaml_to_json(&doc);
+    let doc = if text.trim_start().starts_with(['{', '[']) {
+        // JSON emoji may use UTF-16 surrogate escapes, which YAML rejects.
+        serde_json::from_str::<Value>(text).map_err(|e| format!("invalid JSON: {e}"))?
+    } else {
+        let mut doc: serde_yaml::Value = serde_yaml::from_str(text).map_err(|e| format!("invalid YAML: {e}"))?;
+        doc.apply_merge().map_err(|e| format!("invalid YAML merge: {e}"))?;
+        yaml_to_json(&doc)
+    };
     let proxies = doc
         .as_array().or_else(|| doc.get("proxies").or_else(|| doc.get("payload")).and_then(Value::as_array))
         .map(Vec::as_slice).unwrap_or(&[]);
@@ -873,6 +877,26 @@ pub fn parse_clash_yaml(text: &str) -> Result<ParseOutcome, String> {
             });
         }
     }
+    if let Some(groups) = doc.get("proxy-groups").and_then(Value::as_array) {
+        for group in groups.iter().filter_map(Value::as_object) {
+            let Some(name) = cs(group, "name") else { continue; };
+            let typ = cs(group, "type").unwrap_or("select");
+            let mut outbound = match typ {
+                "select" => json!({"type":"selector"}),
+                "url-test" => json!({"type":"urltest", "url":cs(group,"url").unwrap_or("https://www.gstatic.com/generate_204"),
+                    "interval":format!("{}s",group.get("interval").and_then(Value::as_u64).unwrap_or(180)),
+                    "tolerance":group.get("tolerance").and_then(Value::as_u64).unwrap_or(50)}),
+                _ => { skipped.push(format!("策略组「{name}」类型 {typ} 暂不支持")); continue; }
+            };
+            let members = group.get("proxies").cloned().unwrap_or(json!([]));
+            outbound["outbounds"] = members.clone();
+            outbound["_clash_proxies"] = members;
+            outbound["_clash_use"] = group.get("use").cloned().unwrap_or(json!([]));
+            if let Some(filter) = group.get("filter") { outbound["_clash_filter"] = filter.clone(); }
+            if let Some(filter) = group.get("exclude-filter") { outbound["_clash_exclude_filter"] = filter.clone(); }
+            nodes.push(NodeInfo { name: name.into(), outbound_json: outbound.to_string() });
+        }
+    }
     if nodes.is_empty() && providers.is_empty() {
         Err("no usable proxies in Clash YAML".to_string())
     } else {
@@ -901,7 +925,7 @@ fn parse_subscription_inner(text: &str, depth: usize) -> Result<ParseOutcome, St
         let outbounds = v.get("outbounds").and_then(Value::as_array).or_else(|| v.as_array())
             .ok_or("JSON config has no outbounds")?;
         let nodes: Vec<NodeInfo> = outbounds.iter()
-            .filter(|ob| ob.get("server").is_some())
+            .filter(|ob| ob.get("server").is_some() || matches!(ob.get("type").and_then(Value::as_str), Some("selector" | "urltest")))
             .map(|ob| NodeInfo {
                 name: ob.get("tag").and_then(Value::as_str).filter(|s| !s.is_empty())
                     .unwrap_or_else(|| ob.get("type").and_then(Value::as_str).unwrap_or("node")).into(),
@@ -949,6 +973,24 @@ mod tests {
     }
 
     #[test]
+    fn imported_select_groups_are_kept_separate_from_server_nodes() {
+        let parsed = parse_subscription(r#"
+proxies:
+  - {name: local, type: socks5, server: 127.0.0.1, port: 1080}
+proxy-groups:
+  - name: select
+    type: select
+    proxies: [local, DIRECT, REJECT]
+    use: [remote]
+"#).unwrap();
+        assert_eq!(parsed.nodes.len(), 2);
+        let policy = out(&parsed.nodes[1]);
+        assert_eq!(policy["type"], "selector");
+        assert_eq!(policy["_clash_use"], json!(["remote"]));
+        assert_eq!(policy["outbounds"], json!(["local", "DIRECT", "REJECT"]));
+    }
+
+    #[test]
     fn inline_provider_payload_is_preserved_for_recursive_filtering() {
         let result = parse_subscription(r#"
 proxy-providers:
@@ -975,6 +1017,8 @@ proxy-providers:
 
     #[test]
     fn clash_proxy_arrays_are_converted_instead_of_treated_as_sing_box() {
+        let emoji = parse_subscription(r#"{"proxies":[{"name":"\ud83c\uddef\ud83c\uddf5","type":"socks5","server":"127.0.0.1","port":1080}]}"#).unwrap();
+        assert_eq!(emoji.nodes.len(), 1);
         for text in [r#"[{"name":"local","type":"socks5","server":"127.0.0.1","port":1080}]"#,
             "- name: local\n  type: socks5\n  server: 127.0.0.1\n  port: 1080\n"] {
             let nodes = parse_subscription(text).unwrap().nodes;

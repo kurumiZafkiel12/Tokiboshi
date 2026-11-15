@@ -1,6 +1,6 @@
 /// Keep in sync with Rust config::assign_tags. Clash API selects generated tags.
 List<String> assignNodeTags(Iterable<String> names) {
-  final used = {'proxy', 'auto', 'direct', 'mixed-in', 'tun-in', 'dns-remote', 'dns-local'};
+  final used = {'proxy', 'auto', 'direct', 'mixed-in', 'tun-in', 'dns-remote', 'dns-local', '__tokiboshi_reject'};
   final tags = <String>[];
   for (final name in names) {
     final base = name.trim().isEmpty ? 'node-${tags.length + 1}' : name.trim();

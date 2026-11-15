@@ -334,7 +334,7 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
         }
       }
       setState(() {
-        _data.nodes = [..._data.nodes, ...imported];
+        _data.nodes = [..._data.nodes, ...resolvePolicyGroups(imported)];
         if (_data.selectedIndex < 0 && _data.nodes.isNotEmpty) {
           _data.selectedIndex = 0;
         }
@@ -415,10 +415,11 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
   String _subscriptionReport(ParseOutcome outcome) {
     final counts = <String, int>{};
     for (final node in outcome.nodes) {
+      if (node.isPolicy) continue;
       final group = node.group.isEmpty ? '内联节点' : node.group;
       counts[group] = (counts[group] ?? 0) + 1;
     }
-    return [for (final entry in counts.entries) '${entry.key}：${entry.value} 个', ...outcome.skipped].join('\n');
+    return ['策略组：${outcome.nodes.where((n) => n.isPolicy).length} 个', for (final entry in counts.entries) '${entry.key}：${entry.value} 个', ...outcome.skipped].join('\n');
   }
 
   Future<void> _addSubscription(String name, String url) async {
@@ -426,7 +427,7 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
     try {
       final outcome = await _fetchParseExpand(url);
       final id = 'sub-${DateTime.now().millisecondsSinceEpoch}';
-      final nodes = outcome.nodes.map((n) => n.withSource(id)).toList();
+      final nodes = resolvePolicyGroups(outcome.nodes.map((n) => n.withSource(id)).toList());
       setState(() {
         _data.subscriptions = [
           ..._data.subscriptions,
@@ -443,7 +444,7 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
           _data.selectedIndex = 0;
         }
         _message =
-            '订阅「$name」已添加：${nodes.length} 个节点${_skippedNote(outcome.skipped)}';
+            '订阅「$name」已添加：${nodes.where((n) => !n.isPolicy).length} 个节点${_skippedNote(outcome.skipped)}';
       });
       await _persist();
     } catch (e) {
@@ -459,10 +460,11 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
       final outcome = await _fetchParseExpand(sub.url);
       final selected = _data.selected;
       final selectedFromSub = selected != null && selected.source == sub.id;
-      final fresh = outcome.nodes.map((n) => n.withSource(sub.id)).toList();
+      var fresh = outcome.nodes.map((n) => n.withSource(sub.id)).toList();
       final retained = retainFailedSourceNodes(
           _data.nodes.where((n) => n.source == sub.id).toList(), fresh, outcome.failedGroups);
       fresh.addAll(retained);
+      fresh = resolvePolicyGroups(fresh);
       setState(() {
         _data.nodes = [
           for (final n in _data.nodes)
@@ -486,7 +488,7 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
           _data.selectedIndex =
               idx >= 0 ? idx : (_data.nodes.isEmpty ? -1 : 0);
         }
-        _message = '订阅「${sub.name}」已更新：${fresh.length} 个节点${_skippedNote(outcome.skipped)}';
+        _message = '订阅「${sub.name}」已更新：${fresh.where((n) => !n.isPolicy).length} 个节点${_skippedNote(outcome.skipped)}';
       });
       await _persist();
     } catch (e) {
@@ -579,6 +581,7 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
     _measuring = true;
     var skipped = 0;
     for (final node in List.of(_data.nodes)) {
+      if (node.isPolicy) continue;
       if (!_running && _udpProtocols.contains(node.protocol)) {
         skipped++;
         continue;
@@ -807,7 +810,7 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
         _running = true;
         _restartCount = 0;
         _lastExit = null;
-        _message = '运行中：${_data.nodes.length} 个节点 · mixed 127.0.0.1:${_data.mixedPort}'
+        _message = '运行中：${_data.nodes.where((n) => !n.isPolicy).length} 个节点 · mixed 127.0.0.1:${_data.mixedPort}'
             ' · 面板 127.0.0.1:${_data.clashApiPort}/ui'
             '${_data.systemProxy ? ' · 系统代理已开启' : ''}'
             '${portsChanged ? ' · 原端口被占用，已自动更换并保存端口' : ''}';
@@ -923,7 +926,7 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
     final selected = _data.selected;
     final nodeCounts = <String, int>{};
     for (final n in _data.nodes) {
-      if (n.source.isNotEmpty) {
+      if (n.source.isNotEmpty && !n.isPolicy) {
         nodeCounts[n.source] = (nodeCounts[n.source] ?? 0) + 1;
       }
     }
@@ -989,7 +992,7 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
           running: _running,
           busy: _busy,
           selected: selected,
-          nodeCount: _data.nodes.length,
+          nodeCount: _data.nodes.where((n) => !n.isPolicy).length,
           subscriptionCount: _data.subscriptions.length,
           mixedPort: _data.mixedPort,
           systemProxy: _data.systemProxy,

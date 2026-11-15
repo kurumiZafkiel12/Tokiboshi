@@ -38,6 +38,9 @@ class NodeInfo {
     }
   }
 
+  bool get isPolicy => const ['selector', 'urltest'].contains(protocol);
+  Map<String, dynamic> get outbound => _outbound;
+
   String get protocol => (_outbound['type'] as String?) ?? 'unknown';
   String get server => (_outbound['server'] as String?) ?? '';
   int get serverPort => (_outbound['server_port'] as num?)?.toInt() ?? 0;

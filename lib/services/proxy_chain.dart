@@ -7,6 +7,9 @@ List<NodeInfo> createProxyChain(List<NodeInfo> nodes, int entry, int exit, Strin
   if (entry < 0 || exit < 0 || entry >= nodes.length || exit >= nodes.length) {
     throw const FormatException('请选择有效节点');
   }
+  if (nodes[entry].isPolicy || nodes[exit].isPolicy) {
+    throw const FormatException('链式代理请选择具体节点，而不是策略组');
+  }
   final entryOb = jsonDecode(nodes[entry].outboundJson) as Map<String, dynamic>;
   final exitOb = jsonDecode(nodes[exit].outboundJson) as Map<String, dynamic>;
   if (entryOb.containsKey('detour') || exitOb.containsKey('detour')) {

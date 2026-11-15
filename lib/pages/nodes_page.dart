@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../bridge/core_bridge.dart';
 import '../services/store.dart';
+import '../services/subscription_resolver.dart';
 
 const _protocolColors = <String, Color>{
   'vless': Color(0xFF42A5F5),
@@ -59,7 +60,12 @@ class _NodesPageState extends State<NodesPage> {
 
   @override
   Widget build(BuildContext context) {
+    final policyIndex = _group.startsWith('policy:') ? int.tryParse(_group.substring(7)) : null;
+    final policyMembers = policyIndex != null && policyIndex < widget.nodes.length
+        ? policyNodeIndices(widget.nodes, policyIndex) : <int>{};
     bool inGroup(NodeInfo n) {
+      if (n.isPolicy) return false;
+      if (policyIndex != null) return policyMembers.contains(widget.nodes.indexOf(n));
       if (_group.isEmpty) return true;
       if (_group == '__manual') return n.source.isEmpty;
       if (_group.startsWith('provider:')) {
@@ -90,7 +96,7 @@ class _NodesPageState extends State<NodesPage> {
           padding: const EdgeInsets.fromLTRB(20, 20, 20, 8),
           child: Row(
             children: [
-              Text('节点选择（${widget.nodes.length}）',
+              Text('节点选择（${widget.nodes.where((n) => !n.isPolicy).length}）',
                   style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w600)),
               const Spacer(),
               OutlinedButton.icon(
@@ -136,6 +142,16 @@ class _NodesPageState extends State<NodesPage> {
                 selected: _group.isEmpty,
                 onSelected: (_) => setState(() => _group = ''),
               ),
+              for (var i = 0; i < widget.nodes.length; i++)
+                if (widget.nodes[i].isPolicy)
+                  ChoiceChip(
+                    label: Text(widget.nodes[i].name),
+                    selected: _group == 'policy:$i',
+                    onSelected: widget.busy ? null : (_) {
+                      setState(() => _group = 'policy:$i');
+                      widget.onSelect(i);
+                    },
+                  ),
               if (hasManual)
                 ChoiceChip(
                   label: const Text('手动导入'),
