@@ -121,7 +121,15 @@ fn occupied_port_is_reported_and_real_core_forwards_after_reconfiguration() {
     entry_thread.join().unwrap();
     exit_thread.join().unwrap();
     drop(chain_guard);
-    std::fs::remove_dir_all(scratch).unwrap();
+    // Windows can briefly hold files of a freshly exited process
+    // (e.g. Defender scanning cache.db), making remove_dir_all fail
+    // with DirectoryNotEmpty. Cleanup is best-effort for the runner.
+    for _ in 0..10 {
+        match std::fs::remove_dir_all(&scratch) {
+            Ok(()) => break,
+            Err(_) => std::thread::sleep(Duration::from_millis(300)),
+        }
+    }
 }
 
 
