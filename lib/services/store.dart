@@ -34,6 +34,8 @@ class Subscription {
     required this.url,
     this.updatedAt,
     this.lastReport,
+    this.profileJson,
+    this.profileState,
   });  final String id;
   final String name;
   final String url;
@@ -42,17 +44,37 @@ class Subscription {
   final String? updatedAt;
   final String? lastReport;
 
-  Subscription copyWith({String? name, String? url, String? updatedAt, String? lastReport}) =>
+  /// T069: serialized ParsedProfile carried by this subscription
+  /// (rules / rule-providers / DNS). Null = 仅节点订阅。
+  final String? profileJson;
+
+  /// downloaded / parsed / saved / pending-applied / applied —
+  /// persisted so the UI can show an honest lifecycle.
+  final String? profileState;
+
+  Subscription copyWith(
+          {String? name,
+          String? url,
+          String? updatedAt,
+          String? lastReport,
+          String? profileJson,
+          String? profileState}) =>
       Subscription(
         id: id,
         name: name ?? this.name,
         url: url ?? this.url,
         updatedAt: updatedAt ?? this.updatedAt,
         lastReport: lastReport ?? this.lastReport,
+        profileJson: profileJson ?? this.profileJson,
+        profileState: profileState ?? this.profileState,
       );
 
   Map<String, dynamic> toJson() =>
-      {'id': id, 'name': name, 'url': url, 'updatedAt': updatedAt, 'lastReport': lastReport};
+      {
+        'id': id, 'name': name, 'url': url, 'updatedAt': updatedAt,
+        'lastReport': lastReport, 'profileJson': profileJson,
+        'profileState': profileState,
+      };
 
   factory Subscription.fromJson(Map<String, dynamic> json) => Subscription(
         id: json['id'] as String,
@@ -60,6 +82,8 @@ class Subscription {
         url: json['url'] as String,
         updatedAt: json['updatedAt'] as String?,
         lastReport: json['lastReport'] as String?,
+        profileJson: json['profileJson'] as String?,
+        profileState: json['profileState'] as String?,
       );
 }
 

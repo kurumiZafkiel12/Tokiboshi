@@ -77,7 +77,14 @@ class ParseOutcome {
     this.skipped = const [],
     this.providers = const [],
     this.failedGroups = const [],
+    /// T069: serialized ParsedProfile carried by the subscription
+    /// (rules / rule-providers / DNS). Null = 仅节点订阅。Requires an
+    /// FRB regen before the Rust side actually populates it.
+    this.profileJson,
   });
+
+  /// Serialized ParsedProfile (see rust/src/profile.rs).
+  final String? profileJson;
 
   final List<NodeInfo> nodes;
   final List<String> skipped;
@@ -154,6 +161,7 @@ abstract class CoreBridge {
     bool bypassCn = true,
     String dataDir = '',
     String? selectedName,
+    String profileJson = '',
   });
 
   /// Start sing-box (the Rust layer runs `sing-box check` first).

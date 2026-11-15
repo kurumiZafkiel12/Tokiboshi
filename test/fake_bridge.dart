@@ -58,6 +58,7 @@ class FakeBridge implements CoreBridge {
     bool bypassCn = true,
     String dataDir = '',
     String? selectedName,
+    String profileJson = '',
   }) async {
     if (nodes.isEmpty) {
       throw const FormatException('no nodes to build a config from');
