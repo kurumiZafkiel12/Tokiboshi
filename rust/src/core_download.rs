@@ -28,6 +28,12 @@ fn push_extra_log(line: String) {
     }
 }
 
+/// Publish a diagnostic line into the shared log buffer (used by
+/// callers outside this module, e.g. post-maintenance hints).
+pub fn log_extra(line: String) {
+    push_extra_log(line);
+}
+
 pub fn extra_logs() -> Vec<String> {
     match EXTRA_LOGS.lock() {
         Ok(slot) => slot.iter().cloned().collect(),

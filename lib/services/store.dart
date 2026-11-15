@@ -142,7 +142,17 @@ class Store {
     // The main file is missing or unreadable: fall back to the last
     // known good copy instead of starting from an empty state.
     final backup = await _tryLoad(_bakFile);
-    if (backup != null) return backup;
+    if (backup != null) {
+      // Repair the main copy from the backup right away; otherwise
+      // the next save() would rotate the still-corrupt main file
+      // into .bak and destroy the only good copy (HF053-11).
+      try {
+        await _bakFile.copy(_file.path);
+      } catch (_) {
+        // Repair is best effort; save() will rewrite main anyway.
+      }
+      return backup;
+    }
     // Preserve the broken file for inspection, then start fresh.
     if (await _file.exists()) {
       try {
@@ -209,20 +219,18 @@ class Store {
       'cleanExit': data.cleanExit,
       'runningAtExit': data.runningAtExit,
     };
-    // Atomic write: temp file first, keep the last good copy as .bak,
-    // then swap. A crash at any point leaves either the old or the
-    // new full file — never a truncated one.
+    // Atomic rotation: the previous main file BECOMES the backup
+    // (rename, not copy — a corrupt main can never pollute .bak,
+    // HF053-11), then tmp becomes main. Between the two renames main
+    // is briefly absent; load() falls back to the backup for that
+    // window, and a failed rotation falls back to a direct rewrite.
     await _tmpFile.writeAsString(jsonEncode(map), flush: true);
-    if (await _file.exists()) {
-      try {
-        await _file.copy(_bakFile.path);
-      } catch (_) {
-        // Backup is insurance, not a requirement.
-      }
-    }
     try {
+      if (await _bakFile.exists()) {
+        await _bakFile.delete();
+      }
       if (await _file.exists()) {
-        await _file.delete();
+        await _file.rename(_bakFile.path);
       }
       await _tmpFile.rename(_file.path);
     } catch (_) {

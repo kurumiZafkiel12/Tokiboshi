@@ -242,34 +242,39 @@ pub fn start_ensure_core(data_dir: String) {
         error: None,
     });
     std::thread::spawn(move || {
+        // The managed install and the rule maintenance are
+        // independent: a failed install (occupied path, bad network)
+        // must not skip rule upkeep when the bundled core is usable
+        // (HF053-02 remainder).
+        let mut download_error: Option<String> = None;
         if !core_download::is_up_to_date(&dir) {
-            let result = core_download::download_and_install(&dir);
-            if let Err(e) = result {
-                set_ensure(EnsureState {
-                    phase: "error".to_string(),
-                    version: None,
-                    error: Some(e),
-                });
-                ENSURE_RUNNING.store(false, std::sync::atomic::Ordering::SeqCst);
-                return;
+            if let Err(e) = core_download::download_and_install(&dir) {
+                download_error = Some(e);
             }
         }
-        let result = Ok(core_download::installed_version(&dir).unwrap_or_default());
-        match result {
-            Ok(version) => set_ensure(EnsureState {
+        if download_error.is_none() {
+            let version = core_download::installed_version(&dir).unwrap_or_default();
+            set_ensure(EnsureState {
                 phase: "done".to_string(),
                 version: Some(version),
                 error: None,
-            }),
-            Err(e) => set_ensure(EnsureState {
-                phase: "error".to_string(),
-                version: None,
-                error: Some(e),
-            }),
+            });
         }
         // Rule downloads are optional and may take minutes on a blocked
         // network. Report binary readiness first so startup never waits for them.
         core_download::ensure_rule_sets(&dir);
+        if core_running() {
+            core_download::log_extra(
+                "[rules] 规则集已就绪；重启内核后分流规则即生效".into(),
+            );
+        }
+        if let Some(e) = download_error {
+            set_ensure(EnsureState {
+                phase: "error".to_string(),
+                version: None,
+                error: Some(e),
+            });
+        }
         ENSURE_RUNNING.store(false, std::sync::atomic::Ordering::SeqCst);
     });
 }

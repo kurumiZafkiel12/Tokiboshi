@@ -66,8 +66,7 @@ class WindowsSystemProxy implements SystemProxy {
         'query', 'HKCU\\$_key', '/v', 'ProxyServer',
       ]);
       if (result.exitCode != 0) return null;
-      final match = RegExp(r'Reg_SZ\s+(\S+)').firstMatch('${result.stdout}');
-      return match?.group(1);
+      return parseProxyServerFromRegOutput('${result.stdout}');
     } catch (_) {
       return null;
     }
@@ -88,4 +87,13 @@ class NoopSystemProxy implements SystemProxy {
 
   @override
   Future<String?> readProxyServer() async => proxyServer;
+}
+
+/// Parse `reg query` output for the ProxyServer value. reg.exe prints
+/// the type as `REG_SZ` (all caps — a case-sensitive `Reg_SZ` pattern
+/// never matched, HV001-02), so match case-insensitively.
+String? parseProxyServerFromRegOutput(String output) {
+  final match =
+      RegExp(r'REG_SZ\s+(\S+)', caseSensitive: false).firstMatch(output);
+  return match?.group(1);
 }

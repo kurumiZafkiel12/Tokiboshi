@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tokiboshi/bridge/core_bridge.dart';
 import 'package:tokiboshi/services/store.dart';
+import 'package:tokiboshi/services/system_proxy.dart';
 
 void main() {
   test('store round-trips nodes and settings', () async {
@@ -117,6 +118,16 @@ void main() {
     await file.writeAsString('{broken json');
     final restored = await store.load();
     expect(restored.mixedPort, 7893);
+    // The fallback must repair the main copy, or the next save would
+    // rotate the still-corrupt main into .bak and destroy the only
+    // good copy (HF053-11 remainder).
+    expect(jsonDecode(await file.readAsString())['mixedPort'], 7893);
+    await store.save(AppData()..mixedPort = 7895);
+    final bak = jsonDecode(
+        await File('${file.path}.bak').readAsString()) as Map<String, dynamic>;
+    expect(bak['mixedPort'], 7893, reason: 'backup must stay parseable');
+    await file.writeAsString('{broken again');
+    expect((await store.load()).mixedPort, 7893);
   });
 
   test('round-trips secret and cleanExit flags', () async {
@@ -166,5 +177,16 @@ void main() {
     expect(isStaleProxy('127.0.0.1:7891', 7890), isFalse);
     expect(isStaleProxy('http://127.0.0.1:7890', 7890), isFalse);
     expect(isStaleProxy(null, 7890), isFalse);
+  });
+
+  test('parses real reg.exe ProxyServer output (HV001-02)', () {
+    const sample = '\r\n'
+        'HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings\r\n'
+        '    ProxyServer    REG_SZ    127.0.0.1:7890\r\n'
+        '\r\n';
+    expect(parseProxyServerFromRegOutput(sample), '127.0.0.1:7890');
+    // A missing value line yields null instead of garbage.
+    expect(parseProxyServerFromRegOutput('The system was unable to find the specified registry key.'),
+        isNull);
   });
 }

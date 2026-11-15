@@ -6,6 +6,7 @@ import 'dart:io';
 import 'package:tray_manager/tray_manager.dart';
 import 'package:window_manager/window_manager.dart';
 
+import 'app_version.dart';
 import 'bridge/core_bridge.dart';
 import 'bridge/rust_core_bridge.dart';
 import 'pages/dashboard_page.dart';
@@ -42,11 +43,17 @@ Future<void> main() async {
       lock = null;
     }
     if (lock != null) {
-      // Primary instance: "show" pokes raise the existing window.
+      // Primary instance: only answer a signed poke (HV001-03) — an
+      // unrelated service may hold some other port, so the second
+      // instance requires an ack before it exits.
       lock.listen((socket) {
-        socket.listen((_) {}, onDone: socket.destroy);
-        windowManager.show().catchError((_) {});
-        windowManager.focus().catchError((_) {});
+        socket.listen((data) {
+          if (String.fromCharCodes(data).contains('tokiboshi-show')) {
+            socket.write('tokiboshi-ok');
+            windowManager.show().catchError((_) {});
+            windowManager.focus().catchError((_) {});
+          }
+        }, onDone: socket.destroy);
       });
     } else {
       var woke = false;
@@ -56,12 +63,13 @@ Future<void> main() async {
           kInstanceLockPort,
           timeout: const Duration(milliseconds: 800),
         );
-        socket.write('show');
-        await socket.flush();
+        socket.write('tokiboshi-show');
+        final ack = await socket.first.timeout(const Duration(milliseconds: 800));
+        woke = String.fromCharCodes(ack).contains('tokiboshi-ok');
         socket.destroy();
-        woke = true;
       } catch (_) {
-        // The port is held by something that is not us; start unlocked.
+        // No valid ack: the port is held by something that is not
+        // Tokiboshi. Start unlocked rather than refusing to run.
       }
       if (woke) {
         exit(0);
@@ -181,6 +189,10 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
     final running = await widget.bridge.coreRunning();
     if (!mounted) return;
     var changed = false;
+    // Snapshot how the PREVIOUS run ended before mutating anything:
+    // the auto-connect decision below must not rely on this run's
+    // in-progress flags (HV001-01).
+    final previousCleanExit = data.cleanExit;
     // First run (or pre-secret data): mint the controller secret.
     if (data.clashApiSecret.isEmpty) {
       data.clashApiSecret = generateClashSecret();
@@ -190,7 +202,7 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
     // system proxy pointing at its dead local port ("no internet").
     // Clear it only when it matches OUR port; anything else belongs
     // to the user or another tool.
-    if (!data.cleanExit) {
+    if (!previousCleanExit) {
       try {
         final server = await widget.systemProxy.readProxyServer();
         if (isStaleProxy(server, data.mixedPort)) {
@@ -215,10 +227,11 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
     // side reports progress through the Logs page.
     unawaited(widget.bridge.startEnsureCore(_dataDir));
     await _refreshCoreVersion();
-    // 自动连接 = 恢复上一次正常退出时的运行状态；崩溃/被杀后不自启。
+    // 自动连接 = 上一次正常退出且内核在运行（崩溃后不自启，HV001-01）。
     if (mounted &&
         !_running &&
         _data.autoConnect &&
+        previousCleanExit &&
         _data.runningAtExit &&
         _data.nodes.isNotEmpty) {
       await _toggleCore();
@@ -926,11 +939,28 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
       );
       final configFile = await widget.store
           .writeRuntimeConfig(injectClashSecret(config, _data.clashApiSecret));
+      // Rule-set downloads run in the background after app start; if
+      // they have not landed yet this config carries no 分流 rules.
+      // Say so instead of letting the toggles lie (HF053-02).
+      final rulesDir = Directory('$_dataDir\\rules');
+      final rulesReady = const [
+        'geosite-category-ads-all.srs',
+        'geosite-cn.srs',
+        'geoip-cn.srs',
+      ].every((f) => File('${rulesDir.path}\\$f').existsSync());
+      if (!rulesReady) {
+        _setMessage('规则集仍在后台下载，本次启动暂无分流规则；就绪后重启内核即生效');
+      }
       await widget.bridge.startCore(
         singBoxPath: binary,
         configPath: configFile.path,
       );
       started = true;
+      // A fresh start invalidates the stop flag: without this, the
+      // next supervisor restart blip would tear the proxy down again
+      // (HF053-05 remainder).
+      _userStopped = false;
+      _coreDownSince = null;
       if (_data.systemProxy) {
         await widget.systemProxy.apply(true, _data.mixedPort);
       }
@@ -1208,7 +1238,7 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
                 if (!_navCollapsed)
                   const Padding(
                     padding: EdgeInsets.all(16),
-                    child: Text('v0.5.3 · sing-box 1.14.4'),
+                    child: Text('v$kAppVersion · sing-box 1.14.4'),
                   ),
               ],
             ),

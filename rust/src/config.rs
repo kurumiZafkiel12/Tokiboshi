@@ -336,7 +336,14 @@ pub fn build_config_multi(
         json!({ "clash_mode": "Global", "outbound": "proxy" }),
     ];
     let mut rule_sets: Vec<Value> = Vec::new();
-    let mut dns_rules: Vec<Value> = Vec::new();
+    // Mode-aware DNS: in Direct mode the traffic is direct, so DNS
+    // must resolve locally too — dns.final points at dns-remote
+    // through the proxy and would still route lookups via the node
+    // (verified by Hermes against the released DLL). First match wins.
+    let mut dns_rules: Vec<Value> = vec![
+        json!({ "clash_mode": "Direct", "server": "dns-local" }),
+        json!({ "clash_mode": "Global", "server": "dns-remote" }),
+    ];
     if settings.block_ads {
         if let Some(rs) = local_rule_set("geosite-category-ads-all") {
             route_rules.push(json!({ "rule_set": ["geosite-category-ads-all"], "action": "reject" }));
@@ -475,9 +482,10 @@ mod tests {
         let text = build_config_multi(&nodes, &settings, None).unwrap();
         let v: Value = serde_json::from_str(&text).unwrap();
         assert_eq!(v["route"]["rule_set"].as_array().unwrap().len(), 0);
-        // Mode rules still present; only the rule-set rules were dropped.
+        // Mode rules still present (route + DNS); only the rule-set
+        // rules were dropped.
         assert_eq!(v["route"]["rules"].as_array().unwrap().len(), 3);
-        assert_eq!(v["dns"]["rules"].as_array().unwrap().len(), 0);
+        assert_eq!(v["dns"]["rules"].as_array().unwrap().len(), 2);
     }
 
     #[test]
@@ -499,7 +507,13 @@ mod tests {
         assert_eq!(rules[2]["clash_mode"], "Global");
         assert_eq!(rules[2]["outbound"], "proxy");
         assert_eq!(v["route"]["rule_set"].as_array().unwrap().len(), 0);
-        assert_eq!(v["dns"]["rules"].as_array().unwrap().len(), 0);
+        // Mode DNS rules are unconditional; the CN DNS rule is not.
+        let dns_rules = v["dns"]["rules"].as_array().unwrap();
+        assert_eq!(dns_rules.len(), 2);
+        assert_eq!(dns_rules[0]["clash_mode"], "Direct");
+        assert_eq!(dns_rules[0]["server"], "dns-local");
+        assert_eq!(dns_rules[1]["clash_mode"], "Global");
+        assert_eq!(dns_rules[1]["server"], "dns-remote");
         // Sanity: the leaner config still passes the real core check
         // where the integration harness runs it.
     }
