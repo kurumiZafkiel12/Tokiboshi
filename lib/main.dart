@@ -138,6 +138,9 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
       _running = running;
     });
     await _refreshCoreVersion();
+    if (mounted && !_running && _data.autoConnect && _data.nodes.isNotEmpty) {
+      await _toggleCore();
+    }
   }
 
   Future<void> _refreshCoreVersion() async {
@@ -409,6 +412,15 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
     await _addSubscription(name, result.url);
   }
 
+  String _subscriptionReport(ParseOutcome outcome) {
+    final counts = <String, int>{};
+    for (final node in outcome.nodes) {
+      final group = node.group.isEmpty ? '内联节点' : node.group;
+      counts[group] = (counts[group] ?? 0) + 1;
+    }
+    return [for (final entry in counts.entries) '${entry.key}：${entry.value} 个', ...outcome.skipped].join('\n');
+  }
+
   Future<void> _addSubscription(String name, String url) async {
     setState(() => _busy = true);
     try {
@@ -423,6 +435,7 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
             name: name,
             url: url,
             updatedAt: DateTime.now().toIso8601String(),
+            lastReport: _subscriptionReport(outcome),
           ),
         ];
         _data.nodes = [..._data.nodes, ...nodes];
@@ -447,6 +460,9 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
       final selected = _data.selected;
       final selectedFromSub = selected != null && selected.source == sub.id;
       final fresh = outcome.nodes.map((n) => n.withSource(sub.id)).toList();
+      final retained = retainFailedSourceNodes(
+          _data.nodes.where((n) => n.source == sub.id).toList(), fresh, outcome.failedGroups);
+      fresh.addAll(retained);
       setState(() {
         _data.nodes = [
           for (final n in _data.nodes)
@@ -456,7 +472,8 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
         _data.subscriptions = [
           for (final s in _data.subscriptions)
             if (s.id == sub.id)
-              s.copyWith(updatedAt: DateTime.now().toIso8601String())
+              s.copyWith(updatedAt: DateTime.now().toIso8601String(),
+                  lastReport: '${_subscriptionReport(outcome)}${retained.isEmpty ? '' : '\n保留上次成功获取的 ${retained.length} 个节点（相关来源更新失败）'}')
             else
               s,
         ];
@@ -951,6 +968,11 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
           clashApiPort: _data.clashApiPort,
           singBoxPath: _data.singBoxPath,
           systemProxy: _data.systemProxy,
+          autoConnect: _data.autoConnect,
+          onAutoConnectChanged: (value) {
+            setState(() => _data.autoConnect = value);
+            _persist();
+          },
           running: _running,
           dataFilePath: widget.store.file.path,
           coreVersion: _coreVersion,

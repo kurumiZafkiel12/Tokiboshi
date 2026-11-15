@@ -34,7 +34,20 @@ struct Shared {
     last_exit: Mutex<Option<String>>,
 }
 
+fn plain_log(line: &str) -> String {
+    let mut chars = line.chars().peekable();
+    let mut out = String::new();
+    while let Some(c) = chars.next() {
+        if c == '\u{1b}' && chars.peek() == Some(&'[') {
+            chars.next();
+            for code in chars.by_ref() { if ('@'..='~').contains(&code) { break; } }
+        } else { out.push(c); }
+    }
+    out
+}
+
 fn push_log(shared: &Shared, line: String) {
+    let line = plain_log(&line);
     if let Ok(mut logs) = shared.logs.lock() {
         if logs.len() >= LOG_CAP {
             logs.pop_front();
@@ -412,6 +425,11 @@ mod tests {
             .any(|l| l.contains("exited unexpectedly")));
 
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn terminal_colors_are_removed_from_visible_logs() {
+        assert_eq!(plain_log("\u{1b}[36mINFO\u{1b}[0m ready"), "INFO ready");
     }
 
     #[test]

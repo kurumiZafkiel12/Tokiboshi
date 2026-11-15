@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tokiboshi/main.dart';
+import 'package:tokiboshi/bridge/core_bridge.dart';
 import 'package:tokiboshi/services/store.dart';
 import 'package:tokiboshi/services/subscription_fetcher.dart';
 import 'package:tokiboshi/services/system_proxy.dart';
@@ -36,6 +37,30 @@ class MemoryStore extends Store {
 }
 
 void main() {
+  testWidgets('opening app connects saved node by default and can be disabled', (tester) async {
+    final store = MemoryStore();
+    store.data.nodes = const [NodeInfo(name: 'saved', outboundJson: '{"type":"socks","server":"127.0.0.1","server_port":1080}')];
+    store.data.selectedIndex = 0;
+    final bridge = FakeBridge();
+    await tester.pumpWidget(TokiboshiApp(
+      bridge: bridge, store: store, systemProxy: NoopSystemProxy(),
+      allocatePort: (port, reserved) async => port,
+    ));
+    await tester.pumpAndSettle();
+    expect(bridge.running, isTrue);
+    expect(store.runtimeConfig, isNotNull);
+    await tester.pumpWidget(const SizedBox());
+    store.data.autoConnect = false;
+    final stoppedBridge = FakeBridge();
+    await tester.pumpWidget(TokiboshiApp(
+      bridge: stoppedBridge, store: store, systemProxy: NoopSystemProxy(),
+      allocatePort: (port, reserved) async => port,
+    ));
+    await tester.pumpAndSettle();
+    expect(stoppedBridge.running, isFalse);
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets('import, subscribe and start/stop flow', (tester) async {
     tester.view.physicalSize = const Size(1280, 800);
     tester.view.devicePixelRatio = 1.0;

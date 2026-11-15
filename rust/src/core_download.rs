@@ -280,3 +280,54 @@ pub fn ensure_rule_sets(data_dir: &Path) {
         }
     }
 }
+
+
+/// Never let sing-box download its dashboard synchronously before binding the
+/// control port. Serve a local waiting page and populate the UI independently.
+pub fn prepare_dashboard(dir: &Path) -> Result<(), String> {
+    const WAITING: &str = "<!doctype html><meta charset=utf-8><meta http-equiv=refresh content=10><title>Tokiboshi</title><p>面板正在准备，请稍候。代理连接不受影响；下载完成后此页自动刷新。</p><!-- tokiboshi-dashboard-pending -->";
+    std::fs::create_dir_all(dir).map_err(|e| format!("cannot create panel directory: {e}"))?;
+    let index = dir.join("index.html");
+    if index.exists() && !std::fs::read_to_string(&index).unwrap_or_default().contains("tokiboshi-dashboard-pending") {
+        return Ok(());
+    }
+    std::fs::write(&index, WAITING).map_err(|e| format!("cannot prepare local panel: {e}"))?;
+    static DOWNLOADING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if DOWNLOADING.swap(true, std::sync::atomic::Ordering::SeqCst) { return Ok(()); }
+    let dir = dir.to_path_buf();
+    std::thread::spawn(move || {
+        let result = (|| -> Result<(), String> {
+            let agent = ureq::AgentBuilder::new().timeout(std::time::Duration::from_secs(45)).build();
+            let response = agent.get(crate::config::ZASHBOARD_DOWNLOAD_URL).call().map_err(|e| e.to_string())?;
+            let mut bytes = Vec::new();
+            response.into_reader().take(32 * 1024 * 1024 + 1).read_to_end(&mut bytes).map_err(|e| e.to_string())?;
+            if bytes.len() > 32 * 1024 * 1024 { return Err("dashboard archive too large".into()); }
+            let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).map_err(|e| e.to_string())?;
+            let mut index_bytes = None;
+            let mut total = 0u64;
+            for i in 0..zip.len() {
+                let entry = zip.by_index(i).map_err(|e| e.to_string())?;
+                if entry.is_dir() { continue; }
+                let path = entry.enclosed_name().ok_or("unsafe dashboard path")?;
+                // Official gh-pages archives have one containing directory.
+                let relative: PathBuf = path.components().skip(1).collect();
+                if relative.as_os_str().is_empty() { continue; }
+                total = total.saturating_add(entry.size());
+                if total > 128 * 1024 * 1024 { return Err("expanded dashboard too large".into()); }
+                let mut content = Vec::new();
+                entry.take(128 * 1024 * 1024 + 1).read_to_end(&mut content).map_err(|e| e.to_string())?;
+                if relative == Path::new("index.html") { index_bytes = Some(content); continue; }
+                let dest = dir.join(relative);
+                if let Some(parent) = dest.parent() { std::fs::create_dir_all(parent).map_err(|e| e.to_string())?; }
+                std::fs::write(dest, content).map_err(|e| e.to_string())?;
+            }
+            // Publish the real entry point only after every referenced asset.
+            std::fs::write(dir.join("index.html"), index_bytes.ok_or("dashboard has no index")?).map_err(|e| e.to_string())
+        })();
+        if result.is_err() {
+            let _ = std::fs::write(dir.join("index.html"), "<!doctype html><meta charset=utf-8><title>Tokiboshi</title><p>面板下载失败，代理连接不受影响。请检查网络后重新启动内核以重试。</p><!-- tokiboshi-dashboard-pending -->");
+        }
+        DOWNLOADING.store(false, std::sync::atomic::Ordering::SeqCst);
+    });
+    Ok(())
+}

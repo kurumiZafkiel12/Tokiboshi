@@ -813,8 +813,7 @@ pub fn parse_clash_yaml(text: &str) -> Result<ParseOutcome, String> {
     doc.apply_merge().map_err(|e| format!("invalid YAML merge: {e}"))?;
     let doc = yaml_to_json(&doc);
     let proxies = doc
-        .get("proxies").or_else(|| doc.get("payload"))
-        .and_then(Value::as_array)
+        .as_array().or_else(|| doc.get("proxies").or_else(|| doc.get("payload")).and_then(Value::as_array))
         .map(Vec::as_slice).unwrap_or(&[]);
     let mut nodes = Vec::new();
     let mut skipped = Vec::new();
@@ -838,14 +837,28 @@ pub fn parse_clash_yaml(text: &str) -> Result<ParseOutcome, String> {
         for (pname, pval) in map {
             let Some(pobj) = pval.as_object() else { continue };
             let ptype = cs(pobj, "type").unwrap_or("http");
-            let Some(url) = cs(pobj, "url") else { continue };
-            if ptype != "http" || url.is_empty() {
+            let url = if ptype == "inline" {
+                let Some(payload) = pobj.get("payload").and_then(Value::as_array) else {
+                    skipped.push(format!("节点源「{pname}」缺少内联 payload"));
+                    continue;
+                };
+                use base64::Engine;
+                format!("data:application/json;base64,{}", base64::engine::general_purpose::STANDARD.encode(
+                    json!({"proxies": payload}).to_string()))
+            } else if ptype == "http" {
+                let Some(url) = cs(pobj, "url").filter(|s| !s.is_empty()) else {
+                    skipped.push(format!("节点源「{pname}」缺少 URL"));
+                    continue;
+                };
+                url.to_string()
+            } else {
+                skipped.push(format!("节点源「{pname}」类型 {ptype} 暂不支持"));
                 continue;
-            }
+            };
             let user_agent = pobj
                 .get("header")
                 .and_then(Value::as_object)
-                .and_then(|h| h.get("User-Agent"))
+                .and_then(|h| h.iter().find(|(key, _)| key.eq_ignore_ascii_case("user-agent")).map(|(_, value)| value))
                 .and_then(|ua| match ua {
                     Value::String(t) => Some(t.clone()),
                     Value::Array(items) => items.iter().find_map(Value::as_str).map(str::to_string),
@@ -881,7 +894,8 @@ fn parse_subscription_inner(text: &str, depth: usize) -> Result<ParseOutcome, St
     let trimmed = text.trim().trim_start_matches('\u{feff}');
     if trimmed.starts_with('{') || trimmed.starts_with('[') {
         let v: Value = serde_json::from_str(trimmed).map_err(|e| format!("invalid JSON: {e}"))?;
-        if v.get("proxies").is_some() || v.get("proxy-providers").is_some() || v.get("payload").is_some() {
+        if v.get("proxies").is_some() || v.get("proxy-providers").is_some() || v.get("payload").is_some()
+            || v.as_array().is_some_and(|items| items.iter().any(|item| item.get("name").is_some() && item.get("port").is_some())) {
             return parse_clash_yaml(trimmed);
         }
         let outbounds = v.get("outbounds").and_then(Value::as_array).or_else(|| v.as_array())
@@ -896,7 +910,7 @@ fn parse_subscription_inner(text: &str, depth: usize) -> Result<ParseOutcome, St
         if nodes.is_empty() { return Err("no usable outbounds in JSON config".into()); }
         return Ok(ParseOutcome { nodes, skipped: vec![], providers: vec![] });
     }
-    if trimmed.lines().any(|l| {
+    if trimmed.starts_with("- ") || trimmed.lines().any(|l| {
         let t = l.trim_start();
         ["proxies", "proxy-providers", "payload"].iter().any(|key|
             t.strip_prefix(key).is_some_and(|rest| rest.trim_start().starts_with(':')))
@@ -932,6 +946,43 @@ mod tests {
 
     fn out(node: &NodeInfo) -> Value {
         serde_json::from_str(&node.outbound_json).unwrap()
+    }
+
+    #[test]
+    fn inline_provider_payload_is_preserved_for_recursive_filtering() {
+        let result = parse_subscription(r#"
+proxy-providers:
+  local:
+    type: inline
+    filter: JP
+    payload:
+      - {name: JP, type: socks5, server: 127.0.0.1, port: 1080}
+  remote:
+    type: http
+    url: https://example.com/sub
+    header: {user-agent: [Clash.Meta]}
+"#).unwrap();
+        assert_eq!(result.providers.len(), 2);
+        let inline = result.providers.iter().find(|p| p.name == "local").unwrap();
+        assert_eq!(inline.filter.as_deref(), Some("JP"));
+        let encoded = inline.url.strip_prefix("data:application/json;base64,").unwrap();
+        let payload = String::from_utf8(b64_decode(encoded).unwrap()).unwrap();
+        let nodes = parse_subscription(&payload).unwrap().nodes;
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(out(&nodes[0])["type"], "socks");
+        assert_eq!(result.providers.iter().find(|p| p.name == "remote").unwrap().user_agent.as_deref(), Some("Clash.Meta"));
+    }
+
+    #[test]
+    fn clash_proxy_arrays_are_converted_instead_of_treated_as_sing_box() {
+        for text in [r#"[{"name":"local","type":"socks5","server":"127.0.0.1","port":1080}]"#,
+            "- name: local\n  type: socks5\n  server: 127.0.0.1\n  port: 1080\n"] {
+            let nodes = parse_subscription(text).unwrap().nodes;
+            assert_eq!(nodes.len(), 1);
+            assert_eq!(out(&nodes[0])["type"], "socks");
+            assert_eq!(out(&nodes[0])["server_port"], 1080);
+            assert!(out(&nodes[0]).get("port").is_none());
+        }
     }
 
     #[test]

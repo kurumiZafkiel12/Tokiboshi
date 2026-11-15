@@ -17,6 +17,7 @@ class Subscription {
     required this.name,
     required this.url,
     this.updatedAt,
+    this.lastReport,
   });
 
   final String id;
@@ -25,23 +26,26 @@ class Subscription {
 
   /// ISO-8601 time of the last successful update.
   final String? updatedAt;
+  final String? lastReport;
 
-  Subscription copyWith({String? name, String? url, String? updatedAt}) =>
+  Subscription copyWith({String? name, String? url, String? updatedAt, String? lastReport}) =>
       Subscription(
         id: id,
         name: name ?? this.name,
         url: url ?? this.url,
         updatedAt: updatedAt ?? this.updatedAt,
+        lastReport: lastReport ?? this.lastReport,
       );
 
   Map<String, dynamic> toJson() =>
-      {'id': id, 'name': name, 'url': url, 'updatedAt': updatedAt};
+      {'id': id, 'name': name, 'url': url, 'updatedAt': updatedAt, 'lastReport': lastReport};
 
   factory Subscription.fromJson(Map<String, dynamic> json) => Subscription(
         id: json['id'] as String,
         name: json['name'] as String,
         url: json['url'] as String,
         updatedAt: json['updatedAt'] as String?,
+        lastReport: json['lastReport'] as String?,
       );
 }
 
@@ -54,6 +58,7 @@ class AppData {
     this.clashApiPort = 9090,
     this.singBoxPath = '',
     this.systemProxy = true,
+    this.autoConnect = true,
     this.enableTun = false,
     this.blockAds = true,
     this.bypassCn = true,
@@ -70,6 +75,9 @@ class AppData {
   /// Empty means the managed core (downloaded into the data dir).
   String singBoxPath;
   bool systemProxy;
+
+  /// Start the core with the saved node when the application opens.
+  bool autoConnect;
 
   /// TUN inbound (virtual NIC). Needs an elevated process on
   /// Windows; applied when the core (re)starts.
@@ -120,6 +128,7 @@ class Store {
         clashApiPort: (map['clashApiPort'] as int?) ?? 9090,
         singBoxPath: (map['singBoxPath'] as String?) ?? '',
         systemProxy: (map['systemProxy'] as bool?) ?? true,
+        autoConnect: (map['autoConnect'] as bool?) ?? true,
         enableTun: (map['enableTun'] as bool?) ?? false,
         blockAds: (map['blockAds'] as bool?) ?? true,
         bypassCn: (map['bypassCn'] as bool?) ?? true,
@@ -139,6 +148,7 @@ class Store {
       'clashApiPort': data.clashApiPort,
       'singBoxPath': data.singBoxPath,
       'systemProxy': data.systemProxy,
+      'autoConnect': data.autoConnect,
       'enableTun': data.enableTun,
       'blockAds': data.blockAds,
       'bypassCn': data.bypassCn,

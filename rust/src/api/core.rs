@@ -89,19 +89,31 @@ pub fn start_core(binary_path: String, config_path: String) -> Result<(), String
         std::net::TcpListener::bind(addr).map_err(|_| format!(
             "本地端口 {addr} 被占用或不可用，请修改设置中的端口或关闭占用该端口的软件"))?;
     }
+    if let Some(ui) = config["experimental"]["clash_api"]["external_ui"].as_str().filter(|p| !p.is_empty()) {
+        crate::core_download::prepare_dashboard(std::path::Path::new(ui))?;
+    }
     core.start(std::path::Path::new(&config_path))?;
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let mut ready = vec![false; listeners.len()];
     loop {
         std::thread::sleep(std::time::Duration::from_millis(100));
         if core.state() == CoreState::Stopped || std::time::Instant::now() >= deadline {
-            let details = core.logs().into_iter().rev().take(8).collect::<Vec<_>>().join("\n");
+            let lines = core.logs();
+            let details = lines.iter().rev().filter(|line| !line.contains("inbound connection from"))
+                .take(12).cloned().collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join("\n");
+            let pending = listeners.iter().zip(&ready).filter(|(_, ready)| !**ready)
+                .map(|(addr, _)| addr.as_str()).collect::<Vec<_>>().join(", ");
             let _ = core.stop();
-            return Err(format!("内核启动失败，监听端口未就绪：{details}"));
+            *slot = Some(core); // Keep fatal output available on the Logs page.
+            return Err(format!("内核启动失败，监听端口未就绪 ({pending})：{details}"));
         }
-        if listeners.iter().all(|addr| addr.parse().ok().is_some_and(|address|
-            std::net::TcpStream::connect_timeout(&address, std::time::Duration::from_millis(100)).is_ok())) {
-            break;
+        for (i, addr) in listeners.iter().enumerate() {
+            if !ready[i] {
+                ready[i] = addr.parse().ok().is_some_and(|address|
+                    std::net::TcpStream::connect_timeout(&address, std::time::Duration::from_millis(100)).is_ok());
+            }
         }
+        if ready.iter().all(|ready| *ready) { break; }
     }
     *slot = Some(core);
     Ok(())

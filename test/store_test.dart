@@ -14,12 +14,14 @@ void main() {
       selectedIndex: 0,
       mixedPort: 1080,
       singBoxPath: 'C:\\tools\\sing-box.exe',
+      autoConnect: false,
     ));
     final loaded = await store.load();
     expect(loaded.nodes, hasLength(1));
     expect(loaded.nodes.first.name, 'n1');
     expect(loaded.selected?.name, 'n1');
     expect(loaded.mixedPort, 1080);
+    expect(loaded.autoConnect, isFalse);
     expect(loaded.singBoxPath, r'C:\tools\sing-box.exe');
   });
 
@@ -28,6 +30,7 @@ void main() {
     final loaded = await store.load();
     expect(loaded.nodes, isEmpty);
     expect(loaded.mixedPort, 7890);
+    expect(loaded.autoConnect, isTrue);
   });
 
   test('store round-trips subscriptions and node sources', () async {

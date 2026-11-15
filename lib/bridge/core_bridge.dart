@@ -73,6 +73,7 @@ class ParseOutcome {
     required this.nodes,
     this.skipped = const [],
     this.providers = const [],
+    this.failedGroups = const [],
   });
 
   final List<NodeInfo> nodes;
@@ -81,6 +82,9 @@ class ParseOutcome {
   /// Clash `proxy-providers` entries the caller should fetch and
   /// parse as further subscriptions (empty for other formats).
   final List<ProviderInfo> providers;
+
+  /// Source groups whose previous nodes should survive a partial update.
+  final List<String> failedGroups;
 }
 
 /// One Clash YAML `proxy-providers` entry (http type).

@@ -8,6 +8,8 @@ class SettingsPage extends StatefulWidget {
     required this.clashApiPort,
     required this.singBoxPath,
     required this.systemProxy,
+    this.autoConnect = true,
+    this.onAutoConnectChanged,
     required this.running,
     required this.dataFilePath,
     required this.onSave,
@@ -24,6 +26,8 @@ class SettingsPage extends StatefulWidget {
   final int clashApiPort;
   final String singBoxPath;
   final bool systemProxy;
+  final bool autoConnect;
+  final ValueChanged<bool>? onAutoConnectChanged;
   final bool running;
   final String dataFilePath;
   final void Function(int port, int clashApiPort, String singBoxPath) onSave;
@@ -82,6 +86,12 @@ class _SettingsPageState extends State<SettingsPage> {
         children: [
           const Text('设置', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w600)),
           const SizedBox(height: 16),
+          SwitchListTile(
+            title: const Text('打开应用自动连接'),
+            subtitle: const Text('启动内核并使用上次选中的节点'),
+            value: widget.autoConnect,
+            onChanged: widget.onAutoConnectChanged,
+          ),
           Card(
             child: Padding(
               padding: const EdgeInsets.all(16),

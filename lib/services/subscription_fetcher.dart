@@ -23,11 +23,12 @@ class HttpSubscriptionFetcher implements SubscriptionFetcher {
     final client = HttpClient()..connectionTimeout = const Duration(seconds: 15);
     try {
       final request = await client.getUrl(uri);
-      request.headers.set(HttpHeaders.userAgentHeader, userAgent ?? 'Tokiboshi/0.5.2 Clash.Meta');
+      request.headers.set(HttpHeaders.userAgentHeader, userAgent ?? 'Clash.Meta Tokiboshi/0.5.2');
       request.headers.set(HttpHeaders.acceptHeader, '*/*');
       final response = await request.close().timeout(const Duration(seconds: 30));
       if (response.statusCode < 200 || response.statusCode >= 300) {
-        throw HttpException('订阅拉取失败：HTTP ${response.statusCode}');
+        final challenge = response.headers.value('cf-mitigated') == 'challenge' ? '（Cloudflare 验证）' : '';
+        throw HttpException('订阅拉取失败：HTTP ${response.statusCode}$challenge');
       }
       final body = await response
           .transform(utf8.decoder)

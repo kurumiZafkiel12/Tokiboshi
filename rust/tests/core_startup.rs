@@ -20,8 +20,11 @@ fn occupied_port_is_reported_and_real_core_forwards_after_reconfiguration() {
         return;
     };
     let scratch = std::env::temp_dir().join(format!("tkb-startup-{}", std::process::id()));
-    std::fs::create_dir_all(scratch.join("ui")).unwrap();
-    std::fs::write(scratch.join("ui/index.html"), "local test panel").unwrap();
+    if scratch.exists() { std::fs::remove_dir_all(&scratch).unwrap(); }
+    std::fs::create_dir_all(&scratch).unwrap();
+    // An HTTP endpoint that accepts TCP but never sends response headers.
+    // Without preparing a local UI, sing-box waits here before binding its API.
+    let blocked_panel = TcpListener::bind(("127.0.0.1", 0)).unwrap();
     let occupied = TcpListener::bind(("127.0.0.1", 0)).unwrap();
     let free = TcpListener::bind(("127.0.0.1", 0)).unwrap();
     let api_port = free.local_addr().unwrap().port();
@@ -42,7 +45,15 @@ fn occupied_port_is_reported_and_real_core_forwards_after_reconfiguration() {
     settings.mixed_port = next.local_addr().unwrap().port();
     drop(next);
     std::fs::write(&path, build_config_multi(&nodes, &settings, None).unwrap()).unwrap();
+    let mut config: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    config["experimental"]["clash_api"]["external_ui_download_url"] = serde_json::json!(format!(
+        "http://127.0.0.1:{}/never-respond.zip", blocked_panel.local_addr().unwrap().port()));
+    std::fs::write(&path, config.to_string()).unwrap();
+    let started = std::time::Instant::now();
     core::start_core(binary, path.to_string_lossy().into()).unwrap();
+    assert!(started.elapsed() < Duration::from_secs(3), "startup waited for optional panel download");
+    let panel = request(api_port, "GET /ui/ HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+    assert!(panel.contains("200 OK"), "{panel}");
     struct Stop;
     impl Drop for Stop { fn drop(&mut self) { let _ = core::stop_core(); } }
     let guard = Stop;

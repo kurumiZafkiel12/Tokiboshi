@@ -87,6 +87,15 @@ class SubscriptionsPage extends StatelessWidget {
                                 ),
                               ),
                               IconButton(
+                                icon: const Icon(Icons.info_outline),
+                                tooltip: '来源与识别详情',
+                                onPressed: () => showDialog<void>(context: context, builder: (context) => AlertDialog(
+                                  title: const Text('来源与识别详情'),
+                                  content: SingleChildScrollView(child: SelectableText(sub.lastReport ?? '请更新订阅以获取来源诊断')),
+                                  actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('关闭'))],
+                                )),
+                              ),
+                              IconButton(
                                 icon: const Icon(Icons.refresh),
                                 tooltip: '更新',
                                 onPressed:
