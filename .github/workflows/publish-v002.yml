@@ -1,0 +1,31 @@
+name: Publish verified v0.0.2
+on:
+  workflow_dispatch:
+permissions:
+  actions: read
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify build and download artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh run view 43701672593 --json conclusion,headSha > "$RUNNER_TEMP/build.json"
+          jq -e '.conclusion == "success" and .headSha == "d60a8d8a3515565fbf5b754d39c50f194dd5cc37"' "$RUNNER_TEMP/build.json"
+          gh run download 43701672593 --name Tokiboshi-windows --dir "$RUNNER_TEMP/assets"
+          cd "$RUNNER_TEMP/assets"
+          echo '5c5dda3161b73e36d849a6bff42118785f25de4f48e1f2639045af204ac204e2  Tokiboshi-Setup-0.0.2.exe' > SHA256SUMS.txt
+          echo 'e30e3ec8135b4a0509ffa6e37edd93a36ac717aa2f20594c0d241613afb2c7aa  Tokiboshi-windows.zip' >> SHA256SUMS.txt
+          sha256sum --check SHA256SUMS.txt
+      - name: Publish installer and portable package
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh release create v0.0.2 "$RUNNER_TEMP/assets/Tokiboshi-Setup-0.0.2.exe" "$RUNNER_TEMP/assets/Tokiboshi-windows.zip" "$RUNNER_TEMP/assets/SHA256SUMS.txt" --target d60a8d8a3515565fbf5b754d39c50f194dd5cc37 --title 'Tokiboshi v0.0.2' --notes-file .github/release-notes/v0.0.2.md --latest
