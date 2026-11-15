@@ -18,7 +18,7 @@ class RustCoreBridge implements CoreBridge {
     return ParseOutcome(
       // T069: profileJson 需 FRB regen 后才有值（Codex 执行 codegen）。
       // pre-regen 恒为 null，功能惰性。
-            nodes: outcome.nodes
+      nodes: outcome.nodes
           .map((n) => NodeInfo(name: n.name, outboundJson: n.outboundJson))
           .toList(),
       skipped: outcome.skipped,
@@ -31,7 +31,6 @@ class RustCoreBridge implements CoreBridge {
                 filter: p.filter,
               ))
           .toList(),
-    ,
       profileJson: null,
     );
   }
@@ -46,7 +45,11 @@ class RustCoreBridge implements CoreBridge {
     bool bypassCn = true,
     String dataDir = '',
     String? selectedName,
+    String profileJson = '',
   }) {
+    // T069: profileJson 需 FRB regen 后才能传入生成的绑定（Codex 执行
+    // codegen 时接线）；pre-regen 惰性——订阅自带规则不会进入生成配置。
+    assert(profileJson.isEmpty || profileJson.isNotEmpty);
     return rust_api.buildConfig(
       nodes: nodes
           .map((n) => rust_config.NodeSpec(
@@ -61,10 +64,7 @@ class RustCoreBridge implements CoreBridge {
       bypassCn: bypassCn,
       dataDir: dataDir,
       selectedName: selectedName,
-    
-        // T069: profileJson 需 FRB regen 后才能传入（Codex 执行 codegen 时接线）。
-        // pre-regen 惰性：订阅自带规则不会进入生成配置。
-);
+    );
   }
 
   @override
