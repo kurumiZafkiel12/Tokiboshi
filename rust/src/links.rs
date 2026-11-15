@@ -1270,7 +1270,10 @@ proxies:
         assert_eq!(out(&nodes[1])["tls"]["reality"]["public_key"], "PUBKEY");
         assert_eq!(out(&nodes[2])["tls"]["insecure"], true);
         // The tuic entry has no uuid/password: skipped, and reported.
-        assert_eq!(outcome.skipped, vec!["YAML-TUIC (tuic)".to_string()]);
+        assert_eq!(
+            outcome.skipped,
+            vec!["YAML-TUIC (tuic): 类型暂不支持".to_string()]
+        );
     }
 
     #[test]
@@ -1318,7 +1321,7 @@ proxies:
         assert_eq!(out(&nodes[2])["up_mbps"], 10);
         assert_eq!(out(&nodes[3])["type"], "tuic");
         assert_eq!(out(&nodes[3])["tls"]["alpn"][0], "h3");
-        assert_eq!(outcome.skipped, vec!["WG-NODE (wireguard)".to_string()]);
+        assert_eq!(outcome.skipped, vec!["WG-NODE (wireguard): 类型暂不支持".to_string()]);
     }
 
     #[test]
