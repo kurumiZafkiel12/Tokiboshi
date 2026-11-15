@@ -359,8 +359,8 @@ pub fn build_config_multi(
         json!({ "type": "https", "tag": "dns-remote", "server": "8.8.8.8", "detour": "proxy" }),
         json!({ "type": "local", "tag": "dns-local" }),
     ];
-    let mut dns_final = "dns-remote";
-    let mut route_final = "proxy";
+    let mut dns_final: String = "dns-remote".into();
+    let mut route_final: String = "proxy".into();
     let mut dns_rules: Vec<Value> = vec![
         json!({ "clash_mode": "Direct", "server": "dns-local" }),
         json!({ "clash_mode": "Global", "server": "dns-remote" }),
