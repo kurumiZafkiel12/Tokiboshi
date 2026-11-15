@@ -423,6 +423,14 @@ pub fn ensure_rule_sets(data_dir: &Path) -> RuleSetSummary {
             continue;
         }
         let tmp = dir.join(format!("{tag}.srs.tmp"));
+        // Full commit chain: write the downloaded bytes to tmp, THEN
+        // rename onto the real file (HV004-01: the write step was
+        // accidentally dropped in the previous fix, renaming a
+        // non-existent tmp and failing every rule).
+        if let Err(e) = std::fs::write(&tmp, &bytes) {
+            push_extra_log(format!("[rules] {tag} 临时文件写入失败：{e}"));
+            continue;
+        }
         // The rename can fail when the target file is held/locked.
         // Only a committed file counts as ready — the previous valid
         // file is kept and the failure is reported (HF053-02).

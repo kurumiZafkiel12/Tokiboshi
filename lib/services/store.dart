@@ -145,14 +145,29 @@ class Store {
   File get _bakFile => File('${_file.path}.bak');
   File get _tmpFile => File('${_file.path}.tmp');
 
+  /// True when [a] was modified after [b] (or [b] is unreadable).
+  Future<bool> _isNewer(File a, File b) async {
+    try {
+      final am = await a.lastModified();
+      try {
+        final bm = await b.lastModified();
+        return am.isAfter(bm);
+      } catch (_) {
+        return true;
+      }
+    } catch (_) {
+      return false;
+    }
+  }
+
   Future<AppData> load() async {
     final primary = await _tryLoad(_file);
-    if (primary != null) return primary;
     // A failed save leaves the newest data in the tmp file (HV003-01):
-    // prefer it over the older backup, but only when it parses — a
-    // half-written tmp fails _tryLoad and drops through to the backup.
+    // prefer it, but only when it parses AND is newer than main — a
+    // stale tmp must not shadow a healthy main (Hermes v0.0.4 check).
     final fromTmp = await _tryLoad(_tmpFile);
-    if (fromTmp != null) {
+    if (fromTmp != null &&
+        (primary == null || await _isNewer(_tmpFile, _file))) {
       try {
         await _tmpFile.rename(_file.path);
       } catch (_) {
@@ -165,6 +180,7 @@ class Store {
       }
       return fromTmp;
     }
+    if (primary != null) return primary;
     // The main file is missing or unreadable: fall back to the last
     // known good copy instead of starting from an empty state.
     final backup = await _tryLoad(_bakFile);
@@ -275,11 +291,43 @@ class Store {
     try {
       await _tmpFile.writeAsString(jsonEncode(map), flush: true);
       if (mainHealthy) {
+        // Move the current backup aside BEFORE touching main: if main
+        // is locked and its rename fails, the backup is restored and
+        // never lost (HV003-01 remainder — the old code deleted .bak
+        // first and then failed to move main into place).
+        File? movedBak;
         if (await _bakFile.exists()) {
-          await _bakFile.delete();
+          final oldPath = '${_bakFile.path}.old';
+          try {
+            await _bakFile.rename(oldPath);
+            movedBak = File(oldPath);
+          } catch (_) {
+            movedBak = null; // stays in place; the rename below may still work
+          }
         }
-        if (await _file.exists()) {
-          await _file.rename(_bakFile.path);
+        try {
+          if (await _file.exists()) {
+            await _file.rename(_bakFile.path);
+          }
+        } catch (_) {
+          // main is locked: put the backup back, then give up on the
+          // rotation and use the direct-rewrite fallback with the
+          // backup intact.
+          if (movedBak != null) {
+            try {
+              await movedBak.rename(_bakFile.path);
+            } catch (_) {
+              try {
+                await movedBak.copy(_bakFile.path);
+              } catch (_) {}
+            }
+          }
+          rethrow;
+        }
+        if (movedBak != null) {
+          try {
+            await movedBak.delete();
+          } catch (_) {}
         }
       } else if (await _file.exists()) {
         try {

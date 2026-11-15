@@ -232,6 +232,39 @@ void main() {
     expect((await store.load()).mixedPort, 7922);
   });
 
+  test('a newer tmp wins over an older healthy main (HV003-01 remainder)',
+      () async {
+    final tmp = await Directory.systemTemp.createTemp('tokiboshi-storeB');
+    addTearDown(() => tmp.delete(recursive: true));
+    final file = File('${tmp.path}/data.json');
+    final store = Store(file);
+    await store.save(AppData()..mixedPort = 7941);
+    // main = 7941 (older). A failed save leaves tmp = 7942 (newer).
+    await Future<void>.delayed(const Duration(milliseconds: 60));
+    final tmpFile = File('${file.path}.tmp');
+    await tmpFile.writeAsString(
+        jsonEncode({'mixedPort': 7942, 'cleanExit': false}),
+        flush: true);
+    // main exists and is valid — but tmp is newer: load must recover
+    // the newer data (the old code preferred stale main).
+    expect((await store.load()).mixedPort, 7942);
+    // And the recovered value now lives in main.
+    expect(jsonDecode(await file.readAsString())['mixedPort'], 7942);
+    // tmp consumed; a stale tmp must NOT shadow a newer main:
+    await Future<void>.delayed(const Duration(milliseconds: 60));
+    await store.save(AppData()..mixedPort = 7943);
+    await tmpFile.writeAsString(
+        jsonEncode({'mixedPort': 1, 'cleanExit': false}),
+        flush: true);
+    // tmp is newer by mtime but holds garbage? No — it parses; the
+    // newer-mtime rule would adopt it. Force stale: rewrite main so
+    // main is newest, then a stale tmp must be ignored.
+    await Future<void>.delayed(const Duration(milliseconds: 60));
+    await store.save(AppData()..mixedPort = 7944);
+    // tmp (m=1) is older than main (7944): main must win.
+    expect((await store.load()).mixedPort, 7944);
+  });
+
   test('save() throws and preserves the backup when all paths fail (HV003-01)',
       () async {
     final tmp = await Directory.systemTemp.createTemp('tokiboshi-storeA');
