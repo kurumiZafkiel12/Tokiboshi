@@ -34,10 +34,10 @@ class SubscriptionResolver {
       }
       final key = '$ua\n$link';
       if (path.contains(key)) {
-        return const ParseOutcome(nodes: [], skipped: ['循环子订阅已跳过']);
+        return const ParseOutcome(nodes: [], skipped: ['循环子订阅已跳过'], failedGroups: ['']);
       }
       if (++expansions > maxExpansions || depth > maxDepth || (!cache.containsKey(key) && cache.length >= maxRequests)) {
-        return const ParseOutcome(nodes: [], skipped: ['订阅展开达到安全上限，部分节点源未拉取']);
+        return const ParseOutcome(nodes: [], skipped: ['订阅展开达到安全上限，部分节点源未拉取'], failedGroups: ['']);
       }
       final first = await cache.putIfAbsent(key, () async {
         final content = inline
@@ -57,6 +57,9 @@ class SubscriptionResolver {
           final inner = await expand(providerUrl, provider.userAgent, depth + 1, {...path, key});
           var count = 0;
           for (final node in inner.nodes) {
+            // A named proxy-provider imports its server nodes, not that
+            // provider response's own top-level strategy configuration.
+            if (provider.name.isNotEmpty && node.isPolicy) continue;
             if (nodes.length >= maxNodes) {
               skipped.add('节点数量达到安全上限，部分节点未导入');
               break;

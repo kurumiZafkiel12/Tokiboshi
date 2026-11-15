@@ -213,7 +213,7 @@ class _SettingsPageState extends State<SettingsPage> {
                 children: [
                   const Text('关于', style: TextStyle(fontWeight: FontWeight.w600)),
                   const SizedBox(height: 8),
-                  const Text('Tokiboshi v0.5.2 · Flutter 壳 + Rust 中间层 + sing-box 内核'),
+                  const Text('Tokiboshi v0.5.3 · Flutter 壳 + Rust 中间层 + sing-box 内核'),
                   const Text('面板为 zashboard（由 sing-box 托管于 127.0.0.1:9090/ui）；内核 sing-box 1.14.4 按需下载'),
                   const SelectableText('项目地址：https://github.com/kurumiZafkiel12/Tokiboshi'),
                   const SelectableText('问题反馈：https://github.com/kurumiZafkiel12/Tokiboshi/issues'),

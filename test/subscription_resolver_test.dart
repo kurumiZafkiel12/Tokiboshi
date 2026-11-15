@@ -49,7 +49,7 @@ void main() {
         ProviderInfo(name: 'local', url: inline, filter: 'JP'),
         const ProviderInfo(name: 'relative', url: '/relative'),
       ]),
-      'inline': const ParseOutcome(nodes: [NodeInfo(name: 'JP', outboundJson: '{}'), NodeInfo(name: 'US', outboundJson: '{}')]),
+      'inline': const ParseOutcome(nodes: [NodeInfo(name: 'JP', outboundJson: '{}'), NodeInfo(name: 'US', outboundJson: '{}'), NodeInfo(name: 'provider policy', outboundJson: '{"type":"selector","outbounds":["JP"]}')]),
       'relative': const ParseOutcome(nodes: [NodeInfo(name: 'other', outboundJson: '{}')]),
     });
     final result = await SubscriptionResolver(bridge: bridge, fetcher: fetcher).resolve('https://test.example/root');

@@ -1070,7 +1070,7 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
                 if (!_navCollapsed)
                   const Padding(
                     padding: EdgeInsets.all(16),
-                    child: Text('v0.5.2 · sing-box 1.14.4'),
+                    child: Text('v0.5.3 · sing-box 1.14.4'),
                   ),
               ],
             ),
