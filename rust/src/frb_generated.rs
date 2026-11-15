@@ -289,7 +289,12 @@ return crate::config::NodeSpec{name: var_name, outbound_json: var_outboundJson};
                     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {let mut var_nodes = <Vec<crate::links::NodeInfo>>::sse_decode(deserializer);
 let mut var_skipped = <Vec<String>>::sse_decode(deserializer);
 let mut var_providers = <Vec<crate::links::ProviderInfo>>::sse_decode(deserializer);
-return crate::links::ParseOutcome{nodes: var_nodes, skipped: var_skipped, providers: var_providers};}
+return crate::links::ParseOutcome{nodes: var_nodes, skipped: var_skipped, providers: var_providers,
+                    // HAND-PATCH (ZCode, T069): ParseOutcome gained
+                    // profile_json; this generated file is pre-regen.
+                    // Codex's `flutter_rust_bridge_codegen generate`
+                    // replaces this file and wires the field properly.
+                    profile_json: None};}
                 }
                 
                 impl SseDecode for crate::links::ProviderInfo {

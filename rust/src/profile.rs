@@ -115,7 +115,10 @@ fn convert_rule(
 /// Returns Ok(None) when the document carries no rules at all (pure
 /// node list) — callers must then disclose "仅节点订阅".
 pub fn parse_clash_profile(text: &str) -> Result<Option<ParsedProfile>, String> {
-    let doc: serde_yaml::Value =
+    // Deserialize straight into a JSON value so the whole traversal
+    // below can use one consistent Value type (serde_yaml::Value and
+    // serde_json::Value do not mix).
+    let doc: Value =
         serde_yaml::from_str(text).map_err(|e| format!("订阅 YAML 解析失败：{e}"))?;
     let rules = doc.get("rules").and_then(Value::as_array);
     let providers = doc.get("rule-providers").and_then(Value::as_object);

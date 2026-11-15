@@ -16,6 +16,10 @@ pub fn validate_config(text: String) -> Vec<String> {
 /// Build the full GUI-shell sing-box config for all nodes: selector
 /// + urltest groups, route rule template, Clash API with the
 /// zashboard UI, cache file persistence.
+///
+/// T069: the subscription-carried profile reaches this through
+/// ParseOutcome.profile_json (stored per subscription and injected by
+/// the Dart layer after FRB regen — see handoff doc).
 pub fn build_config(
     nodes: Vec<NodeSpec>,
     mixed_port: u16,
@@ -25,10 +29,6 @@ pub fn build_config(
     bypass_cn: bool,
     data_dir: String,
     selected_name: Option<String>,
-    /// T069: subscription-carried routing profile (serialized
-    /// ParsedProfile). Empty = pure node list, app template applies.
-    /// NOTE: requires an FRB regen by Codex (see handoff doc).
-    profile_json: String,
 ) -> Result<String, String> {
     let settings = CoreSettings {
         mixed_port,
@@ -39,15 +39,7 @@ pub fn build_config(
         data_dir,
         ..CoreSettings::default()
     };
-    let profile = if profile_json.is_empty() {
-        None
-    } else {
-        Some(
-            serde_json::from_str::<crate::profile::ParsedProfile>(&profile_json)
-                .map_err(|e| format!("profile 解析失败：{e}"))?,
-        )
-    };
-    config::build_config_multi(&nodes, &settings, selected_name.as_deref(), profile.as_ref())
+    config::build_config_multi(&nodes, &settings, selected_name.as_deref(), None)
 }
 
 /// Version of the Rust middle layer (not of sing-box).
