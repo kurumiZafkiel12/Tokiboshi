@@ -368,8 +368,13 @@ pub fn build_config_multi(
     // App-owned route rules: private direct + mode rules, always
     // first. A subscription profile (T069) appends its own rules after
     // these and replaces the ads/CN template below.
+    // App-owned mode rules are always first (the dashboard mode
+    // switcher must keep working). The private-direct rule and the
+    // ads/CN template are app POLICY: with a subscription profile the
+    // subscription's own rules govern, so they are not prepended
+    // (T069-S04 - a subscription may explicitly route/reject private
+    // IPs; preempting that changes its semantics).
     let mut route_rules: Vec<Value> = vec![
-        json!({ "ip_is_private": true, "outbound": "direct" }),
         json!({ "clash_mode": "Direct", "outbound": "direct" }),
         json!({ "clash_mode": "Global", "outbound": "proxy" }),
     ];
@@ -378,7 +383,10 @@ pub fn build_config_multi(
             for rs in &p.rule_sets {
                 let mut entry = rs.clone();
                 if let Some(obj) = entry.as_object_mut() {
-                    obj.retain(|k, _| !k.starts_with("__"));
+                    // Strip ALL audit keys (single or double underscore):
+                    // a leaked `_no_resolve` is an unknown field for the
+                    // kernel (T069-S01).
+                    obj.retain(|k, _| !k.starts_with('_'));
                     obj.entry("download_detour")
                         .or_insert_with(|| json!("direct"));
                 }
@@ -386,6 +394,34 @@ pub fn build_config_multi(
             }
             for rule in &p.route_rules {
                 let mut rule = rule.clone();
+                // GEOIP audit marker -> rule_set reference. CN uses the
+                // app-maintained local geoip-cn.srs; other codes use
+                // the official SagerNet rule-set (remote). The legacy
+                // built-in geoip route rule was removed in sing-box
+                // 1.14 and cannot be emitted (T069-S01).
+                if let Some(cc) = rule.get("__geoip").and_then(Value::as_str) {
+                    let cc_l = cc.to_ascii_lowercase();
+                    let tag = format!("geoip-{cc_l}");
+                    if cc_l == "cn" {
+                        let path = std::path::Path::new(&settings.data_dir)
+                            .join("rules")
+                            .join("geoip-cn.srs");
+                        rule_sets.push(json!({
+                            "type": "local", "tag": tag, "format": "binary",
+                            "path": path.to_string_lossy(),
+                        }));
+                    } else {
+                        rule_sets.push(json!({
+                            "type": "remote", "tag": tag, "format": "binary",
+                            "url": format!("https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-{cc_l}.srs"),
+                            "download_detour": "direct",
+                        }));
+                    }
+                    rule.as_object_mut().unwrap().remove("__geoip");
+                    rule.as_object_mut().unwrap().insert(
+                        "rule_set".into(), json!([tag]),
+                    );
+                }
                 // Map the outbound NAME (subscription vocabulary) to
                 // the generated TAG; unknown names are a hard error so
                 // a broken subscription can never masquerade as a
@@ -404,6 +440,11 @@ pub fn build_config_multi(
                         obj.insert("outbound".into(), Value::String(mapped));
                     }
                 }
+                // Strip ALL audit keys before emitting (T069-S01: a
+                // leaked `_no_resolve` is an unknown kernel field).
+                if let Some(obj) = rule.as_object_mut() {
+                    obj.retain(|k, _| !k.starts_with('_'));
+                }
                 route_rules.push(rule);
             }
             if let Some(final_name) = &p.final_outbound {
@@ -411,7 +452,45 @@ pub fn build_config_multi(
                 route_final = mapped;
             }
             if let Some(dns) = &p.dns {
-                if let Some(servers) = dns.get("servers").and_then(Value::as_array) {
+                if p.dns_native {
+                    // Native sing-box DNS: carried VERBATIM - rules,
+                    // final and strategy are the subscription's own
+                    // semantics (T069-S03; rebuilding them lost
+                    // rules/strategy in the released build).
+                    if let Some(obj) = dns.as_object() {
+                        dns_servers = obj
+                            .get("servers")
+                            .and_then(Value::as_array)
+                            .map(|a| a.clone())
+                            .unwrap_or_default();
+                        dns_rules = obj
+                            .get("rules")
+                            .and_then(Value::as_array)
+                            .map(|a| a.clone())
+                            .unwrap_or_default();
+                        if let Some(f) = obj.get("final").and_then(Value::as_str) {
+                            dns_final = f.to_string();
+                        }
+                    }
+                    // App mode rules are appended AFTER the native
+                    // rules so mode switching stays reachable without
+                    // changing the subscription's own lookups.
+                    let local_tag = dns_servers
+                        .iter()
+                        .find(|s| s["type"] == "local")
+                        .and_then(|s| s["tag"].as_str())
+                        .map(str::to_string);
+                    if let Some(lt) = local_tag {
+                        dns_rules.push(json!({ "clash_mode": "Direct", "server": lt }));
+                    }
+                    if let Some(first) = dns_servers
+                        .first()
+                        .and_then(|s| s["tag"].as_str())
+                        .map(str::to_string)
+                    {
+                        dns_rules.push(json!({ "clash_mode": "Global", "server": first }));
+                    }
+                } else if let Some(servers) = dns.get("servers").and_then(Value::as_array) {
                     if !servers.is_empty() {
                         let first_tag = servers[0]["tag"].as_str().unwrap_or("dns-local").to_string();
                         dns_servers = servers.clone();
@@ -434,6 +513,10 @@ pub fn build_config_multi(
             }
         }
         None => {
+            route_rules.insert(
+                0,
+                json!({ "ip_is_private": true, "outbound": "direct" }),
+            );
             if settings.block_ads {
                 if let Some(rs) = local_rule_set("geosite-category-ads-all") {
                     route_rules.push(json!({ "rule_set": ["geosite-category-ads-all"], "action": "reject" }));
@@ -723,11 +806,15 @@ mod tests {
         let text = build_config_multi(&nodes, &CoreSettings::default(), Some("HK"), Some(&profile)).unwrap();
         let v: Value = serde_json::from_str(&text).unwrap();
         let rules = v["route"]["rules"].as_array().unwrap();
-        assert_eq!(rules.len(), 3 + 4);
-        assert_eq!(rules[3]["domain_suffix"][0], "example.net");
-        assert_eq!(rules[3]["outbound"], "direct");
-        assert_eq!(rules[5]["action"], "reject");
-        assert_eq!(rules[6]["outbound"], "HK");
+        // mode x2, then the four subscription rules in order; no
+        // private-direct and no ads/CN template when a profile exists.
+        assert_eq!(rules.len(), 2 + 4);
+        assert_eq!(rules[0]["clash_mode"], "Direct");
+        assert_eq!(rules[1]["clash_mode"], "Global");
+        assert_eq!(rules[2]["domain_suffix"][0], "example.net");
+        assert_eq!(rules[2]["outbound"], "direct");
+        assert_eq!(rules[4]["action"], "reject");
+        assert_eq!(rules[5]["outbound"], "HK");
         assert_eq!(v["route"]["final"], "HK");
         assert!(v["route"]["rule_set"].as_array().unwrap().is_empty());
     }
