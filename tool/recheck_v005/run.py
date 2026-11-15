@@ -8,7 +8,7 @@ SOURCE = pathlib.Path(os.environ['AUDIT_SOURCE'])
 OUT = ROOT / 'results'; OUT.mkdir(parents=True, exist_ok=True)
 TAGS = ['geosite-category-ads-all', 'geosite-cn', 'geoip-cn']
 subject = ROOT / 'subject.dart'
-subject.write_text((pathlib.Path(__file__).parent/'subject.dart.template').read_text().replace('@@SOURCE@@', SOURCE.as_uri()), encoding='utf-8')
+subject.write_text((pathlib.Path(__file__).parent/'subject.dart.template').read_text(encoding='utf-8').replace('@@SOURCE@@', SOURCE.as_uri()), encoding='utf-8')
 CMD = [os.environ['DART_BIN'], '--packages='+str(SOURCE/'.dart_tool/package_config.json'), str(subject)]
 K = ctypes.WinDLL('kernel32', use_last_error=True)
 K.CreateFileW.argtypes = [w.LPCWSTR,w.DWORD,w.DWORD,w.LPVOID,w.DWORD,w.DWORD,w.HANDLE]
