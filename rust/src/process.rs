@@ -85,7 +85,6 @@ mod job {
         affinity: usize,
         priority_class: u32,
         ui_restrictions_class: u32,
-        io_priority: u32,
     }
 
     #[repr(C)]
