@@ -4,11 +4,11 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
-import '../lib/main_v007_audit.dart' as app;
-import '../lib/bridge/core_bridge.dart';
-import '../lib/services/store.dart';
-import '../lib/services/subscription_fetcher.dart';
-import '../lib/services/system_proxy.dart';
+import 'package:tokiboshi/main_v007_audit.dart' as app;
+import 'package:tokiboshi/bridge/core_bridge.dart';
+import 'package:tokiboshi/services/store.dart';
+import 'package:tokiboshi/services/subscription_fetcher.dart';
+import 'package:tokiboshi/services/system_proxy.dart';
 import 'fake_bridge.dart';
 
 final evidence=<String,dynamic>{};

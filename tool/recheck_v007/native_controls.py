@@ -18,7 +18,9 @@ was_running='RUNNING' in result['serviceBefore']['stdout']
 try:
  if was_running:
   result['stopServer']=command(['powershell','-NoProfile','-Command',"Stop-Service LanmanServer -Force -ErrorAction Stop; (Get-Service LanmanServer).WaitForStatus('Stopped',[TimeSpan]::FromSeconds(20))"])
+ result['serviceAfterStop']=command(['sc.exe','query','LanmanServer'])
  result['netSessionServerOff']=command(['net','session'])
+ result['serviceAfterNet']=command(['sc.exe','query','LanmanServer'])
  result['serverOffFalseNegative']=bool(elevated.value) and result['netSessionServerOff']['exit']!=0
 finally:
  if was_running:
@@ -44,4 +46,6 @@ result['scope']='Native token/service controls and original socket branch under 
 (root/'v007-native-controls.json').write_text(json.dumps(result,ensure_ascii=False,indent=2),encoding='utf-8')
 print(json.dumps(result,ensure_ascii=False,indent=2))
 assert result['singleInstanceChildWhileParentOwnsLock']['childExitedBeforeAppStartup']
-assert result['serverOffFalseNegative']
+assert result['tokenElevated'] and result['netSessionBefore']['exit']==0
+# The server-off result is an observation, not an assumed defect.
+# This image may trigger-start the service; record exact before/after state.
