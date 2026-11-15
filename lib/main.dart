@@ -322,7 +322,16 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
     }
   }
 
-  Future<void> _persist() => widget.store.save(_data);
+  Future<void> _persist() async {
+    try {
+      await widget.store.save(_data);
+    } catch (e) {
+      // save() only throws when main AND the fallback both failed —
+      // surface it instead of pretending it saved (HV003-01). tmp
+      // holds the newest data for auto-recovery on next launch.
+      _setMessage('配置保存失败：$e');
+    }
+  }
 
   void _setMessage(String? text) {
     if (mounted) setState(() => _message = text);

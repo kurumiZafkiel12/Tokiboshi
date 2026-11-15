@@ -423,11 +423,21 @@ pub fn ensure_rule_sets(data_dir: &Path) -> RuleSetSummary {
             continue;
         }
         let tmp = dir.join(format!("{tag}.srs.tmp"));
-        if std::fs::write(&tmp, &bytes).is_ok() {
-            let _ = std::fs::rename(&tmp, &dest);
-            ready += 1;
-            updated += 1;
-            push_extra_log(format!("[rules] {tag} 已更新"));
+        // The rename can fail when the target file is held/locked.
+        // Only a committed file counts as ready — the previous valid
+        // file is kept and the failure is reported (HF053-02).
+        match std::fs::rename(&tmp, &dest) {
+            Ok(()) => {
+                ready += 1;
+                updated += 1;
+                push_extra_log(format!("[rules] {tag} 已更新"));
+            }
+            Err(e) => {
+                push_extra_log(format!(
+                    "[rules] {tag} 提交失败：{e}；保留现有有效文件"
+                ));
+                let _ = std::fs::remove_file(&tmp);
+            }
         }
     }
     let total = RULE_SET_FILES.len();

@@ -16,6 +16,17 @@ import 'dart:math';
 
 import '../bridge/core_bridge.dart';
 
+/// Thrown when a save cannot be committed to main OR the backup (e.g.
+/// a Windows file lock). The newest data survives in the tmp file and
+/// is recovered by [Store.load] — but callers must treat the save as
+/// FAILED, not silently continue (HV003-01).
+class StoreSaveException implements Exception {
+  StoreSaveException(this.message);
+  final String message;
+  @override
+  String toString() => message;
+}
+
 class Subscription {
   const Subscription({
     required this.id,
@@ -23,9 +34,7 @@ class Subscription {
     required this.url,
     this.updatedAt,
     this.lastReport,
-  });
-
-  final String id;
+  });  final String id;
   final String name;
   final String url;
 
@@ -139,6 +148,23 @@ class Store {
   Future<AppData> load() async {
     final primary = await _tryLoad(_file);
     if (primary != null) return primary;
+    // A failed save leaves the newest data in the tmp file (HV003-01):
+    // prefer it over the older backup, but only when it parses — a
+    // half-written tmp fails _tryLoad and drops through to the backup.
+    final fromTmp = await _tryLoad(_tmpFile);
+    if (fromTmp != null) {
+      try {
+        await _tmpFile.rename(_file.path);
+      } catch (_) {
+        try {
+          await _tmpFile.copy(_file.path);
+        } catch (_) {
+          // Recovery is best effort; the parsed tmp data is returned
+          // either way and the next successful save rewrites main.
+        }
+      }
+      return fromTmp;
+    }
     // The main file is missing or unreadable: fall back to the last
     // known good copy instead of starting from an empty state.
     final backup = await _tryLoad(_bakFile);
@@ -238,14 +264,16 @@ class Store {
       'cleanExit': data.cleanExit,
       'runningAtExit': data.runningAtExit,
     };
-    await _tmpFile.writeAsString(jsonEncode(map), flush: true);
     // Rotation: previous main BECOMES the backup (rename, not copy),
     // then tmp becomes main. An unhealthy main is quarantined as
     // .corrupt instead — and the existing good backup is NOT touched
     // before the branch is decided (deleting it up front was exactly
-    // the HF053-11 failure mode Hermes reproduced).
+    // the HF053-11 failure mode Hermes reproduced). The tmp write is
+    // inside the try: when it fails the direct-rewrite fallback below
+    // still runs before the save is reported as failed (HV003-01).
     final mainHealthy = await _mainIsHealthy();
     try {
+      await _tmpFile.writeAsString(jsonEncode(map), flush: true);
       if (mainHealthy) {
         if (await _bakFile.exists()) {
           await _bakFile.delete();
@@ -263,9 +291,11 @@ class Store {
         }
       }
       await _tmpFile.rename(_file.path);
-    } catch (_) {
-      // Windows rename can race an indexer; a direct rewrite is still
-      // better than losing the data (the backup stays untouched here).
+    } catch (rotateError) {
+      // Fallback: direct rewrite of main. When this ALSO fails (file
+      // lock), the save has failed: tell the caller instead of
+      // pretending it worked (HV003-01). The new data stays in tmp —
+      // load() recovers it before touching the backup.
       try {
         await _file.writeAsString(jsonEncode(map), flush: true);
         if (await _tmpFile.exists()) {
@@ -273,9 +303,11 @@ class Store {
             await _tmpFile.delete();
           } catch (_) {}
         }
-      } catch (_) {
-        // Both paths failed: the new data survives in tmp; main and
-        // the last valid backup are untouched.
+      } catch (writeError) {
+        throw StoreSaveException(
+          '配置写入失败（主文件与回退路径均不可用）：$writeError（轮换阶段：$rotateError）。'
+          '新数据已保留在临时文件，下次启动自动恢复；最后一份有效备份未受影响。',
+        );
       }
     }
   }

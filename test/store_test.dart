@@ -211,4 +211,47 @@ void main() {
     await file.writeAsString('{broken again');
     expect((await store.load()).mixedPort, 7911);
   });
+
+  test('failed save keeps newest data in tmp and load recovers it (HV003-01)',
+      () async {
+    final tmp = await Directory.systemTemp.createTemp('tokiboshi-store9');
+    addTearDown(() => tmp.delete(recursive: true));
+    final file = File('${tmp.path}/data.json');
+    final store = Store(file);
+    await store.save(AppData()..mixedPort = 7921);
+    // A failed save leaves the newest data in the tmp file while main
+    // holds the previous good copy — exactly the post-rotation-gap or
+    // lock-failure state.
+    final tmpFile = File('${file.path}.tmp');
+    await tmpFile.writeAsString(
+        jsonEncode(AppData(mixedPort: 7922).toJson()..['cleanExit'] = false),
+        flush: true);
+    // Simulate main being lost (rotation gap between the two renames):
+    // load must prefer the newer tmp over the older backup.
+    await file.delete();
+    expect((await store.load()).mixedPort, 7922);
+  });
+
+  test('save() throws and preserves the backup when all paths fail (HV003-01)',
+      () async {
+    final tmp = await Directory.systemTemp.createTemp('tokiboshi-storeA');
+    addTearDown(() => tmp.delete(recursive: true));
+    final file = File('${tmp.path}/data.json');
+    final store = Store(file);
+    await store.save(AppData()..mixedPort = 7931);
+    await store.save(AppData()..mixedPort = 7932);
+    // Force every write path to fail: main and tmp are directories, so
+    // neither the rotation nor the direct rewrite can proceed.
+    await file.delete();
+    await Directory(file.path).create();
+    await Directory('${file.path}.tmp').create();
+    await expectLater(
+      store.save(AppData()..mixedPort = 7933),
+      throwsA(isA<StoreSaveException>()),
+    );
+    // The last valid backup survives untouched.
+    final bak = jsonDecode(
+        await File('${file.path}.bak').readAsString()) as Map<String, dynamic>;
+    expect(bak['mixedPort'], 7931);
+  });
 }
