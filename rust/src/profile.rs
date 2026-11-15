@@ -22,8 +22,14 @@ pub struct ParsedProfile {
     /// Terminal target from a MATCH rule (outbound name), if any.
     pub final_outbound: Option<String>,
     /// Converted sing-box `dns` section, when the subscription
-    /// provides a convertible one.
+    /// provides a convertible one. For native sing-box profiles this
+    /// is carried VERBATIM (rules/final/strategy preserved,
+    /// T069-S03) and `dns_native` is true.
     pub dns: Option<Value>,
+    /// True when [dns] is the native sing-box section carried
+    /// verbatim (not a Clash conversion).
+    #[serde(default)]
+    pub dns_native: bool,
     /// Human-readable reports for entries that could not be carried.
     pub unsupported: Vec<String>,
     /// Total rule lines seen (kept + unsupported).
@@ -90,7 +96,11 @@ fn convert_rule(
         "DOMAIN-SUFFIX" => json!({ "domain_suffix": [payload] }),
         "DOMAIN-KEYWORD" => json!({ "domain_keyword": [payload] }),
         "IP-CIDR" | "IP-CIDR6" => json!({ "ip_cidr": [payload] }),
-        "GEOIP" => json!({ "geoip": [payload] }),
+        // GEOIP route rules were removed in sing-box 1.14 (T069-S01):
+        // carried as an audit marker, converted at build time into a
+        // rule_set reference (local geoip-<cc>.srs for CN, remote
+        // SagerNet rule-set for other codes).
+        "GEOIP" => json!({ "__geoip": payload }),
         "RULE-SET" => {
             let tag = providers.get(payload).ok_or_else(|| {
                 format!("RULE-SET 引用了未定义的 provider「{payload}」")
@@ -229,6 +239,7 @@ pub fn parse_clash_profile(text: &str) -> Result<Option<ParsedProfile>, String> 
 
     if let Some(dns_body) = dns {
         profile.dns = convert_clash_dns(dns_body, &mut profile.unsupported);
+        profile.dns_native = false;
     }
     Ok(Some(profile))
 }
@@ -296,8 +307,14 @@ fn split_port(hostport: &str, default_port: u16) -> (String, u16) {
 pub fn parse_singbox_profile(text: &str) -> Result<Option<ParsedProfile>, String> {
     let doc: Value = serde_json::from_str(text).map_err(|e| format!("订阅 JSON 解析失败：{e}"))?;
     let route = doc.get("route");
+    // T069-S05: a native final-only config IS a profile (the old gate
+    // dropped it and the run config fell back to the app template).
     let has_route = route
-        .map(|r| r.get("rules").is_some() || r.get("rule_set").is_some())
+        .map(|r| {
+            r.get("rules").is_some()
+                || r.get("rule_set").is_some()
+                || r.get("final").is_some()
+        })
         .unwrap_or(false);
     let dns = doc.get("dns").filter(|d| !d.as_object().map(|o| o.is_empty()).unwrap_or(true));
     if !has_route && dns.is_none() {
@@ -336,6 +353,7 @@ pub fn parse_singbox_profile(text: &str) -> Result<Option<ParsedProfile>, String
     }
     if let Some(d) = dns {
         profile.dns = Some(d.clone());
+        profile.dns_native = true;
     }
     Ok(Some(profile))
 }
