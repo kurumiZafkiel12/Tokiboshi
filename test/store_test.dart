@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -71,5 +72,79 @@ void main() {
     expect(loaded.nodes.single.source, '');
     expect(loaded.subscriptions, isEmpty);
     expect(loaded.systemProxy, isTrue);
+  });
+
+  test('save keeps a backup of the previous good copy', () async {
+    final tmp = await Directory.systemTemp.createTemp('tokiboshi-store4');
+    addTearDown(() => tmp.delete(recursive: true));
+    final file = File('${tmp.path}/data.json');
+    final store = Store(file);
+    await store.save(AppData()..mixedPort = 7891);
+    // Nothing existed before the first save, so there is no backup yet.
+    expect(File('${file.path}.bak').existsSync(), isFalse);
+    await store.save(AppData()..mixedPort = 7892);
+    final bak =
+        jsonDecode(await File('${file.path}.bak').readAsString()) as Map<String, dynamic>;
+    expect(bak['mixedPort'], 7891);
+    expect(File('${file.path}.tmp').existsSync(), isFalse);
+  });
+
+  test('corrupt main file falls back to the backup', () async {
+    final tmp = await Directory.systemTemp.createTemp('tokiboshi-store5');
+    addTearDown(() => tmp.delete(recursive: true));
+    final file = File('${tmp.path}/data.json');
+    final store = Store(file);
+    await store.save(AppData()..mixedPort = 7893);
+    await store.save(AppData()..mixedPort = 7894);
+    await file.writeAsString('{broken json');
+    final restored = await store.load();
+    expect(restored.mixedPort, 7893);
+  });
+
+  test('round-trips secret and cleanExit flags', () async {
+    final tmp = await Directory.systemTemp.createTemp('tokiboshi-store6');
+    addTearDown(() => tmp.delete(recursive: true));
+    final store = Store(File('${tmp.path}/data.json'));
+    await store.save(AppData()
+      ..clashApiSecret = 'abcd'
+      ..cleanExit = false);
+    final loaded = await store.load();
+    expect(loaded.clashApiSecret, 'abcd');
+    expect(loaded.cleanExit, isFalse);
+  });
+
+  test('generateClashSecret is 32 hex chars and differs across calls', () {
+    final a = generateClashSecret();
+    final b = generateClashSecret();
+    expect(a, hasLength(32));
+    expect(RegExp(r'^[0-9a-f]{32}$').hasMatch(a), isTrue);
+    expect(a, isNot(b));
+  });
+
+  test('injectClashSecret adds the secret to a bare config', () {
+    const config = '{"outbounds":[],"listen_port":7890}';
+    final map =
+        jsonDecode(injectClashSecret(config, 'sekret')) as Map<String, dynamic>;
+    expect(map['experimental']['clash_api']['secret'], 'sekret');
+    expect(map['listen_port'], 7890);
+  });
+
+  test('injectClashSecret overwrites an existing secret', () {
+    const config =
+        '{"experimental":{"clash_api":{"external_controller":"127.0.0.1:9090"}}}';
+    final map =
+        jsonDecode(injectClashSecret(config, 'new')) as Map<String, dynamic>;
+    expect(map['experimental']['clash_api']['secret'], 'new');
+    expect(map['experimental']['clash_api']['external_controller'],
+        '127.0.0.1:9090');
+  });
+
+  test('isStaleProxy matches only our own loopback endpoints', () {
+    expect(isStaleProxy('127.0.0.1:7890', 7890), isTrue);
+    expect(isStaleProxy('localhost:7890', 7890), isTrue);
+    expect(isStaleProxy(' 127.0.0.1:7890 ', 7890), isTrue);
+    expect(isStaleProxy('127.0.0.1:7891', 7890), isFalse);
+    expect(isStaleProxy('http://127.0.0.1:7890', 7890), isFalse);
+    expect(isStaleProxy(null, 7890), isFalse);
   });
 }

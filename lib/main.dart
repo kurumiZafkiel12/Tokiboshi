@@ -112,7 +112,8 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
   final Map<NodeInfo, int?> _latency = {};
 
   String get _dataDir => widget.store.dir.path;
-  ClashApiClient get _clash => ClashApiClient(port: _data.clashApiPort);
+  ClashApiClient get _clash =>
+      ClashApiClient(port: _data.clashApiPort, secret: _data.clashApiSecret);
 
   @override
   void initState() {
@@ -132,6 +133,32 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
   Future<void> _load() async {
     final data = await widget.store.load();
     final running = await widget.bridge.coreRunning();
+    if (!mounted) return;
+    var changed = false;
+    // First run (or pre-secret data): mint the controller secret.
+    if (data.clashApiSecret.isEmpty) {
+      data.clashApiSecret = generateClashSecret();
+      changed = true;
+    }
+    // A previous run that did not quit cleanly may have left the
+    // system proxy pointing at its dead local port ("no internet").
+    // Clear it only when it matches OUR port; anything else belongs
+    // to the user or another tool.
+    if (!data.cleanExit) {
+      try {
+        final server = await widget.systemProxy.readProxyServer();
+        if (isStaleProxy(server, data.mixedPort)) {
+          await widget.systemProxy.apply(false, data.mixedPort);
+          _message = '检测到上次异常退出遗留的系统代理，已自动关闭';
+        }
+      } catch (_) {
+        // Best effort; the core startup path reports real failures.
+      }
+    }
+    // From here until a clean quit this run counts as unclean.
+    if (data.cleanExit) changed = true;
+    data.cleanExit = false;
+    if (changed) await widget.store.save(data);
     if (!mounted) return;
     setState(() {
       _data = data;
@@ -602,7 +629,7 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
   }
 
   Future<void> _openExternalPanel() async {
-    final url = 'http://127.0.0.1:${_data.clashApiPort}/ui';
+    final url = panelUrl(_data.clashApiPort, _data.clashApiSecret);
     try {
       if (Platform.isWindows) {
         await Process.run('cmd', ['/c', 'start', '', url]);
@@ -718,6 +745,8 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
           await widget.systemProxy.apply(false, _data.mixedPort);
         }
       }
+      _data.cleanExit = true;
+      await _persist();
       await trayManager.destroy();
     } catch (_) {}
     await windowManager.destroy();
@@ -805,7 +834,8 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
         dataDir: _dataDir,
         selectedName: selected == null ? null : assignNodeTags(_data.nodes.map((n) => n.name))[_data.selectedIndex],
       );
-      final configFile = await widget.store.writeRuntimeConfig(config);
+      final configFile = await widget.store
+          .writeRuntimeConfig(injectClashSecret(config, _data.clashApiSecret));
       await widget.bridge.startCore(
         singBoxPath: binary,
         configPath: configFile.path,
@@ -944,6 +974,7 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
         page = PanelPage(
           running: _running,
           clashApiPort: _data.clashApiPort,
+          clashApiSecret: _data.clashApiSecret,
           onStart: _toggleCore,
           onOpenExternal: _openExternalPanel,
         );

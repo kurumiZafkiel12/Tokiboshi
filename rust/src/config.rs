@@ -51,8 +51,15 @@ pub struct NodeSpec {
 }
 
 /// Where the external UI (zashboard) is downloaded from by sing-box.
+/// Pinned release: the archive digest below is the official sha-256
+/// published on the GitHub release API, so a swapped/tampered dist.zip
+/// is rejected both by the app's own downloader and by sing-box's
+/// external-ui fetch path (which shares this URL). Bump version and
+/// digest together.
 pub const ZASHBOARD_DOWNLOAD_URL: &str =
-    "https://github.com/Zephyruso/zashboard/releases/latest/download/dist.zip";
+    "https://github.com/Zephyruso/zashboard/releases/download/v3.30.0/dist.zip";
+pub const ZASHBOARD_SHA256: &str =
+    "1f91c014e61e768240a86ad0a9bd565b247ec5a0e26b125fb5d19076682905b7";
 
 const RESERVED_TAGS: [&str; 8] = [
     "proxy", "auto", "direct", "mixed-in", "tun-in", "dns-remote", "dns-local", "__tokiboshi_reject",

@@ -28,11 +28,65 @@ pub enum CoreState {
 #[derive(Debug, Default)]
 struct Shared {
     child: Mutex<Option<Child>>,
+    /// Windows Job Object handle (isize HANDLE). The job has
+    /// KILL_ON_JOB_CLOSE, so the core can never outlive this process:
+    /// if the GUI crashes or is killed, the OS closes the handle and
+    /// the kernel dies with it instead of orphan-holding port 7890.
+    #[cfg(windows)]
+    job: Mutex<Option<isize>>,
     logs: Mutex<VecDeque<String>>,
     stop_requested: AtomicBool,
     restart_count: AtomicU32,
     last_exit: Mutex<Option<String>>,
 }
+
+#[cfg(windows)]
+fn job_assign(child: &Child) -> Result<isize, String> {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::System::JobObjects::{
+        AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
+        SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    };
+    unsafe {
+        let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
+        if job.is_null() {
+            return Err("CreateJobObjectW failed".to_string());
+        }
+        let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
+        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        if SetInformationJobObject(
+            job,
+            JobObjectExtendedLimitInformation,
+            &info as *const _ as *const core::ffi::c_void,
+            std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+        ) == 0
+        {
+            windows_sys::Win32::Foundation::CloseHandle(job);
+            return Err("SetInformationJobObject failed".to_string());
+        }
+        if AssignProcessToJobObject(job, child.raw_handle() as _) == 0 {
+            windows_sys::Win32::Foundation::CloseHandle(job);
+            return Err("AssignProcessToJobObject failed".to_string());
+        }
+        Ok(job as isize)
+    }
+}
+
+/// Close the current Job Object handle. With KILL_ON_JOB_CLOSE this
+/// kills any process still inside the job; callers either already
+/// waited for the child or the child exited on its own.
+#[cfg(windows)]
+fn job_close(shared: &Shared) {
+    if let Ok(mut slot) = shared.job.lock() {
+        if let Some(handle) = slot.take() {
+            unsafe { windows_sys::Win32::Foundation::CloseHandle(handle as _) };
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn job_close(_shared: &Shared) {}
 
 fn plain_log(line: &str) -> String {
     let mut chars = line.chars().peekable();
@@ -89,6 +143,29 @@ fn spawn_child(
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| format!("cannot start sing-box: {e}"))?;
+    #[cfg(windows)]
+    {
+        // A previous handle can only still exist here on the restart
+        // path, where the old child already exited — closing it is
+        // safe and cannot kill anything.
+        if let Ok(mut slot) = shared.job.lock() {
+            if let Some(old) = slot.take() {
+                unsafe { windows_sys::Win32::Foundation::CloseHandle(old as _) };
+            }
+        }
+        match job_assign(&child) {
+            Ok(handle) => {
+                if let Ok(mut slot) = shared.job.lock() {
+                    *slot = Some(handle);
+                }
+            }
+            Err(e) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(e);
+            }
+        }
+    }
     for stream in [
         child.stdout.take().map(|s| Box::new(s) as Box<dyn std::io::Read + Send>),
         child.stderr.take().map(|s| Box::new(s) as Box<dyn std::io::Read + Send>),
@@ -290,6 +367,7 @@ impl CoreProcess {
                 child
                     .wait()
                     .map_err(|e| format!("cannot wait for sing-box exit: {e}"))?;
+                job_close(&self.shared);
                 Ok(())
             }
         }

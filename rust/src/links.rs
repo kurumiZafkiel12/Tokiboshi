@@ -1336,4 +1336,32 @@ proxies:
         assert!(parse_share_link("https://example.com").is_err());
         assert!(parse_subscription("not a subscription at all!!!").is_err());
     }
+
+    /// Malformed input must come back as Err (or, where a lenient
+    /// grammar accepts it, a valid node) — never as a panic. These
+    /// lock in the guarantee that the share-link parser is total.
+    #[test]
+    fn malformed_links_error_without_panicking() {
+        let cases = [
+            "hysteria://",
+            "hysteria://pw@host:443",
+            "hysteria://host:99999",
+            "hysteria2://",
+            "hysteria2://pw@host:443?sni=",
+            "ss://",
+            "ss://bm@host",
+            "ss://YWVzLTI1Ni1nY206cHdAaG9zdDo4Mzg4",
+            "vmess://###",
+            "vmess://bm9wZQ==",
+            "socks5://user@host:abc",
+            "socks5://host:1080",
+            "socks://@@#",
+            "trojan://pw@host",
+            "vless://",
+            "anytls://",
+        ];
+        for case in cases {
+            let _ = parse_share_link(case);
+        }
+    }
 }

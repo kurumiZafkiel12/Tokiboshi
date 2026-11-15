@@ -15,16 +15,31 @@ class PanelPage extends StatefulWidget {
     required this.running,
     required this.clashApiPort,
     required this.onStart,
+    this.clashApiSecret = '',
     this.onOpenExternal,
   });
 
   final bool running;
   final int clashApiPort;
   final VoidCallback onStart;
+
+  /// Bearer secret of the controller; passed to zashboard via query
+  /// parameters so the embedded panel authenticates automatically.
+  final String clashApiSecret;
   final VoidCallback? onOpenExternal;
 
   @override
   State<PanelPage> createState() => _PanelPageState();
+}
+
+/// Shared by the embedded panel and "open in browser": the /ui URL
+/// carrying the controller secret as query parameters, which
+/// zashboard reads to authenticate itself.
+String panelUrl(int port, String secret) {
+  final query = secret.isEmpty
+      ? ''
+      : '?hostname=127.0.0.1&port=$port&secret=${Uri.encodeComponent(secret)}';
+  return 'http://127.0.0.1:$port/ui/$query';
 }
 
 class _PanelPageState extends State<PanelPage> {
@@ -32,7 +47,9 @@ class _PanelPageState extends State<PanelPage> {
   String? _error;
   String _status = '';
 
-  String get _url => 'http://127.0.0.1:${widget.clashApiPort}/ui';
+  String get _base => 'http://127.0.0.1:${widget.clashApiPort}';
+
+  String get _url => panelUrl(widget.clashApiPort, widget.clashApiSecret);
 
   @override
   void initState() {
@@ -62,7 +79,7 @@ class _PanelPageState extends State<PanelPage> {
       for (var i = 0; i < 30; i++) {
         if (!mounted || !widget.running) return false;
         try {
-          final req = await client.getUrl(Uri.parse('$_url/'));
+          final req = await client.getUrl(Uri.parse('$_base/ui/'));
           final resp = await req.close();
           await resp.drain<void>();
           if (resp.statusCode == 200) return true;

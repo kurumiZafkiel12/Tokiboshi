@@ -15,10 +15,15 @@ class ClashApiException implements Exception {
 }
 
 class ClashApiClient {
-  ClashApiClient({this.port = 9090, HttpClient? httpClient})
+  ClashApiClient({this.port = 9090, this.secret = '', HttpClient? httpClient})
       : _http = httpClient ?? HttpClient();
 
   final int port;
+
+  /// Bearer secret of the local controller (see Store.injectClashSecret);
+  /// empty means the core config predates the secret feature.
+  final String secret;
+
   final HttpClient _http;
 
   String get _base => 'http://127.0.0.1:$port';
@@ -33,6 +38,9 @@ class ClashApiClient {
       final req = await _http
           .openUrl(method, Uri.parse('$_base$path'))
           .timeout(timeout);
+      if (secret.isNotEmpty) {
+        req.headers.set(HttpHeaders.authorizationHeader, 'Bearer $secret');
+      }
       if (body != null) {
         req.headers.contentType = ContentType.json;
         req.write(jsonEncode(body));

@@ -8,10 +8,44 @@
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
+use sha2::{Digest, Sha256};
+
 use crate::process::CoreProcess;
 
 /// Pinned sing-box stable (latest stable at build time).
 pub const CORE_VERSION: &str = "1.14.4";
+
+/// Official sha-256 of the pinned release archives, per platform,
+/// taken from the GitHub release API at pin time (same source the
+/// packaging CI verifies against). The runtime download is checked
+/// here before anything is extracted; an asset without a pinned
+/// digest is refused rather than installed unchecked.
+pub const OFFICIAL_DIGESTS: &[(&str, &str)] = &[
+    (
+        "sing-box-1.14.4-windows-amd64.zip",
+        "99185d75d314a07dbba4a130c8ad986cbeb629a07927975636b341ca61f991df",
+    ),
+    (
+        "sing-box-1.14.4-windows-arm64.zip",
+        "8cd0a4d0cd8cd480be5731ac31f17038969a42d12add9feb6e031fd43d85bbae",
+    ),
+    (
+        "sing-box-1.14.4-linux-amd64.tar.gz",
+        "699a1b510aa4396b2176d32d1181920399ebf1e267835da6f3b598d0f7c24968",
+    ),
+    (
+        "sing-box-1.14.4-linux-arm64.tar.gz",
+        "436441f76ee2f7fe21b5b2d426d3cb261a480455a704865789ad533e4273ec26",
+    ),
+    (
+        "sing-box-1.14.4-darwin-amd64.tar.gz",
+        "eae86b9b033bba50b7c44ab719e4bfac0aca05efd28483390ed3aa510f32db25",
+    ),
+    (
+        "sing-box-1.14.4-darwin-arm64.tar.gz",
+        "0d8c7f5ed5d587b0f1a5e9772a708ec3bfa4ac4c9329604b01d8d9c2ba406838",
+    ),
+];
 
 pub fn binary_name() -> &'static str {
     if cfg!(windows) {
@@ -23,6 +57,34 @@ pub fn binary_name() -> &'static str {
 
 pub fn core_binary_path(data_dir: &Path) -> PathBuf {
     data_dir.join("core").join(binary_name())
+}
+
+fn asset_name() -> Result<String, String> {
+    let (os, arch, ext) = asset_os_arch()?;
+    Ok(format!("sing-box-{CORE_VERSION}-{os}-{arch}.{ext}"))
+}
+
+fn expected_digest(asset: &str) -> Option<&'static str> {
+    OFFICIAL_DIGESTS
+        .iter()
+        .find(|(name, _)| *name == asset)
+        .map(|(_, digest)| *digest)
+}
+
+pub fn sha256_hex(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    hasher.finalize().iter().map(|b| format!("{b:02x}")).collect()
+}
+
+fn verify_digest(bytes: &[u8], expected: &str) -> Result<(), String> {
+    let actual = sha256_hex(bytes);
+    if actual != expected.to_lowercase() {
+        return Err(format!(
+            "sing-box download checksum mismatch: expected {expected}, got {actual}"
+        ));
+    }
+    Ok(())
 }
 
 fn asset_os_arch() -> Result<(&'static str, &'static str, &'static str), String> {
@@ -42,9 +104,9 @@ fn asset_os_arch() -> Result<(&'static str, &'static str, &'static str), String>
 }
 
 pub fn asset_url() -> Result<String, String> {
-    let (os, arch, ext) = asset_os_arch()?;
+    let asset = asset_name()?;
     Ok(format!(
-        "https://github.com/SagerNet/sing-box/releases/download/v{v}/sing-box-{v}-{os}-{arch}.{ext}",
+        "https://github.com/SagerNet/sing-box/releases/download/v{v}/{asset}",
         v = CORE_VERSION
     ))
 }
@@ -88,6 +150,13 @@ pub fn download_and_install(data_dir: &Path) -> Result<String, String> {
             bytes.len()
         ));
     }
+    // Supply-chain gate: refuse to install anything that does not
+    // match the official digest pinned for this platform.
+    let asset = asset_name()?;
+    let expected = expected_digest(&asset).ok_or_else(|| {
+        format!("no official sha-256 pinned for {asset}; refusing unverified core")
+    })?;
+    verify_digest(&bytes, expected)?;
 
     let core_dir = data_dir.join("core");
     std::fs::create_dir_all(&core_dir)
@@ -176,6 +245,36 @@ mod tests {
         let url = asset_url().unwrap();
         assert!(url.contains(CORE_VERSION), "{url}");
         assert!(url.starts_with("https://github.com/SagerNet/sing-box/releases/download/"));
+    }
+
+    #[test]
+    fn digest_verification_rejects_swapped_archive() {
+        assert!(verify_digest(b"not-the-core", OFFICIAL_DIGESTS[0].1).is_err());
+        // Known SHA-256 of "abc" — the helper must hash deterministically.
+        assert_eq!(
+            sha256_hex(b"abc"),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+    }
+
+    #[test]
+    fn every_supported_platform_has_a_pinned_digest() {
+        // The download path fails closed when the platform's asset has
+        // no digest; keep the platforms we build/ship covered.
+        for asset in ["sing-box-1.14.4-windows-amd64.zip", "sing-box-1.14.4-linux-amd64.tar.gz"] {
+            assert!(expected_digest(asset).is_some(), "{asset} missing digest");
+        }
+    }
+
+    #[test]
+    fn zashboard_download_is_version_pinned_with_digest() {
+        assert!(
+            crate::config::ZASHBOARD_DOWNLOAD_URL.contains("/releases/download/v"),
+            "{}",
+            crate::config::ZASHBOARD_DOWNLOAD_URL
+        );
+        assert!(!crate::config::ZASHBOARD_DOWNLOAD_URL.contains("/latest/"));
+        assert_eq!(crate::config::ZASHBOARD_SHA256.len(), 64);
     }
 
     #[test]
@@ -302,6 +401,13 @@ pub fn prepare_dashboard(dir: &Path) -> Result<(), String> {
             let mut bytes = Vec::new();
             response.into_reader().take(32 * 1024 * 1024 + 1).read_to_end(&mut bytes).map_err(|e| e.to_string())?;
             if bytes.len() > 32 * 1024 * 1024 { return Err("dashboard archive too large".into()); }
+            let actual = sha256_hex(&bytes);
+            if actual != crate::config::ZASHBOARD_SHA256 {
+                return Err(format!(
+                    "dashboard archive checksum mismatch: expected {}, got {actual}",
+                    crate::config::ZASHBOARD_SHA256
+                ));
+            }
             let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).map_err(|e| e.to_string())?;
             let mut index_bytes = None;
             let mut total = 0u64;
