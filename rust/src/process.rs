@@ -107,7 +107,7 @@ mod job {
             if job.is_null() {
                 return Err("CreateJobObjectW failed".to_string());
             }
-            let mut info = ExtendedLimitInformation {
+            let info = ExtendedLimitInformation {
                 basic: BasicLimitInformation {
                     limit_flags: JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
                     ..Default::default()
