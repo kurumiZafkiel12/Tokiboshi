@@ -69,6 +69,7 @@ class AppData {
     this.bypassCn = true,
     String? clashApiSecret,
     this.cleanExit = true,
+    this.runningAtExit = false,
   }) : clashApiSecret = clashApiSecret ?? '';
 
   List<NodeInfo> nodes;
@@ -103,6 +104,11 @@ class AppData {
   /// startup then checks for a stale system proxy left pointing at
   /// the dead local port.
   bool cleanExit;
+
+  /// Whether the core was running when the app last quit cleanly.
+  /// "自动连接" then means restore that state — never auto-start
+  /// after a crash (predictable, FlClash-style semantics).
+  bool runningAtExit;
 
   NodeInfo? get selected =>
       (selectedIndex >= 0 && selectedIndex < nodes.length)
@@ -172,6 +178,7 @@ class Store {
         bypassCn: (map['bypassCn'] as bool?) ?? true,
         clashApiSecret: (map['clashApiSecret'] as String?) ?? '',
         cleanExit: (map['cleanExit'] as bool?) ?? true,
+        runningAtExit: (map['runningAtExit'] as bool?) ?? false,
       );
     } catch (_) {
       return null;
@@ -194,6 +201,7 @@ class Store {
       'bypassCn': data.bypassCn,
       'clashApiSecret': data.clashApiSecret,
       'cleanExit': data.cleanExit,
+      'runningAtExit': data.runningAtExit,
     };
     // Atomic write: temp file first, keep the last good copy as .bak,
     // then swap. A crash at any point leaves either the old or the

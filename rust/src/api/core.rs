@@ -167,12 +167,19 @@ pub fn core_status() -> CoreStatus {
     }
 }
 
-/// Recent core log lines (bounded ring buffer, oldest first).
+/// Recent core log lines (bounded ring buffer, oldest first), with
+/// background-work diagnostics (rule-set downloads) prepended.
 pub fn core_logs() -> Vec<String> {
+    let mut out = crate::core_download::extra_logs();
     match CORE.lock() {
-        Ok(slot) => slot.as_ref().map(|c| c.logs()).unwrap_or_default(),
-        Err(_) => Vec::new(),
+        Ok(slot) => {
+            if let Some(core) = slot.as_ref() {
+                out.extend(core.logs());
+            }
+        }
+        Err(_) => {}
     }
+    out
 }
 
 /// `sing-box version` first line for the binary at `binary_path`.

@@ -721,6 +721,12 @@ fn clash_proxy_to_outbound(m: &Map<String, Value>) -> Option<Value> {
             }
         }
         "socks5" | "socks" => {
+            if cbool(m, "tls") {
+                // sing-box's socks outbound cannot tunnel TLS. Refuse
+                // the node (surfaced as a skipped note) instead of
+                // silently downgrading a TLS-only service (HF053-06).
+                return None;
+            }
             ob.insert("type".into(), "socks".into());
             ob.insert("version".into(), Value::String("5".into()));
             if let Some(u) = cs(m, "username") {
@@ -832,7 +838,12 @@ pub fn parse_clash_yaml(text: &str) -> Result<ParseOutcome, String> {
             }),
             None => {
                 let typ = cs(proxy, "type").unwrap_or("unknown");
-                skipped.push(format!("{name} ({typ})"));
+                let reason = if (typ == "socks5" || typ == "socks") && cbool(proxy, "tls") {
+                    "TLS 隧道未支持，为避免静默降级已跳过"
+                } else {
+                    "类型暂不支持"
+                };
+                skipped.push(format!("{name} ({typ}): {reason}"));
             }
         }
     }
@@ -1335,6 +1346,24 @@ proxies:
     fn rejects_garbage() {
         assert!(parse_share_link("https://example.com").is_err());
         assert!(parse_subscription("not a subscription at all!!!").is_err());
+    }
+
+    /// A Clash YAML socks5 node with TLS must be skipped with a
+    /// reason, never silently converted to plain SOCKS (HF053-06).
+    #[test]
+    fn socks5_tls_is_skipped_not_downgraded() {
+        let yaml = "proxies:\n  - name: tls-socks\n    type: socks5\n    server: 127.0.0.1\n    port: 1080\n    tls: true\n  - name: plain-socks\n    type: socks5\n    server: 127.0.0.1\n    port: 1081\n";
+        let outcome = parse_subscription(yaml).unwrap();
+        assert_eq!(outcome.nodes.len(), 1, "{:?}", outcome.nodes);
+        assert_eq!(outcome.nodes[0].name, "plain-socks");
+        assert!(
+            outcome
+                .skipped
+                .iter()
+                .any(|s| s.contains("tls-socks") && s.contains("TLS")),
+            "{:?}",
+            outcome.skipped
+        );
     }
 
     /// Malformed input must come back as Err (or, where a lenient

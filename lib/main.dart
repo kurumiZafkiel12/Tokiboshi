@@ -25,14 +25,53 @@ import 'services/subscription_resolver.dart';
 import 'services/system_proxy.dart';
 import 'src/rust/frb_generated.dart';
 
+/// Loopback port used as the single-instance lock. A second launch
+/// finds the port taken, pokes the primary ("show"), and exits.
+const int kInstanceLockPort = 46513;
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   if (Platform.isWindows) {
+    // Single instance (user report: two copies could run at once and
+    // fight over the same kernel/ports). The lock is a dedicated
+    // loopback port — no files, no races.
+    ServerSocket? lock;
     try {
-      await windowManager.ensureInitialized();
+      lock = await ServerSocket.bind(InternetAddress.loopbackIPv4, kInstanceLockPort);
     } catch (_) {
-      // Window/tray niceties are optional; never block startup.
+      lock = null;
     }
+    if (lock != null) {
+      // Primary instance: "show" pokes raise the existing window.
+      lock.listen((socket) {
+        socket.listen((_) {}, onDone: socket.destroy);
+        windowManager.show().catchError((_) {});
+        windowManager.focus().catchError((_) {});
+      });
+    } else {
+      var woke = false;
+      try {
+        final socket = await Socket.connect(
+          InternetAddress.loopbackIPv4,
+          kInstanceLockPort,
+          timeout: const Duration(milliseconds: 800),
+        );
+        socket.write('show');
+        await socket.flush();
+        socket.destroy();
+        woke = true;
+      } catch (_) {
+        // The port is held by something that is not us; start unlocked.
+      }
+      if (woke) {
+        exit(0);
+      }
+    }
+  }
+  try {
+    await windowManager.ensureInitialized();
+  } catch (_) {
+    // Window/tray niceties are optional; never block startup.
   }
   await RustLib.init();
   runApp(TokiboshiApp(bridge: RustCoreBridge()));
@@ -111,6 +150,13 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
   Timer? _statusTimer;
   final Map<NodeInfo, int?> _latency = {};
 
+  DateTime? _coreDownSince;
+
+  /// Set while a user-initiated stop is in effect, so the status
+  /// poller cannot mistake a stopped core for a crashed one (and
+  /// vice versa for recovery).
+  bool _userStopped = false;
+
   String get _dataDir => widget.store.dir.path;
   ClashApiClient get _clash =>
       ClashApiClient(port: _data.clashApiPort, secret: _data.clashApiSecret);
@@ -164,8 +210,17 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
       _data = data;
       _running = running;
     });
+    // Rule-set upkeep is decoupled from the core download (HF053-02):
+    // the bundled core must never skip it. Fire-and-forget; the Rust
+    // side reports progress through the Logs page.
+    unawaited(widget.bridge.startEnsureCore(_dataDir));
     await _refreshCoreVersion();
-    if (mounted && !_running && _data.autoConnect && _data.nodes.isNotEmpty) {
+    // 自动连接 = 恢复上一次正常退出时的运行状态；崩溃/被杀后不自启。
+    if (mounted &&
+        !_running &&
+        _data.autoConnect &&
+        _data.runningAtExit &&
+        _data.nodes.isNotEmpty) {
       await _toggleCore();
     }
   }
@@ -180,9 +235,10 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
     }
   }
 
-  /// Keep the UI truthful about the supervised core: if it died for
-  /// good (restart limit hit), reflect that and drop the system proxy.
-  /// Also refreshes the Clash mode while running.
+  /// Keep the UI truthful about the supervised core (unified state
+  /// machine, HF053-05): a restart blip is tolerated for a few
+  /// seconds, an auto-restart recovers the UI and system proxy, and
+  /// only a sustained stop (or a user stop) tears the proxy down.
   Future<void> _syncCoreStatus() async {
     try {
       final status = await widget.bridge.coreStatus();
@@ -190,13 +246,32 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
       var changed = status.restartCount != _restartCount ||
           status.lastExit != _lastExit;
       if (_running && !status.running) {
-        _running = false;
-        _clashMode = null;
+        // The supervisor may restart the core within seconds; do not
+        // tear the proxy down on the first blip.
+        _coreDownSince ??= DateTime.now();
+        final downFor = DateTime.now().difference(_coreDownSince!);
+        if (_userStopped || downFor > const Duration(seconds: 8)) {
+          _running = false;
+          _clashMode = null;
+          _coreDownSince = null;
+          changed = true;
+          await widget.systemProxy.apply(false, _data.mixedPort);
+          _message = status.lastExit != null
+              ? '内核已退出：${status.lastExit}'
+              : '内核已停止';
+        }
+      } else if (status.running && !_running && !_userStopped) {
+        // Supervisor restarted the core on its own: recover the UI
+        // and the system proxy instead of staying stuck on "stopped".
+        _running = true;
+        _coreDownSince = null;
         changed = true;
-        await widget.systemProxy.apply(false, _data.mixedPort);
-        _message = status.lastExit != null
-            ? '内核已退出：${status.lastExit}'
-            : '内核已停止';
+        if (_data.systemProxy) {
+          await widget.systemProxy.apply(true, _data.mixedPort);
+        }
+        _message = '内核已自动重启，代理已恢复';
+      } else if (status.running && _running) {
+        _coreDownSince = null;
       }
       if (changed) {
         setState(() {
@@ -746,6 +821,7 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
         }
       }
       _data.cleanExit = true;
+      _data.runningAtExit = _running;
       await _persist();
       await trayManager.destroy();
     } catch (_) {}
@@ -798,6 +874,8 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
     var started = false;
     try {
       if (_running) {
+        _userStopped = true;
+        _coreDownSince = null;
         await widget.bridge.stopCore();
         await widget.systemProxy.apply(false, _data.mixedPort);
         setState(() {
@@ -809,6 +887,18 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
       }
       if (_data.nodes.isEmpty) {
         _setMessage('先导入节点');
+        return;
+      }
+      // A stop may have silently failed or the supervisor may have
+      // just revived the core: adopt it instead of failing later with
+      // "already running".
+      if (await widget.bridge.coreRunning()) {
+        setState(() {
+          _running = true;
+          _userStopped = false;
+          _coreDownSince = null;
+          _message = '内核已在运行，已恢复界面状态';
+        });
         return;
       }
       final binary = await _ensureCoreBinary();
@@ -935,7 +1025,16 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
   Future<void> _setMode(String mode) async {
     try {
       await _clash.setMode(mode);
-      if (mounted) setState(() => _clashMode = mode);
+      // Never claim success from the status code alone: read the
+      // controller back and surface a mismatch (HF053-01 follow-up).
+      String? actual;
+      try {
+        actual = await _clash.mode();
+      } catch (_) {}
+      if (mounted) setState(() => _clashMode = actual ?? mode);
+      if (actual != null && actual.toLowerCase() != mode.toLowerCase()) {
+        _setMessage('模式切换未生效（控制器仍为 $actual）');
+      }
       _refreshTray();
     } catch (e) {
       _setMessage('切换模式失败：$e');

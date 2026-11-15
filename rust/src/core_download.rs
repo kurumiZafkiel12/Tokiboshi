@@ -5,12 +5,35 @@
 //! separate from any system install, so updates never touch the
 //! user's own files.
 
+use std::collections::VecDeque;
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 use sha2::{Digest, Sha256};
 
 use crate::process::CoreProcess;
+
+/// Diagnostic lines from background work with no dedicated UI
+/// (rule-set downloads). Surfaced through `core_logs` so the Logs
+/// page shows why 分流/拦截 rules are missing (HF053-02).
+static EXTRA_LOGS: Mutex<VecDeque<String>> = Mutex::new(VecDeque::new());
+
+fn push_extra_log(line: String) {
+    if let Ok(mut slot) = EXTRA_LOGS.lock() {
+        if slot.len() >= 200 {
+            slot.pop_front();
+        }
+        slot.push_back(line);
+    }
+}
+
+pub fn extra_logs() -> Vec<String> {
+    match EXTRA_LOGS.lock() {
+        Ok(slot) => slot.iter().cloned().collect(),
+        Err(_) => Vec::new(),
+    }
+}
 
 /// Pinned sing-box stable (latest stable at build time).
 pub const CORE_VERSION: &str = "1.14.4";
@@ -345,11 +368,13 @@ pub const RULE_SET_FILES: [(&str, &str); 3] = [
 pub fn ensure_rule_sets(data_dir: &Path) {
     let dir = data_dir.join("rules");
     if std::fs::create_dir_all(&dir).is_err() {
+        push_extra_log("[rules] 无法创建规则目录，分流/拦截规则不可用".into());
         return;
     }
     let agent = ureq::AgentBuilder::new()
         .timeout(std::time::Duration::from_secs(60))
         .build();
+    let mut ready = 0usize;
     for (tag, url) in RULE_SET_FILES {
         let dest = dir.join(format!("{tag}.srs"));
         let fresh = std::fs::metadata(&dest)
@@ -357,9 +382,14 @@ pub fn ensure_rule_sets(data_dir: &Path) {
             .map(|t| t.elapsed().map(|e| e.as_secs() < 24 * 3600).unwrap_or(false))
             .unwrap_or(false);
         if fresh {
+            ready += 1;
             continue;
         }
+        push_extra_log(format!("[rules] 下载 {tag} …"));
         let Ok(response) = agent.get(url).call() else {
+            push_extra_log(format!(
+                "[rules] {tag} 下载失败（直连 GitHub；缺失时对应分流规则不会生效）"
+            ));
             continue;
         };
         let mut bytes = Vec::new();
@@ -371,13 +401,17 @@ pub fn ensure_rule_sets(data_dir: &Path) {
             .is_err()
             || bytes.len() < 16
         {
+            push_extra_log(format!("[rules] {tag} 下载内容无效"));
             continue;
         }
         let tmp = dir.join(format!("{tag}.srs.tmp"));
         if std::fs::write(&tmp, &bytes).is_ok() {
             let _ = std::fs::rename(&tmp, &dest);
+            ready += 1;
+            push_extra_log(format!("[rules] {tag} 已更新"));
         }
     }
+    push_extra_log(format!("[rules] 规则集就绪 {ready}/{}", RULE_SET_FILES.len()));
 }
 
 

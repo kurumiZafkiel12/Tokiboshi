@@ -107,10 +107,12 @@ void main() {
     final store = Store(File('${tmp.path}/data.json'));
     await store.save(AppData()
       ..clashApiSecret = 'abcd'
-      ..cleanExit = false);
+      ..cleanExit = false
+      ..runningAtExit = true);
     final loaded = await store.load();
     expect(loaded.clashApiSecret, 'abcd');
     expect(loaded.cleanExit, isFalse);
+    expect(loaded.runningAtExit, isTrue);
   });
 
   test('generateClashSecret is 32 hex chars and differs across calls', () {

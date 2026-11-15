@@ -41,6 +41,8 @@ void main() {
     final store = MemoryStore();
     store.data.nodes = const [NodeInfo(name: 'saved', outboundJson: '{"type":"socks","server":"127.0.0.1","server_port":1080}')];
     store.data.selectedIndex = 0;
+    // 自动连接 restores the running state of a previous clean exit.
+    store.data.runningAtExit = true;
     final bridge = FakeBridge();
     await tester.pumpWidget(TokiboshiApp(
       bridge: bridge, store: store, systemProxy: NoopSystemProxy(),

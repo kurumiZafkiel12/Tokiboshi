@@ -23,22 +23,35 @@ class WindowsSystemProxy implements SystemProxy {
 
   static const _key = r'Software\Microsoft\Windows\CurrentVersion\Internet Settings';
 
+  /// Run reg.exe and fail loudly on a non-zero exit — a silently
+  /// ignored registry failure leaves the user believing the proxy is
+  /// applied when it is not.
+  Future<void> _reg(List<String> args) async {
+    final result = await Process.run('reg', args);
+    if (result.exitCode != 0) {
+      throw ProcessException(
+        'reg',
+        args,
+        '系统代理注册表写入失败 (${result.exitCode})：${result.stderr}',
+      );
+    }
+  }
+
   @override
   Future<void> apply(bool enable, int port) async {
     if (!Platform.isWindows) return;
-    await Process.run('reg', [
+    await _reg([
       'add', 'HKCU\\$_key', '/v', 'ProxyEnable', '/t', 'REG_DWORD',
       '/d', enable ? '1' : '0', '/f',
     ]);
     if (enable) {
-      await Process.run('reg', [
+      await _reg([
         'add', 'HKCU\\$_key', '/v', 'ProxyServer', '/t', 'REG_SZ',
         '/d', '127.0.0.1:$port', '/f',
       ]);
     }
-    // Best effort: ask WinINet to notice the change immediately
-    // instead of at next logon; harmless when it fails.
-    await Process.run('reg', [
+    // Best effort: keep loopback/LAN traffic away from the proxy.
+    await _reg([
       'add', 'HKCU\\$_key', '/v', 'ProxyOverride', '/t', 'REG_SZ',
       '/d', 'localhost;127.*;10.*;172.16.*;172.17.*;172.18.*;172.19.*;172.20.*;172.21.*;172.22.*;172.23.*;172.24.*;172.25.*;172.26.*;172.27.*;172.28.*;172.29.*;172.30.*;172.31.*;192.168.*;<local>',
       '/f',

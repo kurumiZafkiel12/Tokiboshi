@@ -327,7 +327,14 @@ pub fn build_config_multi(
             None
         }
     };
-    let mut route_rules: Vec<Value> = vec![json!({ "ip_is_private": true, "outbound": "direct" })];
+    let mut route_rules: Vec<Value> = vec![
+        json!({ "ip_is_private": true, "outbound": "direct" }),
+        // Mode rules make the Clash API mode switcher actually route:
+        // without them PATCH /configs only flips an unused variable
+        // and Global/Direct silently behave like Rule (HF053-01).
+        json!({ "clash_mode": "Direct", "outbound": "direct" }),
+        json!({ "clash_mode": "Global", "outbound": "proxy" }),
+    ];
     let mut rule_sets: Vec<Value> = Vec::new();
     let mut dns_rules: Vec<Value> = Vec::new();
     if settings.block_ads {
@@ -468,7 +475,8 @@ mod tests {
         let text = build_config_multi(&nodes, &settings, None).unwrap();
         let v: Value = serde_json::from_str(&text).unwrap();
         assert_eq!(v["route"]["rule_set"].as_array().unwrap().len(), 0);
-        assert_eq!(v["route"]["rules"].as_array().unwrap().len(), 1);
+        // Mode rules still present; only the rule-set rules were dropped.
+        assert_eq!(v["route"]["rules"].as_array().unwrap().len(), 3);
         assert_eq!(v["dns"]["rules"].as_array().unwrap().len(), 0);
     }
 
@@ -481,9 +489,15 @@ mod tests {
         let settings = CoreSettings { block_ads: false, bypass_cn: false, ..Default::default() };
         let text = build_config_multi(&nodes, &settings, None).unwrap();
         let v: Value = serde_json::from_str(&text).unwrap();
+        // Private direct, then the two mode rules, then nothing (no
+        // rule files). Mode rules exist even when every toggle is off.
         let rules = v["route"]["rules"].as_array().unwrap();
-        assert_eq!(rules.len(), 1);
+        assert_eq!(rules.len(), 3);
         assert_eq!(rules[0]["ip_is_private"], true);
+        assert_eq!(rules[1]["clash_mode"], "Direct");
+        assert_eq!(rules[1]["outbound"], "direct");
+        assert_eq!(rules[2]["clash_mode"], "Global");
+        assert_eq!(rules[2]["outbound"], "proxy");
         assert_eq!(v["route"]["rule_set"].as_array().unwrap().len(), 0);
         assert_eq!(v["dns"]["rules"].as_array().unwrap().len(), 0);
         // Sanity: the leaner config still passes the real core check
@@ -513,11 +527,13 @@ mod tests {
         assert_eq!(selector["default"], "节点B");
         assert_eq!(v["outbounds"][1]["type"], "urltest");
         assert_eq!(v["outbounds"][2]["tag"], "节点A");
-        // Route template: private direct, ads reject, CN direct.
+        // Route template: private direct, mode rules, ads reject, CN direct.
         let rules = v["route"]["rules"].as_array().unwrap();
         assert_eq!(rules[0]["ip_is_private"], true);
-        assert_eq!(rules[1]["action"], "reject");
-        assert_eq!(rules[2]["outbound"], "direct");
+        assert_eq!(rules[1]["clash_mode"], "Direct");
+        assert_eq!(rules[2]["clash_mode"], "Global");
+        assert_eq!(rules[3]["action"], "reject");
+        assert_eq!(rules[4]["outbound"], "direct");
         assert_eq!(v["route"]["rule_set"].as_array().unwrap().len(), 3);
         assert_eq!(v["route"]["rule_set"][0]["type"], "local");
         // No remote-download machinery remains in the config.

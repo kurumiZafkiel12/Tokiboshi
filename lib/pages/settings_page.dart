@@ -87,8 +87,8 @@ class _SettingsPageState extends State<SettingsPage> {
           const Text('设置', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w600)),
           const SizedBox(height: 16),
           SwitchListTile(
-            title: const Text('打开应用自动连接'),
-            subtitle: const Text('启动内核并使用上次选中的节点'),
+            title: const Text('启动时恢复上次运行状态'),
+            subtitle: const Text('仅当上次正常退出时内核在运行才自动连接；崩溃或手动退出后不会自启'),
             value: widget.autoConnect,
             onChanged: widget.onAutoConnectChanged,
           ),

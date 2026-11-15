@@ -28,6 +28,11 @@ pub enum CoreState {
 #[derive(Debug, Default)]
 struct Shared {
     child: Mutex<Option<Child>>,
+    /// Serializes the stop() decision against the supervisor's
+    /// restart decision. Without it a stop racing an unexpected-exit
+    /// restart could return Ok while the monitor spawns a fresh core
+    /// nobody ever watches (HF053-04).
+    lifecycle: Mutex<()>,
     /// Windows Job Object handle (isize HANDLE). The job has
     /// KILL_ON_JOB_CLOSE, so the core can never outlive this process:
     /// if the GUI crashes or is killed, the OS closes the handle and
@@ -386,6 +391,14 @@ impl CoreProcess {
                 }
             };
             let Some(status) = exited else { continue };
+            // Decision and respawn happen under the lifecycle guard:
+            // if a stop() wins the lock we must not revive the core,
+            // and if we win the lock a following stop() will kill the
+            // freshly spawned child it finds in the slot.
+            let guard = match shared.lifecycle.lock() {
+                Ok(g) => g,
+                Err(_) => break,
+            };
             if shared.stop_requested.load(Ordering::SeqCst) {
                 break;
             }
@@ -419,11 +432,20 @@ impl CoreProcess {
                     break;
                 }
             }
+            drop(guard);
         });
         Ok(())
     }
 
     pub fn stop(&mut self) -> Result<(), String> {
+        // Take the lifecycle guard first: while it is held the
+        // supervisor cannot spawn a replacement, so a returned stop
+        // cannot be silently undone by an in-flight restart.
+        let _lifecycle = self
+            .shared
+            .lifecycle
+            .lock()
+            .map_err(|_| "core lock poisoned".to_string())?;
         self.shared.stop_requested.store(true, Ordering::SeqCst);
         let child = self
             .shared
