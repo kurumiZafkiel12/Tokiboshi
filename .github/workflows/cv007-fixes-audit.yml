@@ -14,7 +14,7 @@ jobs:
           path: work
       - uses: actions/checkout@v4
         with:
-          ref: f31f331
+          ref: f31f331cd4496b0155b5dea55c5300bf818f78d6
           path: published
       - uses: subosito/flutter-action@v2
         with:
