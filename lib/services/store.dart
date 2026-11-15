@@ -241,23 +241,25 @@ class Store {
     await _tmpFile.writeAsString(jsonEncode(map), flush: true);
     // Rotation: previous main BECOMES the backup (rename, not copy),
     // then tmp becomes main. An unhealthy main is quarantined as
-    // .corrupt instead — the last valid backup must survive.
+    // .corrupt instead — and the existing good backup is NOT touched
+    // before the branch is decided (deleting it up front was exactly
+    // the HF053-11 failure mode Hermes reproduced).
     final mainHealthy = await _mainIsHealthy();
     try {
-      if (await _bakFile.exists()) {
-        await _bakFile.delete();
-      }
-      if (await _file.exists()) {
-        if (mainHealthy) {
+      if (mainHealthy) {
+        if (await _bakFile.exists()) {
+          await _bakFile.delete();
+        }
+        if (await _file.exists()) {
           await _file.rename(_bakFile.path);
-        } else {
+        }
+      } else if (await _file.exists()) {
+        try {
+          await _file.rename('${_file.path}.corrupt');
+        } catch (_) {
           try {
-            await _file.rename('${_file.path}.corrupt');
-          } catch (_) {
-            try {
-              await _file.delete();
-            } catch (_) {}
-          }
+            await _file.delete();
+          } catch (_) {}
         }
       }
       await _tmpFile.rename(_file.path);
