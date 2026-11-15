@@ -1,0 +1,61 @@
+name: T069 built DLL routing recheck (no rebuild or publish)
+on:
+  push:
+    branches: ['audit/t069-runtime-recheck']
+permissions:
+  contents: read
+  actions: read
+jobs:
+  runtime:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Assert application identical to already verified build
+        shell: pwsh
+        run: |
+          git diff --exit-code 17fbb4547416f197da0008aaed05ff1b40b2be44 HEAD -- lib rust pubspec.yaml pubspec.lock flutter_rust_bridge.yaml
+          if ($LASTEXITCODE -ne 0) { throw 'Application differs; full build needed' }
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.50.0
+          channel: stable
+      - name: Frozen dependencies and original Windows artifact
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          flutter pub get --enforce-lockfile
+          if ($LASTEXITCODE -ne 0) { throw 'Frozen dependencies failed' }
+          gh run download 43750655304 --repo $env:GITHUB_REPOSITORY --name t069-codegen-verification --dir "$env:RUNNER_TEMP/built"
+          if ($LASTEXITCODE -ne 0) { throw 'Original build artifact download failed' }
+          $env:T069_DLL=(Get-ChildItem "$env:RUNNER_TEMP/built" -Filter rust_lib_tokiboshi.dll -Recurse | Select-Object -First 1).FullName
+          if (-not $env:T069_DLL) { throw 'Original built DLL missing' }
+          "T069_DLL=$env:T069_DLL" >> $env:GITHUB_ENV
+          $flutterBin=Split-Path (Get-Command flutter).Source -Parent
+          "DART_BIN=$(Join-Path $flutterBin 'cache/dart-sdk/bin/dart.exe')" >> $env:GITHUB_ENV
+          "T069_OUT=$env:RUNNER_TEMP/t069-runtime-final" >> $env:GITHUB_ENV
+          (Get-FileHash $env:T069_DLL -Algorithm SHA256).Hash > dll-sha256.txt
+          $release=Invoke-RestMethod 'https://api.github.com/repos/SagerNet/sing-box/releases/tags/v1.14.4'
+          $asset=$release.assets | Where-Object name -eq 'sing-box-1.14.4-windows-amd64.zip'
+          Invoke-WebRequest $asset.browser_download_url -OutFile "$env:RUNNER_TEMP/core.zip"
+          $digest='sha256:'+(Get-FileHash "$env:RUNNER_TEMP/core.zip" -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($digest -ne $asset.digest) { throw 'Core digest mismatch' }
+          Expand-Archive "$env:RUNNER_TEMP/core.zip" "$env:RUNNER_TEMP/core"
+          $binary=(Get-ChildItem "$env:RUNNER_TEMP/core" -Filter sing-box.exe -Recurse | Select-Object -First 1).FullName
+          "SING_BOX=$binary" >> $env:GITHUB_ENV
+      - name: Actual original DLL bridge and three routing modes
+        shell: pwsh
+        run: |
+          python tool/t069_codegen/runtime_probe.py 2>&1 | Tee-Object runtime-final.log
+          if ($LASTEXITCODE -ne 0) { throw 'Bridge/routing assertion failed' }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: t069-runtime-final
+          path: |
+            ${{ runner.temp }}/t069-runtime-final/
+            runtime-final.log
+            dll-sha256.txt

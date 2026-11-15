@@ -38,7 +38,7 @@ mixed,api=port(),port()
 env=dict(os.environ,T069_NODE_A=str(a.getsockname()[1]),T069_NODE_B=str(b.getsockname()[1]),T069_MIXED=str(mixed),T069_API=str(api))
 class Origin(http.server.BaseHTTPRequestHandler):
  def do_GET(self):
-  self.send_response(200);self.end_headers();self.wfile.write(b'DIRECT_ORIGIN')
+  self.send_response(200);self.send_header('Content-Length','13');self.send_header('Connection','close');self.end_headers();self.wfile.write(b'DIRECT_ORIGIN')
  def log_message(self,*args):pass
 origin=http.server.ThreadingHTTPServer(('127.0.0.1',0),Origin);threading.Thread(target=origin.serve_forever,daemon=True).start()
 core=None;result={}
@@ -56,7 +56,7 @@ try:
    if core.poll() is not None:raise RuntimeError('core exited before API ready')
    time.sleep(.1)
  else:raise RuntimeError('API timeout')
- responses={}
+ responses={};result['modeResponses']=responses
  for mode,expect in [('rule','NODE_B'),('global','NODE_A'),('direct','DIRECT_ORIGIN')]:
   req=urllib.request.Request(f'http://127.0.0.1:{api}/configs',data=json.dumps({'mode':mode}).encode(),method='PATCH',headers={'Content-Type':'application/json'})
   client.open(req,timeout=3).read()
