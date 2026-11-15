@@ -19,16 +19,23 @@ def lock(path):
     if h == ctypes.c_void_p(-1).value: raise ctypes.WinError(ctypes.get_last_error())
     return h
 def run(mode, folder):
+    print('running '+mode+' '+folder.name, flush=True)
     p = subprocess.run(CMD+[mode,str(folder)], capture_output=True,text=True,encoding='utf-8',timeout=250)
     if p.returncode: raise RuntimeError(p.stderr)
     return json.loads(p.stdout)
 def save(name, result):
     (OUT/(name+'.json')).write_text(json.dumps(result,ensure_ascii=False,indent=2),encoding='utf-8')
+    print('recorded '+name+' '+str(result.get('passed',result.get('allPassed'))),flush=True)
 def rule_case(name):
     p=ROOT/name; (p/'core').mkdir(parents=True)
     shutil.copy2(os.environ['AUDIT_CORE'],p/'core/sing-box.exe')
     return p
 results = {}
+controls=ROOT/'controls';controls.mkdir()
+import urllib.request
+for tag, repo in [('geosite-category-ads-all','sing-geosite'),('geosite-cn','sing-geosite'),('geoip-cn','sing-geoip')]:
+    url=f'https://raw.githubusercontent.com/SagerNet/{repo}/rule-set/{tag}.srs'
+    with urllib.request.urlopen(url,timeout=45) as response:(controls/f'{tag}.srs').write_bytes(response.read(64*1024*1024))
 # Real empty-directory download must commit three real SRS files.
 fresh=rule_case('rules-download')
 r=run('rules-download',fresh)
@@ -38,7 +45,7 @@ results['download_3_of_3']=r;save('rules-download',r)
 for name, keep in [('rules-zero',0),('rules-two',2),('rules-three',3)]:
     p=rule_case(name);(p/'rules').mkdir()
     for i,tag in enumerate(TAGS):
-        if i<keep: shutil.copyfile(fresh/'rules'/f'{tag}.srs',p/'rules'/f'{tag}.srs')
+        if i<keep: shutil.copyfile(controls/f'{tag}.srs',p/'rules'/f'{tag}.srs')
         else: (p/'rules'/f'{tag}.srs.tmp').mkdir()
     r=run('rules-summary',p)
     expected=f'{keep}/3 '+('就绪' if keep==3 else '可用')
@@ -46,7 +53,7 @@ for name, keep in [('rules-zero',0),('rules-two',2),('rules-three',3)]:
     results[name]=r;save(name,r)
 # Lock an actual valid old SRS; do not pre-seed tmp to mask a missing-write regression.
 p=rule_case('rules-locked');(p/'rules').mkdir()
-for tag in TAGS: shutil.copyfile(fresh/'rules'/f'{tag}.srs',p/'rules'/f'{tag}.srs')
+for tag in TAGS: shutil.copyfile(controls/f'{tag}.srs',p/'rules'/f'{tag}.srs')
 target=p/'rules/geoip-cn.srs';old=hashlib.sha256(target.read_bytes()).hexdigest();past=time.time()-172800;os.utime(target,(past,past))
 h=lock(target)
 try:

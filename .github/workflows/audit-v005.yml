@@ -44,7 +44,9 @@ jobs:
           $env:AUDIT_DLL = (Get-ChildItem "$env:AUDIT_ROOT/portable" -Filter rust_lib_tokiboshi.dll -Recurse | Select-Object -First 1).FullName
           $env:AUDIT_CORE = (Get-ChildItem "$env:AUDIT_ROOT/portable" -Filter sing-box.exe -Recurse | Select-Object -First 1).FullName
           $env:AUDIT_SOURCE = Join-Path $env:GITHUB_WORKSPACE 'published'
-          $env:DART_BIN = (Get-Command dart).Source
+          $flutterBin = Split-Path (Get-Command flutter).Source -Parent
+          $env:DART_BIN = Join-Path $flutterBin 'cache/dart-sdk/bin/dart.exe'
+          if(-not(Test-Path $env:DART_BIN)){throw 'Native Dart executable missing'}
           python work/tool/recheck_v005/run.py
           if ($LASTEXITCODE -ne 0) { throw 'Native audit checks failed; inspect result artifact' }
       - uses: actions/upload-artifact@v4

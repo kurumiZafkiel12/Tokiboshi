@@ -1,4 +1,4 @@
-; Tokiboshi Windows installer (Inno Setup 6).
+﻿; Tokiboshi Windows installer (Inno Setup 6).
 ; Built in CI by the "Build installer" step, which passes the app
 ; version from pubspec.yaml as /DAppVersion=x.y.z. Paths are relative
 ; to this script's directory (installer/).
@@ -76,6 +76,7 @@ end;
 
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
+  Log('Installer language: ' + ActiveLanguage);
   ExtractTemporaryFile('prepare-upgrade.ps1');
   ExtractTemporaryFile('legacy-v005-files.json');
   UpgradeSnapshot := ExpandConstant('{tmp}\tokiboshi-previous-files.json');
