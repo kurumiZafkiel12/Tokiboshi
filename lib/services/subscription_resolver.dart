@@ -88,7 +88,7 @@ class SubscriptionResolver {
       }
       // Named node providers cannot replace the root routing profile.
       final profile = first.profileJson;
-      if (profile != null) {
+      if (profile != null && depth == 0) {
         final parsed = jsonDecode(profile) as Map<String, dynamic>;
         final unsupported = (parsed['unsupported'] as List?) ?? const [];
         if (unsupported.isNotEmpty) {

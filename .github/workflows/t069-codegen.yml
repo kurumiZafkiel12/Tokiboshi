@@ -18,8 +18,10 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@v1
       - uses: actions/cache@v4
         with:
-          path: ~/.cargo/bin/flutter_rust_bridge_codegen.exe
-          key: windows-frb-codegen-2.11.1
+          path: |
+            ~/.cargo/bin/flutter_rust_bridge_codegen.exe
+            ~/.cargo/bin/cargo-expand.exe
+          key: windows-frb-codegen-2.11.1-v2
       - name: Pinned tools and frozen Dart dependencies
         shell: pwsh
         run: |
@@ -29,7 +31,13 @@ jobs:
             cargo install flutter_rust_bridge_codegen --version 2.11.1 --locked
             if ($LASTEXITCODE -ne 0) { throw 'Pinned codegen install failed' }
           }
-          flutter_rust_bridge_codegen --version
+          $version = flutter_rust_bridge_codegen --version
+          Write-Output $version
+          if ($version -notmatch '2\.11\.1') { throw 'Wrong codegen version' }
+          $flutterBin = Split-Path (Get-Command flutter).Source -Parent
+          $dartBin = Join-Path $flutterBin 'cache/dart-sdk/bin/dart.exe'
+          "DART_BIN=$dartBin" >> $env:GITHUB_ENV
+          "T069_OUT=$env:RUNNER_TEMP/t069-semantic" >> $env:GITHUB_ENV
           if ($LASTEXITCODE -ne 0) { throw 'Codegen version failed' }
       - name: Regenerate and record generated difference
         shell: pwsh
@@ -44,6 +52,14 @@ jobs:
           }
           git diff --exit-code -- pubspec.lock rust/Cargo.lock
           if ($LASTEXITCODE -ne 0) { throw 'Frozen lock changed' }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: t069-regenerated-bindings
+          path: |
+            lib/src/rust/
+            rust/src/frb_generated.rs
+            codegen.log
+            generated.patch
       - name: Verified core and Rust tests
         shell: pwsh
         run: |
@@ -66,6 +82,20 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Flutter tests failed' }
           flutter build windows --release 2>&1 | Tee-Object windows-build.log
           if ($LASTEXITCODE -ne 0) { throw 'Windows build failed' }
+      - name: Actual DLL bridge and loopback Rule Global Direct routing
+        shell: pwsh
+        run: |
+          $env:T069_DLL=(Get-ChildItem build/windows/x64/runner/Release -Filter rust_lib_tokiboshi.dll -Recurse | Select-Object -First 1).FullName
+          if (-not $env:T069_DLL) { throw 'Built DLL missing' }
+          python tool/t069_codegen/runtime_probe.py 2>&1 | Tee-Object runtime-probe.log
+          if ($LASTEXITCODE -ne 0) { throw 'Actual bridge or routing failed' }
+      - name: Original Rust profile semantic probes on Windows
+        if: always()
+        shell: pwsh
+        run: |
+          $env:SEMANTIC_OUT="$env:RUNNER_TEMP/t069-profile-cases"
+          cargo run --locked --manifest-path tool/t069_semantics/Cargo.toml 2>&1 | Tee-Object profile-semantics.log
+          if ($LASTEXITCODE -ne 0) { throw 'Semantic probe infrastructure failed' }
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -77,3 +107,5 @@ jobs:
             generated-stat.txt
             generated.patch
             build/windows/x64/runner/Release/
+            ${{ runner.temp }}/t069-semantic/
+            ${{ runner.temp }}/t069-profile-cases/

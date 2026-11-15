@@ -93,7 +93,8 @@ abstract class RustLibApi extends BaseApi {
       required bool blockAds,
       required bool bypassCn,
       required String dataDir,
-      String? selectedName});
+      String? selectedName,
+      required String profileJson});
 
   Future<List<String>> crateApiCoreCoreLogs();
 
@@ -163,7 +164,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       required bool blockAds,
       required bool bypassCn,
       required String dataDir,
-      String? selectedName}) {
+      String? selectedName,
+      required String profileJson}) {
     return handler.executeNormal(NormalTask(
       callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
@@ -175,6 +177,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_bool(bypassCn, serializer);
         sse_encode_String(dataDir, serializer);
         sse_encode_opt_String(selectedName, serializer);
+        sse_encode_String(profileJson, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
             funcId: 2, port: port_);
       },
@@ -191,7 +194,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         blockAds,
         bypassCn,
         dataDir,
-        selectedName
+        selectedName,
+        profileJson
       ],
       apiImpl: this,
     ));
@@ -207,7 +211,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           "blockAds",
           "bypassCn",
           "dataDir",
-          "selectedName"
+          "selectedName",
+          "profileJson"
         ],
       );
 
@@ -625,12 +630,13 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ParseOutcome dco_decode_parse_outcome(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 3)
-      throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
+    if (arr.length != 4)
+      throw Exception('unexpected arr length: expect 4 but see ${arr.length}');
     return ParseOutcome(
       nodes: dco_decode_list_node_info(arr[0]),
       skipped: dco_decode_list_String(arr[1]),
       providers: dco_decode_list_provider_info(arr[2]),
+      profileJson: dco_decode_opt_String(arr[3]),
     );
   }
 
@@ -797,8 +803,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_nodes = sse_decode_list_node_info(deserializer);
     var var_skipped = sse_decode_list_String(deserializer);
     var var_providers = sse_decode_list_provider_info(deserializer);
+    var var_profileJson = sse_decode_opt_String(deserializer);
     return ParseOutcome(
-        nodes: var_nodes, skipped: var_skipped, providers: var_providers);
+        nodes: var_nodes,
+        skipped: var_skipped,
+        providers: var_providers,
+        profileJson: var_profileJson);
   }
 
   @protected
@@ -951,6 +961,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_list_node_info(self.nodes, serializer);
     sse_encode_list_String(self.skipped, serializer);
     sse_encode_list_provider_info(self.providers, serializer);
+    sse_encode_opt_String(self.profileJson, serializer);
   }
 
   @protected
