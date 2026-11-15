@@ -19,6 +19,25 @@ jobs:
 
       - uses: actions-rust-lang/setup-rust-toolchain@v1
 
+      - name: Fetch verified sing-box for native tests and packaging
+        shell: pwsh
+        run: |
+          $release = Invoke-RestMethod 'https://api.github.com/repos/SagerNet/sing-box/releases/tags/v1.14.4'
+          $asset = $release.assets | Where-Object name -eq 'sing-box-1.14.4-windows-amd64.zip'
+          if (-not $asset -or -not $asset.digest.StartsWith('sha256:')) { throw 'Missing official core asset digest' }
+          $archive = Join-Path $env:RUNNER_TEMP 'sing-box.zip'
+          Invoke-WebRequest $asset.browser_download_url -OutFile $archive
+          $actual = 'sha256:' + (Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -ne $asset.digest) { throw 'Core checksum mismatch' }
+          $unpack = Join-Path $env:RUNNER_TEMP 'verified-core'
+          Expand-Archive $archive $unpack
+          $binary = Get-ChildItem $unpack -Filter sing-box.exe -Recurse | Select-Object -First 1
+          if (-not $binary) { throw 'Core binary missing' }
+          "SING_BOX=$($binary.FullName)" >> $env:GITHUB_ENV
+          "SING_BOX_DIR=$($binary.DirectoryName)" >> $env:GITHUB_ENV
+          & $binary.FullName version
+          if ($LASTEXITCODE -ne 0) { throw 'Core version check failed' }
+
       - name: Rust middle layer tests
         run: |
           $log = Join-Path $env:RUNNER_TEMP "cargo-test.log"
@@ -81,6 +100,11 @@ jobs:
             exit $code
           }
 
+
+      - name: Bundle verified core
+        shell: pwsh
+        run: |
+          Copy-Item "$env:SING_BOX_DIR\*" 'build/windows/x64/runner/Release/' -Recurse -Force
 
       - name: Package
         shell: pwsh

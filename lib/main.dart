@@ -737,6 +737,14 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
     } catch (_) {
       // Managed core not installed yet — download it below.
     }
+    final bundled = resolveSingBoxPath('', _dataDir);
+    if (bundled != managed && bundled != 'sing-box.exe') {
+      try {
+        if ((await widget.bridge.coreVersion(bundled)).isNotEmpty) return bundled;
+      } catch (_) {
+        // Repair an absent/unusable installation via the managed download.
+      }
+    }
     _setMessage('正在下载 sing-box 内核（首次启动需要）…');
     await widget.bridge.startEnsureCore(_dataDir);
     for (var i = 0; i < 200; i++) {
