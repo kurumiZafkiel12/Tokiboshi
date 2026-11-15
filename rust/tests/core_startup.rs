@@ -36,7 +36,7 @@ fn occupied_port_is_reported_and_real_core_forwards_after_reconfiguration() {
     let nodes = vec![NodeSpec { name: "local".into(), outbound_json:
         r#"{"type":"socks","server":"127.0.0.1","server_port":1}"#.into() }];
     let path = scratch.join("config.json");
-    std::fs::write(&path, build_config_multi(&nodes, &settings, None).unwrap()).unwrap();
+    std::fs::write(&path, build_config_multi(&nodes, &settings, None, None).unwrap()).unwrap();
     let error = core::start_core(binary.clone(), path.to_string_lossy().into()).unwrap_err();
     assert!(error.contains("被占用"), "{error}");
     assert!(!core::core_running());
@@ -44,7 +44,7 @@ fn occupied_port_is_reported_and_real_core_forwards_after_reconfiguration() {
     let next = TcpListener::bind(("127.0.0.1", 0)).unwrap();
     settings.mixed_port = next.local_addr().unwrap().port();
     drop(next);
-    std::fs::write(&path, build_config_multi(&nodes, &settings, None).unwrap()).unwrap();
+    std::fs::write(&path, build_config_multi(&nodes, &settings, None, None).unwrap()).unwrap();
     let mut config: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
     config["experimental"]["clash_api"]["external_ui_download_url"] = serde_json::json!(format!(
         "http://127.0.0.1:{}/never-respond.zip", blocked_panel.local_addr().unwrap().port()));

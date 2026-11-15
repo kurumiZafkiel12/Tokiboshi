@@ -28,6 +28,12 @@ pub struct ParseOutcome {
     /// empty.
     #[serde(default)]
     pub providers: Vec<ProviderInfo>,
+    /// Routing profile carried by the subscription (Clash rules /
+    /// rule-providers / DNS, or native sing-box route+dns), serialized
+    /// as JSON for the FRB boundary. None = pure node list (Hermes
+    /// T069: the UI must disclose "仅节点订阅").
+    #[serde(default)]
+    pub profile_json: Option<String>,
 }
 
 /// One entry of a Clash YAML `proxy-providers:` section (http type).
@@ -911,7 +917,15 @@ pub fn parse_clash_yaml(text: &str) -> Result<ParseOutcome, String> {
     if nodes.is_empty() && providers.is_empty() {
         Err("no usable proxies in Clash YAML".to_string())
     } else {
-        Ok(ParseOutcome { nodes, skipped, providers })
+        // Carry the routing profile (rules / rule-providers / DNS)
+        // alongside the nodes (T069). A parse failure here must not
+        // fail node import — the profile is simply absent and the
+        // caller discloses "仅节点订阅".
+        let profile_json = crate::profile::parse_clash_profile(text)
+            .ok()
+            .flatten()
+            .and_then(|p| serde_json::to_string(&p).ok());
+        Ok(ParseOutcome { nodes, skipped, providers, profile_json })
     }
 }
 
@@ -943,7 +957,11 @@ fn parse_subscription_inner(text: &str, depth: usize) -> Result<ParseOutcome, St
                 outbound_json: ob.to_string(),
             }).collect();
         if nodes.is_empty() { return Err("no usable outbounds in JSON config".into()); }
-        return Ok(ParseOutcome { nodes, skipped: vec![], providers: vec![] });
+        let profile_json = crate::profile::parse_singbox_profile(text)
+            .ok()
+            .flatten()
+            .and_then(|p| serde_json::to_string(&p).ok());
+        return Ok(ParseOutcome { nodes, skipped: vec![], providers: vec![], profile_json });
     }
     if trimmed.starts_with("- ") || trimmed.lines().any(|l| {
         let t = l.trim_start();
@@ -972,7 +990,7 @@ fn parse_subscription_inner(text: &str, depth: usize) -> Result<ParseOutcome, St
         }
     }
     if nodes.is_empty() && providers.is_empty() { Err("no usable share links found".into()) }
-    else { Ok(ParseOutcome { nodes, skipped, providers }) }
+    else { Ok(ParseOutcome { nodes, skipped, providers, profile_json: None }) }
 }
 
 #[cfg(test)]

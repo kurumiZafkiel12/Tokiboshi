@@ -9,7 +9,7 @@ fn main() {
             if let Some(path) = std::env::args().nth(1) {
                 use rust_lib_tokiboshi::config::{build_config_multi, CoreSettings, NodeSpec};
                 let nodes = result.nodes.iter().map(|n| NodeSpec { name: n.name.clone(), outbound_json: n.outbound_json.clone() }).collect::<Vec<_>>();
-                let config = match build_config_multi(&nodes, &CoreSettings::default(), None) {
+                let config = match build_config_multi(&nodes, &CoreSettings::default(), None, None) {
                     Ok(config) => config,
                     Err(_) => { eprintln!("Config generation failed"); std::process::exit(2); }
                 };

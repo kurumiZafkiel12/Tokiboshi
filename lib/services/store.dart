@@ -79,6 +79,7 @@ class AppData {
     String? clashApiSecret,
     this.cleanExit = true,
     this.runningAtExit = false,
+    this.resumeConnect = false,
   }) : clashApiSecret = clashApiSecret ?? '';
 
   List<NodeInfo> nodes;
@@ -118,6 +119,12 @@ class AppData {
   /// "自动连接" then means restore that state — never auto-start
   /// after a crash (predictable, FlClash-style semantics).
   bool runningAtExit;
+
+  /// One-shot connect intent for elevated-restart handoff (CV007-01):
+  /// set right before a UAC relaunch so the elevated instance connects
+  /// regardless of the autoConnect preference, then consumed on load.
+  /// Never set by the daily auto-connect path.
+  bool resumeConnect;
 
   NodeInfo? get selected =>
       (selectedIndex >= 0 && selectedIndex < nodes.length)
@@ -239,6 +246,7 @@ class Store {
         clashApiSecret: (map['clashApiSecret'] as String?) ?? '',
         cleanExit: (map['cleanExit'] as bool?) ?? true,
         runningAtExit: runningAtExitRaw ?? migratedRunningAtExit,
+        resumeConnect: (map['resumeConnect'] as bool?) ?? false,
       );
     } catch (_) {
       return null;
@@ -279,6 +287,7 @@ class Store {
       'clashApiSecret': data.clashApiSecret,
       'cleanExit': data.cleanExit,
       'runningAtExit': data.runningAtExit,
+      'resumeConnect': data.resumeConnect,
     };
     // Rotation: previous main BECOMES the backup (rename, not copy),
     // then tmp becomes main. An unhealthy main is quarantined as

@@ -11,4 +11,5 @@ pub mod config;
 pub mod core_download;
 pub mod links;
 pub mod process;
+pub mod profile;
 mod frb_generated;

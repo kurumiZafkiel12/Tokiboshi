@@ -23,7 +23,7 @@ fn main() {
     let data_dir = std::env::args().nth(4).unwrap_or_default();
     let settings = CoreSettings { enable_tun: tun, data_dir, ..CoreSettings::default() };
     let specs: Vec<rust_lib_tokiboshi::config::NodeSpec> = outcome.nodes.iter().map(|n| rust_lib_tokiboshi::config::NodeSpec { name: n.name.clone(), outbound_json: n.outbound_json.clone() }).collect();
-    let cfg = build_config_multi(&specs, &settings, selected.as_deref()).expect("build config");
+    let cfg = build_config_multi(&specs, &settings, selected.as_deref(), None).expect("build config");
     std::fs::write(&out, cfg).expect("write config");
     eprintln!("config written: {out}");
 }

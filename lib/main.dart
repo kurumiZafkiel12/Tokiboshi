@@ -30,6 +30,18 @@ import 'src/rust/frb_generated.dart';
 /// finds the port taken, pokes the primary ("show"), and exits.
 const int kInstanceLockPort = 46513;
 
+/// The primary's lock listener. Closed EARLY during quit so a new
+/// instance started while we exit can bind and take over instead of
+/// acking against a dying primary and exiting itself (CV007-02).
+ServerSocket? _instanceLock;
+
+void _releaseInstanceLock() {
+  try {
+    _instanceLock?.close();
+  } catch (_) {}
+  _instanceLock = null;
+}
+
 /// Actions offered when the user enables/starts with TUN while the
 /// app is not elevated.
 enum _TunAction { relaunch, disableTun, cancel }
@@ -60,6 +72,7 @@ Future<void> main() async {
       lock = null;
     }
     if (lock != null) {
+      _instanceLock = lock;
       // Primary instance: only answer a signed poke (HV001-03) — an
       // unrelated service may hold some other port, so the second
       // instance requires an ack before it exits.
@@ -270,13 +283,21 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
     // 自动连接 = 上一次正常退出且内核在运行（崩溃后不自启，HV001-01）。
     // TUN 开着但应用非管理员时跳过自动连接：提权需要用户在点「启动」
     // 时确认（启动时弹 UAC 不适合在自动连接里静默触发）。
+    // resumeConnect 是提权重启的一次性意图（CV007-01）：无视
+    // autoConnect 偏好恢复连接，用后即清。
     final tunBlocked = _data.enableTun && !await _isElevated();
+    final resumeRequested = _data.resumeConnect;
+    if (_data.resumeConnect) {
+      _data.resumeConnect = false;
+      changed = true;
+    }
     if (mounted &&
         !_running &&
-        _data.autoConnect &&
-        previousCleanExit &&
-        _data.runningAtExit &&
-        _data.nodes.isNotEmpty) {
+        _data.nodes.isNotEmpty &&
+        ((previousCleanExit &&
+                _data.autoConnect &&
+                _data.runningAtExit) ||
+            resumeRequested)) {
       if (tunBlocked) {
         _setMessage(
             '自动连接已跳过：虚拟网卡需要管理员权限，请点「启动」并选择「以管理员身份重启」');
@@ -904,6 +925,10 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
 
   Future<void> _quitApp() async {
     try {
+      // Release the single-instance lock first (CV007-02): a new
+      // instance launched during our teardown must take over instead
+      // of acking against a dying primary.
+      _releaseInstanceLock();
       if (_running) {
         await widget.bridge.stopCore();
         if (_data.systemProxy) {
@@ -1204,21 +1229,23 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
     }
   }
 
-  /// Stop everything cleanly, persist "was running" state, then
-  /// relaunch this app with an elevated token (UAC prompt). The
-  /// elevated instance auto-connects and brings TUN up.
+  /// Stop everything cleanly, persist handoff intent (one-shot
+  /// resumeConnect + cleanExit + runningAtExit), THEN trigger UAC.
+  /// Nothing is torn down before the user accepts the UAC prompt:
+  /// cancelling leaves the app exactly as it was (CV007-03), and a
+  /// failed persist aborts the relaunch (CV007-04). On success the
+  /// lock is released so the elevated instance can take over
+  /// (CV007-02).
   Future<void> _relaunchElevated() async {
     try {
-      if (_running) {
-        await widget.bridge.stopCore();
-        if (_data.systemProxy) {
-          await widget.systemProxy.apply(false, _data.mixedPort);
-        }
-      }
       _data.cleanExit = true;
       _data.runningAtExit = _running;
-      await _persist();
-      await trayManager.destroy();
+      _data.resumeConnect = true;
+      final saved = await _persist();
+      if (!saved) {
+        _setMessage('配置保存失败，已取消提权重启（应用保持当前状态）');
+        return;
+      }
       final exe = Platform.resolvedExecutable;
       final result = await Process.run('powershell', [
         '-NoProfile',
@@ -1226,13 +1253,26 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
         'Start-Process -FilePath "$exe" -Verb RunAs',
       ]);
       if (result.exitCode != 0) {
-        _setMessage('已取消管理员授权（未重启）');
+        // UAC declined: consume the one-shot intent, nothing torn down.
+        _data.resumeConnect = false;
+        await _persist();
+        _setMessage('已取消管理员授权（未重启，连接保持原状）');
         return;
       }
+      if (_running) {
+        await widget.bridge.stopCore();
+        if (_data.systemProxy) {
+          await widget.systemProxy.apply(false, _data.mixedPort);
+        }
+      }
+      _releaseInstanceLock(); // CV007-02: let the elevated instance bind
+      await trayManager.destroy();
       await windowManager.destroy();
       exit(0);
     } catch (e) {
       _setMessage('提权重启失败：$e');
+      _data.resumeConnect = false;
+      await _persist();
     }
   }
 

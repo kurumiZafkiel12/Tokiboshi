@@ -88,6 +88,26 @@ pub fn assign_tags(names: &[String]) -> Vec<String> {
     out
 }
 
+/// Resolve a profile target (subscription outbound vocabulary) to the
+/// generated tag, with the app-level DIRECT/REJECT shorthands. Unknown
+/// or ambiguous names are a hard error — a broken subscription must
+/// never masquerade as a working one (T069).
+fn map_profile_target(
+    target: &str,
+    aliases: &std::collections::HashMap<String, String>,
+) -> Result<String, String> {
+    match target {
+        "DIRECT" | "direct" => Ok("direct".into()),
+        "REJECT" | "REJECT-DROP" => Ok("__tokiboshi_reject".into()),
+        t => match aliases.get(t) {
+            Some(tag) if !tag.is_empty() => Ok(tag.clone()),
+            _ => Err(format!(
+                "Profile 规则引用了未知或歧义的出站「{t}」；请检查订阅的策略组/节点名称"
+            )),
+        },
+    }
+}
+
 const LOG_LEVELS: [&str; 7] = ["trace", "debug", "info", "warn", "error", "fatal", "panic"];
 
 /// Validate a complete sing-box configuration document.
@@ -140,7 +160,7 @@ pub fn build_config(outbound: &Value, settings: &CoreSettings) -> Result<String,
             .to_string(),
         outbound_json: outbound.to_string(),
     };
-    build_config_multi(std::slice::from_ref(&spec), settings, None)
+    build_config_multi(std::slice::from_ref(&spec), settings, None, None)
 }
 
 /// Build a complete sing-box configuration for the GUI shell:
@@ -160,6 +180,7 @@ pub fn build_config_multi(
     nodes: &[NodeSpec],
     settings: &CoreSettings,
     selected_name: Option<&str>,
+    profile: Option<&crate::profile::ParsedProfile>,
 ) -> Result<String, String> {
     if nodes.is_empty() {
         return Err("no nodes to build a config from".to_string());
@@ -327,61 +348,121 @@ pub fn build_config_multi(
             None
         }
     };
-    let mut route_rules: Vec<Value> = vec![
-        json!({ "ip_is_private": true, "outbound": "direct" }),
-        // Mode rules make the Clash API mode switcher actually route:
-        // without them PATCH /configs only flips an unused variable
-        // and Global/Direct silently behave like Rule (HF053-01).
-        json!({ "clash_mode": "Direct", "outbound": "direct" }),
-        json!({ "clash_mode": "Global", "outbound": "proxy" }),
-    ];
+    // Subscription-carried profile (T069): when present, its rules
+    // REPLACE the app's built-in ads/CN template rules entirely
+    // (Hermes rule 2 — app rules must not silently preempt the
+    // subscription's own routing). The private-direct and mode rules
+    // stay: they are app-owned, always first, and never in the
+    // subscription's way.
     let mut rule_sets: Vec<Value> = Vec::new();
-    // Mode-aware DNS: in Direct mode the traffic is direct, so DNS
-    // must resolve locally too — dns.final points at dns-remote
-    // through the proxy and would still route lookups via the node
-    // (verified by Hermes against the released DLL). First match wins.
+    let mut dns_servers: Vec<Value> = vec![
+        json!({ "type": "https", "tag": "dns-remote", "server": "8.8.8.8", "detour": "proxy" }),
+        json!({ "type": "local", "tag": "dns-local" }),
+    ];
+    let mut dns_final = "dns-remote";
+    let mut route_final = "proxy";
     let mut dns_rules: Vec<Value> = vec![
         json!({ "clash_mode": "Direct", "server": "dns-local" }),
         json!({ "clash_mode": "Global", "server": "dns-remote" }),
     ];
-    if settings.block_ads {
-        if let Some(rs) = local_rule_set("geosite-category-ads-all") {
-            route_rules.push(json!({ "rule_set": ["geosite-category-ads-all"], "action": "reject" }));
-            rule_sets.push(rs);
-        }
-    }
-    if settings.bypass_cn {
-        let mut cn_tags: Vec<Value> = Vec::new();
-        for tag in ["geosite-cn", "geoip-cn"] {
-            if let Some(rs) = local_rule_set(tag) {
-                rule_sets.push(rs);
-                cn_tags.push(Value::String(tag.to_string()));
+    match profile {
+        Some(p) => {
+            for rs in &p.rule_sets {
+                let mut entry = rs.clone();
+                if let Some(obj) = entry.as_object_mut() {
+                    obj.retain(|k, _| !k.starts_with("__"));
+                    obj.entry("download_detour")
+                        .or_insert_with(|| json!("direct"));
+                }
+                rule_sets.push(entry);
+            }
+            for rule in &p.route_rules {
+                let mut rule = rule.clone();
+                // Map the outbound NAME (subscription vocabulary) to
+                // the generated TAG; unknown names are a hard error so
+                // a broken subscription can never masquerade as a
+                // working one.
+                let target = rule.get("outbound").and_then(Value::as_str).map(str::to_string);
+                if let Some(target) = target {
+                    let mapped = map_profile_target(&target, &aliases)?;
+                    if mapped == "__tokiboshi_reject" {
+                        // REJECT is expressed as a route action, so the
+                        // block outbound is only spawned for groups.
+                        if let Some(obj) = rule.as_object_mut() {
+                            obj.remove("outbound");
+                            obj.insert("action".into(), json!("reject"));
+                        }
+                    } else if let Some(obj) = rule.as_object_mut() {
+                        obj.insert("outbound".into(), Value::String(mapped));
+                    }
+                }
+                route_rules.push(rule);
+            }
+            if let Some(final_name) = &p.final_outbound {
+                let mapped = map_profile_target(final_name, &aliases)?;
+                route_final = mapped;
+            }
+            if let Some(dns) = &p.dns {
+                if let Some(servers) = dns.get("servers").and_then(Value::as_array) {
+                    if !servers.is_empty() {
+                        let first_tag = servers[0]["tag"].as_str().unwrap_or("dns-local").to_string();
+                        dns_servers = servers.clone();
+                        // The app-owned local resolver stays available
+                        // for the mode rules and domain resolution.
+                        dns_servers.insert(
+                            0,
+                            json!({ "type": "local", "tag": "dns-local" }),
+                        );
+                        // Mode-aware DNS on top of the subscription's
+                        // servers: Direct resolves locally, Global
+                        // resolves through the first subscription DNS.
+                        dns_rules = vec![
+                            json!({ "clash_mode": "Direct", "server": "dns-local" }),
+                            json!({ "clash_mode": "Global", "server": first_tag }),
+                        ];
+                        dns_final = first_tag;
+                    }
+                }
             }
         }
-        if !cn_tags.is_empty() {
-            route_rules.push(json!({ "rule_set": cn_tags, "outbound": "direct" }));
-        }
-        if rule_sets.iter().any(|rs| rs["tag"] == "geosite-cn") {
-            dns_rules.push(json!({ "rule_set": ["geosite-cn"], "action": "route", "server": "dns-local" }));
+        None => {
+            if settings.block_ads {
+                if let Some(rs) = local_rule_set("geosite-category-ads-all") {
+                    route_rules.push(json!({ "rule_set": ["geosite-category-ads-all"], "action": "reject" }));
+                    rule_sets.push(rs);
+                }
+            }
+            if settings.bypass_cn {
+                let mut cn_tags: Vec<Value> = Vec::new();
+                for tag in ["geosite-cn", "geoip-cn"] {
+                    if let Some(rs) = local_rule_set(tag) {
+                        rule_sets.push(rs);
+                        cn_tags.push(Value::String(tag.to_string()));
+                    }
+                }
+                if !cn_tags.is_empty() {
+                    route_rules.push(json!({ "rule_set": cn_tags, "outbound": "direct" }));
+                }
+                if rule_sets.iter().any(|rs| rs["tag"] == "geosite-cn") {
+                    dns_rules.push(json!({ "rule_set": ["geosite-cn"], "action": "route", "server": "dns-local" }));
+                }
+            }
         }
     }
 
     let config = json!({
         "log": { "level": settings.log_level, "timestamp": true },
         "dns": {
-            "servers": [
-                { "type": "https", "tag": "dns-remote", "server": "8.8.8.8", "detour": "proxy" },
-                { "type": "local", "tag": "dns-local" }
-            ],
+            "servers": dns_servers,
             "rules": dns_rules,
-            "final": "dns-remote"
+            "final": dns_final
         },
         "inbounds": inbounds,
         "outbounds": outbounds,
         "route": {
             "rules": route_rules,
             "rule_set": rule_sets,
-            "final": "proxy",
+            "final": route_final,
             "auto_detect_interface": true,
             "default_domain_resolver": "dns-local"
         },
@@ -408,13 +489,13 @@ mod tests {
     fn chain_references_follow_reserved_tag_renaming() {
         let nodes = vec![NodeSpec { name: "proxy".into(), outbound_json: r#"{"type":"socks","tag":"entry","server":"127.0.0.1","server_port":1080}"#.into() },
             NodeSpec { name: "exit".into(), outbound_json: r#"{"type":"socks","server":"127.0.0.1","server_port":1081,"detour":"entry"}"#.into() }];
-        let v: Value = serde_json::from_str(&build_config_multi(&nodes, &CoreSettings::default(), None).unwrap()).unwrap();
+        let v: Value = serde_json::from_str(&build_config_multi(&nodes, &CoreSettings::default(), None, None).unwrap()).unwrap();
         assert_eq!(v["outbounds"][3]["detour"], "proxy-2");
         let mut broken = nodes.clone();
         broken[1].outbound_json = broken[1].outbound_json.replace("entry", "missing");
-        assert!(build_config_multi(&broken, &CoreSettings::default(), None).unwrap_err().contains("missing detour"));
+        assert!(build_config_multi(&broken, &CoreSettings::default(), None, None).unwrap_err().contains("missing detour"));
         broken[1].outbound_json = nodes[1].outbound_json.replace("entry", "exit");
-        assert!(build_config_multi(&broken, &CoreSettings::default(), None).unwrap_err().contains("cyclic"));
+        assert!(build_config_multi(&broken, &CoreSettings::default(), None, None).unwrap_err().contains("cyclic"));
     }
 
     #[test]
@@ -434,7 +515,7 @@ mod tests {
             NodeSpec {name:"direct".into(),outbound_json:r#"{"type":"socks","server":"127.0.0.1","server_port":1080}"#.into()},
             NodeSpec {name:"group".into(),outbound_json:r#"{"type":"selector","outbounds":["direct","DIRECT","REJECT"],"_clash_proxies":["direct","DIRECT","REJECT"]}"#.into()},
         ];
-        let config: Value = serde_json::from_str(&build_config_multi(&nodes,&CoreSettings::default(),Some("group")).unwrap()).unwrap();
+        let config: Value = serde_json::from_str(&build_config_multi(&nodes,&CoreSettings::default(),Some("group"),None).unwrap()).unwrap();
         let group = config["outbounds"].as_array().unwrap().iter().find(|n| n["tag"]=="group").unwrap();
         assert_eq!(group["outbounds"],json!(["direct-2","direct","__tokiboshi_reject"]));
         assert!(group.get("_clash_proxies").is_none());
@@ -479,7 +560,7 @@ mod tests {
             data_dir: "/nonexistent-tkb".to_string(),
             ..CoreSettings::default()
         };
-        let text = build_config_multi(&nodes, &settings, None).unwrap();
+        let text = build_config_multi(&nodes, &settings, None, None).unwrap();
         let v: Value = serde_json::from_str(&text).unwrap();
         assert_eq!(v["route"]["rule_set"].as_array().unwrap().len(), 0);
         // Mode rules still present (route + DNS); only the rule-set
@@ -495,7 +576,7 @@ mod tests {
             outbound_json: r#"{"type":"socks","server":"127.0.0.1","server_port":1080}"#.to_string(),
         }];
         let settings = CoreSettings { block_ads: false, bypass_cn: false, ..Default::default() };
-        let text = build_config_multi(&nodes, &settings, None).unwrap();
+        let text = build_config_multi(&nodes, &settings, None, None).unwrap();
         let v: Value = serde_json::from_str(&text).unwrap();
         // Private direct, then the two mode rules, then nothing (no
         // rule files). Mode rules exist even when every toggle is off.
@@ -532,7 +613,7 @@ mod tests {
             data_dir: scratch.to_string_lossy().into_owned(),
             ..CoreSettings::default()
         };
-        let text = build_config_multi(&nodes, &settings, Some("节点B")).unwrap();
+        let text = build_config_multi(&nodes, &settings, Some("节点B"), None).unwrap();
         let v: Value = serde_json::from_str(&text).unwrap();
         // Groups: selector over [auto, A, B], default honours selection.
         let selector = &v["outbounds"][0];
@@ -572,7 +653,7 @@ mod tests {
             spec("dup", "c.example.com"),
             spec("", "d.example.com"),
         ];
-        let text = build_config_multi(&nodes, &CoreSettings::default(), None).unwrap();
+        let text = build_config_multi(&nodes, &CoreSettings::default(), None, None).unwrap();
         let v: Value = serde_json::from_str(&text).unwrap();
         let selector = &v["outbounds"][0];
         assert_eq!(
@@ -584,11 +665,11 @@ mod tests {
 
     #[test]
     fn multi_config_rejects_empty_and_bad_nodes() {
-        assert!(build_config_multi(&[], &CoreSettings::default(), None).is_err());
+        assert!(build_config_multi(&[], &CoreSettings::default(), None, None).is_err());
         let bad = vec![NodeSpec { name: "x".into(), outbound_json: "{}".into() }];
-        assert!(build_config_multi(&bad, &CoreSettings::default(), None).is_err());
+        assert!(build_config_multi(&bad, &CoreSettings::default(), None, None).is_err());
         let bad2 = vec![NodeSpec { name: "x".into(), outbound_json: "nope".into() }];
-        assert!(build_config_multi(&bad2, &CoreSettings::default(), None).is_err());
+        assert!(build_config_multi(&bad2, &CoreSettings::default(), None, None).is_err());
     }
 
     #[test]
@@ -607,6 +688,77 @@ mod tests {
         assert!(build_config(&outbound, &bad_port).is_err());
         let no_type = json!({"server": "x"});
         assert!(build_config(&no_type, &CoreSettings::default()).is_err());
+    }
+
+    /// T069: a subscription profile replaces the built-in ads/CN
+    /// template, keeps rule order, maps targets via the same aliases,
+    /// and overrides final from MATCH.
+    #[test]
+    fn profile_rules_replace_template_and_map_targets() {
+        let nodes = vec![
+            NodeSpec { name: "HK".into(), outbound_json: r#"{"type":"socks","server":"127.0.0.1","server_port":1080}"#.into() },
+            NodeSpec { name: "Pick".into(), outbound_json: r#"{"type":"selector","outbounds":["HK"]}"#.into() },
+        ];
+        let profile = crate::profile::ParsedProfile {
+            route_rules: vec![
+                json!({"domain_suffix":["example.net"],"outbound":"DIRECT"}),
+                json!({"ip_cidr":["10.0.0.0/8"],"outbound":"DIRECT"}),
+                json!({"domain_keyword":["blocked"],"outbound":"REJECT"}),
+                json!({"outbound":"HK"}),
+            ],
+            rule_sets: vec![],
+            final_outbound: Some("HK".into()),
+            dns: None,
+            unsupported: vec![],
+            rules_total: 4,
+        };
+        let text = build_config_multi(&nodes, &CoreSettings::default(), Some("HK"), Some(&profile)).unwrap();
+        let v: Value = serde_json::from_str(&text).unwrap();
+        let rules = v["route"]["rules"].as_array().unwrap();
+        assert_eq!(rules.len(), 3 + 4);
+        assert_eq!(rules[3]["domain_suffix"][0], "example.net");
+        assert_eq!(rules[3]["outbound"], "direct");
+        assert_eq!(rules[5]["action"], "reject");
+        assert_eq!(rules[6]["outbound"], "HK");
+        assert_eq!(v["route"]["final"], "HK");
+        assert!(v["route"]["rule_set"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn profile_unknown_target_is_a_hard_error() {
+        let nodes = vec![NodeSpec { name: "HK".into(), outbound_json: r#"{"type":"socks","server":"127.0.0.1","server_port":1080}"#.into() }];
+        let profile = crate::profile::ParsedProfile {
+            route_rules: vec![json!({"domain_suffix":["x"],"outbound":"Ghost"})],
+            rule_sets: vec![],
+            final_outbound: None,
+            dns: None,
+            unsupported: vec![],
+            rules_total: 1,
+        };
+        let err = build_config_multi(&nodes, &CoreSettings::default(), None, Some(&profile)).unwrap_err();
+        assert!(err.contains("Ghost"), "{err}");
+    }
+
+    #[test]
+    fn profile_dns_replaces_servers_and_keeps_mode_rules() {
+        let nodes = vec![NodeSpec { name: "HK".into(), outbound_json: r#"{"type":"socks","server":"127.0.0.1","server_port":1080}"#.into() }];
+        let profile = crate::profile::ParsedProfile {
+            route_rules: vec![],
+            rule_sets: vec![],
+            final_outbound: None,
+            dns: Some(json!({"servers":[{"type":"https","tag":"dns-sub-1","server":"doh.pub","server_port":443}]})),
+            unsupported: vec![],
+            rules_total: 0,
+        };
+        let text = build_config_multi(&nodes, &CoreSettings::default(), None, Some(&profile)).unwrap();
+        let v: Value = serde_json::from_str(&text).unwrap();
+        let servers = v["dns"]["servers"].as_array().unwrap();
+        assert_eq!(servers[0]["tag"], "dns-local");
+        assert!(servers.iter().any(|s| s["tag"] == "dns-sub-1"));
+        let rules = v["dns"]["rules"].as_array().unwrap();
+        assert_eq!(rules[0]["clash_mode"], "Direct");
+        assert_eq!(rules[0]["server"], "dns-local");
+        assert_eq!(rules[1]["server"], "dns-sub-1");
     }
 
     #[test]
