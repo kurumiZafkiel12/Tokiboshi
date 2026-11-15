@@ -224,7 +224,7 @@ void main() {
     // lock-failure state.
     final tmpFile = File('${file.path}.tmp');
     await tmpFile.writeAsString(
-        jsonEncode(AppData(mixedPort: 7922).toJson()..['cleanExit'] = false),
+        jsonEncode({'mixedPort': 7922, 'cleanExit': false}),
         flush: true);
     // Simulate main being lost (rotation gap between the two renames):
     // load must prefer the newer tmp over the older backup.
