@@ -105,7 +105,7 @@ fn occupied_port_is_reported_and_real_core_forwards_after_reconfiguration() {
             r#"{{"type":"socks","server":"127.0.0.1","server_port":{exit_port},"detour":"proxy"}}"#) },
     ];
     let mut config: serde_json::Value = serde_json::from_str(
-        &build_config_multi(&nodes, &settings, Some("exit")).unwrap()).unwrap();
+        &build_config_multi(&nodes, &settings, Some("exit"), None).unwrap()).unwrap();
     // Keep the generated chain, but disable probes and private-address bypass
     // so this local-only request is required to traverse both SOCKS servers.
     config["outbounds"].as_array_mut().unwrap().retain(|ob| ob["tag"] != "auto");
