@@ -1,0 +1,59 @@
+name: Chinese installer for released v0.0.5
+on:
+  push:
+    branches: ['fix/v005-recheck-installer']
+    paths: ['installer/**', '.github/workflows/installer-zh-v005.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  installer:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download and verify original v0.0.5 payload
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $root=Join-Path $env:RUNNER_TEMP 'chinese-v005'
+          New-Item $root -ItemType Directory -Force | Out-Null
+          gh release download v0.0.5 --pattern Tokiboshi-windows.zip --pattern Tokiboshi-Setup-0.0.5.exe --dir $root
+          if($LASTEXITCODE -ne 0){throw 'Release download failed'}
+          if((Get-FileHash "$root/Tokiboshi-windows.zip" -Algorithm SHA256).Hash.ToLowerInvariant() -ne '69fea32a5e0b11c314a79e71ab4ce9ed670220c0ba5e902279f57044a5890804'){throw 'Portable checksum mismatch'}
+          if((Get-FileHash "$root/Tokiboshi-Setup-0.0.5.exe" -Algorithm SHA256).Hash.ToLowerInvariant() -ne '4a426f8b3ffc00daf62bb2cd718f77e1e8d6b566a3b17c7d43bbc25d70f38452'){throw 'Installer checksum mismatch'}
+          $release=Join-Path $env:GITHUB_WORKSPACE 'build/windows/x64/runner/Release'
+          Expand-Archive "$root/Tokiboshi-windows.zip" $release
+          $files=@(Get-ChildItem $release -File -Recurse | ForEach-Object { $_.FullName.Substring($release.Length+1).Replace('\','/') })
+          ConvertTo-Json -InputObject @($files+'installer-files.json') | Set-Content "$release/installer-files.json" -Encoding utf8
+          "INSTALLER_AUDIT=$root" >> $env:GITHUB_ENV
+          "PUBLISHED_PAYLOAD=$release" >> $env:GITHUB_ENV
+      - name: Test path-scoped process shutdown and cleanup helper
+        shell: powershell
+        run: ./installer/tests/upgrade-helper.ps1 -OutputDir "$env:INSTALLER_AUDIT/results"
+      - name: Build Chinese installer
+        shell: pwsh
+        run: |
+          $iscc='C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
+          if(-not(Test-Path $iscc)){choco install innosetup -y --no-progress}
+          & $iscc '/DAppVersion=0.0.5' '/DOutputSuffix=-zh' 'installer/tokiboshi.iss'
+          if($LASTEXITCODE -ne 0){throw 'Chinese installer compilation failed'}
+      - name: Test actual old install and unattended Chinese upgrade
+        shell: powershell
+        run: ./installer/tests/upgrade-install.ps1 -Installer "$env:GITHUB_WORKSPACE/Tokiboshi-Setup-0.0.5-zh.exe" -OldInstaller "$env:INSTALLER_AUDIT/Tokiboshi-Setup-0.0.5.exe" -Payload $env:PUBLISHED_PAYLOAD -OutputDir "$env:INSTALLER_AUDIT/results"
+      - name: Record installer checksum
+        shell: pwsh
+        run: |
+          $hash=(Get-FileHash Tokiboshi-Setup-0.0.5-zh.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  Tokiboshi-Setup-0.0.5-zh.exe" | Set-Content 'SHA256SUMS-zh.txt' -Encoding ascii
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: v005-chinese-installer
+          path: |
+            Tokiboshi-Setup-0.0.5-zh.exe
+            SHA256SUMS-zh.txt
+            ${{ env.INSTALLER_AUDIT }}/results/

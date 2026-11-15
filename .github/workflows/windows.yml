@@ -106,6 +106,13 @@ jobs:
         run: |
           Copy-Item "$env:SING_BOX_DIR\*" 'build/windows/x64/runner/Release/' -Recurse -Force
 
+      - name: Record owned installation files
+        shell: pwsh
+        run: |
+          $root = (Resolve-Path 'build/windows/x64/runner/Release').Path
+          $files = @(Get-ChildItem $root -File -Recurse | ForEach-Object { $_.FullName.Substring($root.Length + 1).Replace('\','/') })
+          ConvertTo-Json -InputObject @($files + 'installer-files.json') | Set-Content "$root/installer-files.json" -Encoding utf8
+
       - name: Package
         shell: pwsh
         run: |
