@@ -83,7 +83,7 @@ void main(){
  });
  testWidgets('start dialog cancel leaves stopped without launch', (t) async {
   final (s,m,b,p)=await mount(t);
-  final f=app.auditToggle(s);await t.pumpAndSettle();
+  final f=app.auditToggle(s);await t.pump();await t.pump(const Duration(milliseconds:350));
   expect(find.text('关闭虚拟网卡并继续'),findsOneWidget);
   await t.tap(find.text('取消'));await t.pumpAndSettle();await f;
   evidence['start_dialog_cancel']={'state':app.auditSnapshot(s),'events':List.of(events)};
@@ -92,7 +92,7 @@ void main(){
  });
  testWidgets('start dialog disable TUN then actually starts fake core', (t) async {
   final (s,m,b,p)=await mount(t);
-  final f=app.auditToggle(s);await t.pumpAndSettle();
+  final f=app.auditToggle(s);await t.pump();await t.pump(const Duration(milliseconds:350));
   await t.tap(find.text('关闭虚拟网卡并继续'));await t.pumpAndSettle();await f;
   evidence['start_dialog_disable']={'state':app.auditSnapshot(s),'events':List.of(events)};
   expect(b.running,true);expect(m.data.enableTun,false);expect(events.contains('powershell'),false);
@@ -100,7 +100,7 @@ void main(){
  });
  testWidgets('DEFECT stopped start relaunch persists runningAtExit false', (t) async {
   final (s,m,b,p)=await mount(t);
-  final f=app.auditToggle(s);await t.pumpAndSettle();
+  final f=app.auditToggle(s);await t.pump();await t.pump(const Duration(milliseconds:350));
   await t.tap(find.text('以管理员身份重启'));await t.pumpAndSettle();await f;
   evidence['stopped_relaunch']={'state':app.auditSnapshot(s),'saved':m.saved,'events':List.of(events),'exit':app.auditExitCode};
   expect(m.saved.last['runningAtExit'],false);expect(app.auditExitCode,0);
