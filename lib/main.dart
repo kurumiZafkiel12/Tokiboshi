@@ -18,6 +18,7 @@ import 'pages/subscriptions_page.dart';
 import 'services/clash_api.dart';
 import 'services/latency.dart';
 import 'services/local_ports.dart';
+import 'services/elevated_handoff.dart';
 import 'services/node_tags.dart';
 import 'services/proxy_chain.dart';
 import 'services/store.dart';
@@ -59,7 +60,16 @@ Future<bool> _isElevated() async {
   }
 }
 
-Future<void> main() async {
+Future<void> main(List<String> args) async {
+  final handoff = args.where((a) => a.startsWith('--wait-parent=')).toList();
+  if (handoff.isNotEmpty) {
+    final parent = handoff.length == 1 ? int.tryParse(handoff.single.split('=').last) : null;
+    if (parent == null || !await waitForParentExit(parent)) {
+      stderr.writeln('提权交接未完成：原实例尚未退出');
+      exitCode = 1;
+      return;
+    }
+  }
   WidgetsFlutterBinding.ensureInitialized();
   if (Platform.isWindows) {
     // Single instance (user report: two copies could run at once and
@@ -289,7 +299,7 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
     final resumeRequested = _data.resumeConnect;
     if (_data.resumeConnect) {
       _data.resumeConnect = false;
-      changed = true;
+      if (!await _persist()) return;
     }
     if (mounted &&
         !_running &&
@@ -324,7 +334,10 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
   /// machine, HF053-05): a restart blip is tolerated for a few
   /// seconds, an auto-restart recovers the UI and system proxy, and
   /// only a sustained stop (or a user stop) tears the proxy down.
+  bool _handoffInProgress = false;
+
   Future<void> _syncCoreStatus() async {
+    if (_handoffInProgress) return;
     try {
       final status = await widget.bridge.coreStatus();
       if (!mounted) return;
@@ -1207,6 +1220,8 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
   }
 
   Future<void> _setTun(bool value) async {
+    if (_busy || _handoffInProgress) return;
+    final beforeToggle = _data.copyWith();
     setState(() {
       _data.enableTun = value;
     });
@@ -1233,7 +1248,7 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
       );
       if (!mounted) return;
       if (relaunch == true) {
-        await _relaunchElevated();
+        await _relaunchElevated(rollback: beforeToggle);
         return;
       }
       setState(() {
@@ -1260,11 +1275,12 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
   /// failed persist aborts the relaunch (CV007-04). On success the
   /// lock is released so the elevated instance can take over
   /// (CV007-02).
-  Future<void> _relaunchElevated() async {
+  Future<void> _relaunchElevated({AppData? rollback}) async {
     // Full snapshot of everything this attempt mutates: ANY exit path
     // that does not end in a successful UAC launch restores it (Codex
     // CV007-01/03/04 remainders).
-    final snapshot = _data.copyWith();
+    final snapshot = rollback ?? _data.copyWith();
+    _handoffInProgress = true;
     try {
       _data.cleanExit = true;
       _data.runningAtExit = _running;
@@ -1273,14 +1289,16 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
         // CV007-04: handoff state could not be written - abort with
         // the in-memory state restored to the pre-attempt snapshot.
         if (mounted) setState(() => _data = snapshot);
+        await _persist(); // Replace any recoverable tmp handoff intent too.
         _setMessage('配置保存失败，已取消提权重启（应用保持当前状态）');
         return;
       }
       final exe = Platform.resolvedExecutable;
+      final quotedExe = exe.replaceAll("'", "''");
       final result = await Process.run('powershell', [
         '-NoProfile',
         '-Command',
-        'Start-Process -FilePath "$exe" -Verb RunAs',
+        "Start-Process -FilePath '$quotedExe' -ArgumentList '--wait-parent=$pid' -Verb RunAs -ErrorAction Stop",
       ]);
       if (result.exitCode != 0) {
         // UAC declined: restore the pre-attempt state exactly
@@ -1307,6 +1325,8 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
       if (mounted) setState(() => _data = snapshot);
       await _persist();
       _setMessage('提权重启失败：$e');
+    } finally {
+      _handoffInProgress = false;
     }
   }
 

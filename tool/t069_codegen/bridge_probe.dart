@@ -49,6 +49,9 @@ dns:
   final pure=await bridge.parseSubscription('socks://127.0.0.1:1#plain');
   results['nodesOnlyProfileNull']=pure.profileJson==null;
   if(pure.profileJson!=null)throw StateError('invented profile');
+  final converted=jsonDecode(await bridge.convertRuleProvider(text: "payload:\n - '+.example.com'\n",behavior:'domain',format:'yaml'));
+  if(converted[0]['domain_suffix'][0]!='example.com')throw StateError('provider conversion failed');
+  results['yamlProviderConverted']=converted;
   results['passed']=true;
  } finally {
   await File('${out.path}/bridge-probe-results.json').writeAsString(const JsonEncoder.withIndent('  ').convert(results));

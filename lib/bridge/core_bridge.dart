@@ -142,6 +142,7 @@ class EnsureState {
 }
 
 abstract class CoreBridge {
+  Future<String> convertRuleProvider({required String text, required String behavior, required String format});
   /// Parse one share link into a node.
   Future<NodeInfo> parseShareLink(String link);
 

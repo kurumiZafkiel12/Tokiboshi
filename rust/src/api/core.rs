@@ -319,3 +319,8 @@ pub fn ensure_core_state() -> EnsureState {
 pub fn parse_subscription(text: String) -> Result<crate::links::ParseOutcome, String> {
     crate::links::parse_subscription(&text)
 }
+
+/// Convert a downloaded Clash rule-provider payload; never emit raw YAML as JSON source.
+pub fn convert_rule_provider(text: String, behavior: String, format: String) -> Result<String,String> {
+    crate::profile::convert_provider(&text,&behavior,&format).map(|v|v.to_string())
+}

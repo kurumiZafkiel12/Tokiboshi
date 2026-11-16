@@ -7,6 +7,9 @@ import 'core_bridge.dart';
 
 class RustCoreBridge implements CoreBridge {
   @override
+  Future<String> convertRuleProvider({required String text, required String behavior, required String format}) =>
+      rust_api.convertRuleProvider(text: text, behavior: behavior, format: format);
+  @override
   Future<NodeInfo> parseShareLink(String link) async {
     final n = await rust_api.parseShareLink(link: link);
     return NodeInfo(name: n.name, outboundJson: n.outboundJson);

@@ -1,7 +1,7 @@
 name: T069 codegen and Windows verification (no publish)
 on:
   push:
-    branches: ['audit/t069-codegen-codex']
+    branches: ['audit/t069-codegen-codex', 'release/v0.0.8-codex']
   workflow_dispatch:
 permissions:
   contents: read

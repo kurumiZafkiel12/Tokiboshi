@@ -921,9 +921,7 @@ pub fn parse_clash_yaml(text: &str) -> Result<ParseOutcome, String> {
         // alongside the nodes (T069). A parse failure here must not
         // fail node import — the profile is simply absent and the
         // caller discloses "仅节点订阅".
-        let profile_json = crate::profile::parse_clash_profile(text)
-            .ok()
-            .flatten()
+        let profile_json = crate::profile::parse_clash_profile(text)?
             .and_then(|p| serde_json::to_string(&p).ok());
         Ok(ParseOutcome { nodes, skipped, providers, profile_json })
     }
@@ -957,9 +955,7 @@ fn parse_subscription_inner(text: &str, depth: usize) -> Result<ParseOutcome, St
                 outbound_json: ob.to_string(),
             }).collect();
         if nodes.is_empty() { return Err("no usable outbounds in JSON config".into()); }
-        let profile_json = crate::profile::parse_singbox_profile(text)
-            .ok()
-            .flatten()
+        let profile_json = crate::profile::parse_singbox_profile(text)?
             .and_then(|p| serde_json::to_string(&p).ok());
         return Ok(ParseOutcome { nodes, skipped: vec![], providers: vec![], profile_json });
     }

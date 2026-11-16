@@ -402,20 +402,15 @@ pub fn build_config_multi(
                 if let Some(cc) = rule.get("__geoip").and_then(Value::as_str) {
                     let cc_l = cc.to_ascii_lowercase();
                     let tag = format!("geoip-{cc_l}");
-                    if cc_l == "cn" {
-                        let path = std::path::Path::new(&settings.data_dir)
-                            .join("rules")
-                            .join("geoip-cn.srs");
-                        rule_sets.push(json!({
-                            "type": "local", "tag": tag, "format": "binary",
-                            "path": path.to_string_lossy(),
-                        }));
-                    } else {
-                        rule_sets.push(json!({
-                            "type": "remote", "tag": tag, "format": "binary",
-                            "url": format!("https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-{cc_l}.srs"),
-                            "download_detour": "direct",
-                        }));
+                    let path = std::path::Path::new(&settings.data_dir).join("rules").join(format!("{tag}.srs"));
+                    if !rule_sets.iter().any(|rs| rs["tag"] == tag) {
+                        if path.is_file() {
+                            rule_sets.push(json!({"type":"local","tag":tag,"format":"binary","path":path.to_string_lossy()}));
+                        } else {
+                            rule_sets.push(json!({"type":"remote","tag":tag,"format":"binary",
+                                "url":format!("https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/{tag}.srs"),
+                                "download_detour":"direct"}));
+                        }
                     }
                     rule.as_object_mut().unwrap().remove("__geoip");
                     rule.as_object_mut().unwrap().insert(
@@ -541,7 +536,7 @@ pub fn build_config_multi(
         }
     }
 
-    let config = json!({
+    let mut config = json!({
         "log": { "level": settings.log_level, "timestamp": true },
         "dns": {
             "servers": dns_servers,
@@ -569,6 +564,18 @@ pub fn build_config_multi(
             }
         }
     });
+    if let Some(native_dns) = profile.filter(|p| p.dns_native).and_then(|p| p.dns.as_ref()) {
+        config["dns"] = native_dns.clone();
+        // Keep all original DNS fields and references. Pick an existing resolver
+        // for app-owned domain dialing rather than inserting a dangling tag.
+        let resolver = native_dns.get("final").and_then(Value::as_str)
+            .or_else(|| native_dns.get("servers")?.as_array()?.first()?.get("tag")?.as_str());
+        if let Some(resolver)=resolver {
+            config["route"]["default_domain_resolver"]=json!(resolver);
+        } else {
+            return Err("原生DNS缺少可用的final/服务器tag".into());
+        }
+    }
     serde_json::to_string_pretty(&config).map_err(|e| e.to_string())
 }
 
