@@ -65,7 +65,7 @@ dns:
   if(sets.single['type']!='inline')throw StateError('raw provider escaped conversion');
   await File('${out.path}/bridge-runtime.json').writeAsString(providerConfig);
   final providerCheck=await Process.run(env['SING_BOX']!,['check','-c','${out.path}/bridge-runtime.json']);
-  if(providerCheck.exitCode!=0)throw StateError('converted provider failed check');
+  if(providerCheck.exitCode!=0)throw StateError('converted provider failed check: ${providerCheck.stderr}');
   results['rootProviderPipeline']={'inline':true,'checkExit':providerCheck.exitCode};
   results['passed']=true;
  } finally {

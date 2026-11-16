@@ -390,8 +390,9 @@ pub fn build_config_multi(
                     // a leaked `_no_resolve` is an unknown field for the
                     // kernel (T069-S01).
                     obj.retain(|k, _| !k.starts_with('_'));
-                    obj.entry("download_detour")
-                        .or_insert_with(|| json!("direct"));
+                    if obj.get("type").and_then(Value::as_str) == Some("remote") {
+                        obj.entry("download_detour").or_insert_with(|| json!("direct"));
+                    }
                 }
                 rule_sets.push(entry);
             }

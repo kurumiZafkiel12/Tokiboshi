@@ -17,6 +17,7 @@ jobs:
           channel: stable
       - uses: actions-rust-lang/setup-rust-toolchain@v1
       - uses: actions/cache@v4
+        id: codegen-cache
         with:
           path: |
             ~/.cargo/bin/flutter_rust_bridge_codegen.exe
@@ -39,6 +40,13 @@ jobs:
           "DART_BIN=$dartBin" >> $env:GITHUB_ENV
           "T069_OUT=$env:RUNNER_TEMP/t069-semantic" >> $env:GITHUB_ENV
           if ($LASTEXITCODE -ne 0) { throw 'Codegen version failed' }
+      - uses: actions/cache/save@v4
+        if: steps.codegen-cache.outputs.cache-hit != 'true'
+        with:
+          path: |
+            ~/.cargo/bin/flutter_rust_bridge_codegen.exe
+            ~/.cargo/bin/cargo-expand.exe
+          key: windows-frb-codegen-2.11.1-v2
       - name: Regenerate and record generated difference
         shell: pwsh
         run: |
