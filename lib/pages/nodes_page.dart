@@ -1,327 +1,399 @@
 import 'package:flutter/material.dart';
-
 import '../bridge/core_bridge.dart';
 import '../services/store.dart';
 import '../services/subscription_resolver.dart';
+import '../ui/design.dart';
+import '../ui/node_widgets.dart';
+import '../ui/preferences.dart';
 
-const _protocolColors = <String, Color>{
-  'vless': Color(0xFF42A5F5),
-  'vmess': Color(0xFFAB47BC),
-  'trojan': Color(0xFFFF7043),
-  'hysteria2': Color(0xFFEC407A),
-  'hysteria': Color(0xFFEC407A),
-  'shadowsocks': Color(0xFF26A69A),
-  'socks': Color(0xFF8D6E63),
-  'http': Color(0xFF78909C),
-  'tuic': Color(0xFF7E57C2),
-};
-
-/// Node selection: group filter chips (all / manual / each
-/// subscription) over a card grid — name, protocol, latency,
-/// selected check. Tapping a card selects the node; while the core
-/// runs the shell also switches it live through the Clash API.
 class NodesPage extends StatefulWidget {
-  const NodesPage({
-    super.key,
-    required this.nodes,
-    required this.subscriptions,
-    required this.selectedIndex,
-    required this.running,
-    required this.busy,
-    required this.latency,
-    required this.onSelect,
-    required this.onDelete,
-    required this.onImport,
-    required this.onMeasureAll,
-    this.onCreateChain,
-  });
-
+  const NodesPage(
+      {super.key,
+      required this.nodes,
+      required this.subscriptions,
+      required this.selectedIndex,
+      required this.running,
+      required this.busy,
+      required this.latency,
+      required this.onSelect,
+      required this.onDelete,
+      required this.onImport,
+      required this.onMeasureAll,
+      this.onCreateChain,
+      this.onMeasureNode});
   final List<NodeInfo> nodes;
   final List<Subscription> subscriptions;
   final int selectedIndex;
-  final bool running;
-  final bool busy;
+  final bool running, busy;
   final Map<NodeInfo, int?> latency;
-  final ValueChanged<int> onSelect;
-  final ValueChanged<int> onDelete;
-  final VoidCallback onImport;
-  final VoidCallback onMeasureAll;
+  final ValueChanged<int> onSelect, onDelete;
+  final VoidCallback onImport, onMeasureAll;
   final VoidCallback? onCreateChain;
-
+  final ValueChanged<NodeInfo>? onMeasureNode;
   @override
   State<NodesPage> createState() => _NodesPageState();
 }
 
 class _NodesPageState extends State<NodesPage> {
-  String _query = '';
+  String _query = '', _group = '';
+  bool _grid = false, _sort = false;
+  final _search = TextEditingController();
+  @override
+  void dispose() {
+    _search.dispose();
+    super.dispose();
+  }
 
-  /// '' = all groups; otherwise a subscription id, or '__manual'.
-  String _group = '';
+  void _details(int index) {
+    final n = widget.nodes[index];
+    showNodeDetails(context, n, widget.subscriptions, widget.latency,
+        onSelect: widget.busy ? null : () => widget.onSelect(index),
+        onMeasure: widget.busy ? null : () => widget.onMeasureNode?.call(n),
+        onDelete: widget.running || widget.busy ? null : () => _delete(index));
+  }
+
+  Future<void> _delete(int index) async {
+    final confirm = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+                title: const Text('删除节点？'),
+                content:
+                    Text('将移除「${widget.nodes[index].name}」。订阅节点在下次更新时可能重新出现。'),
+                actions: [
+                  TextButton(
+                      onPressed: () => Navigator.pop(context, false),
+                      child: const Text('取消')),
+                  FilledButton(
+                      onPressed: () => Navigator.pop(context, true),
+                      child: const Text('删除'))
+                ]));
+    if (confirm == true && mounted) widget.onDelete(index);
+  }
 
   @override
   Widget build(BuildContext context) {
-    final policyIndex = _group.startsWith('policy:') ? int.tryParse(_group.substring(7)) : null;
-    final policyMembers = policyIndex != null && policyIndex < widget.nodes.length
-        ? policyNodeIndices(widget.nodes, policyIndex) : <int>{};
-    bool inGroup(NodeInfo n) {
+    final policyIndex =
+        _group.startsWith('policy:') ? int.tryParse(_group.substring(7)) : null;
+    final members = policyIndex != null && policyIndex < widget.nodes.length
+        ? policyNodeIndices(widget.nodes, policyIndex)
+        : <int>{};
+    bool visible(NodeInfo n, int i) {
       if (n.isPolicy) return false;
-      if (policyIndex != null) return policyMembers.contains(widget.nodes.indexOf(n));
-      if (_group.isEmpty) return true;
-      if (_group == '__manual') return n.source.isEmpty;
-      if (_group.startsWith('provider:')) {
-        return n.group == _group.substring('provider:'.length);
+      if (policyIndex != null && !members.contains(i)) return false;
+      if (policyIndex == null && _group.isNotEmpty) {
+        if (_group == '__manual') {
+          if (n.source.isNotEmpty) return false;
+        } else if (_group.startsWith('provider:')) {
+          if (n.group != _group.substring(9)) return false;
+        } else if (n.source != _group) return false;
       }
-      return n.source == _group;
+      return '${n.name} ${n.server} ${n.protocol} ${regionLabel(n)} ${sourceLabel(n, widget.subscriptions)}'
+          .toLowerCase()
+          .contains(_query);
     }
 
-    final visible = <int>[
+    final indices = [
       for (var i = 0; i < widget.nodes.length; i++)
-        if (inGroup(widget.nodes[i]) &&
-            (_query.isEmpty ||
-                widget.nodes[i].name.toLowerCase().contains(_query) ||
-                widget.nodes[i].server.toLowerCase().contains(_query)))
-          i,
+        if (visible(widget.nodes[i], i)) i
     ];
-    final hasManual = widget.nodes.any((n) => n.source.isEmpty);
-    final providerNames = <String>[];
-    for (final n in widget.nodes) {
-      if (n.group.isNotEmpty && !providerNames.contains(n.group)) {
-        providerNames.add(n.group);
-      }
-    }
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(20, 20, 20, 8),
-          child: Row(
-            children: [
-              Text('节点选择（${widget.nodes.where((n) => !n.isPolicy).length}）',
-                  style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w600)),
-              const Spacer(),
-              OutlinedButton.icon(
-                onPressed: widget.busy || widget.running || widget.nodes.length < 2 ? null : widget.onCreateChain,
-                icon: const Icon(Icons.link, size: 18),
-                label: const Text('链式代理'),
-              ),
-              const SizedBox(width: 8),
-              OutlinedButton.icon(
-                onPressed: widget.busy ? null : widget.onMeasureAll,
-                icon: const Icon(Icons.speed, size: 18),
-                label: const Text('测速全部'),
-              ),
-              const SizedBox(width: 8),
-              FilledButton.icon(
-                onPressed: widget.busy || widget.running ? null : widget.onImport,
-                icon: const Icon(Icons.add_link, size: 18),
-                label: const Text('导入'),
-              ),
-            ],
-          ),
-        ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(20, 4, 20, 4),
-          child: TextField(
-            decoration: const InputDecoration(
-              prefixIcon: Icon(Icons.search),
-              hintText: '搜索节点名或服务器',
-              border: OutlineInputBorder(),
-              isDense: true,
-            ),
-            onChanged: (v) => setState(() => _query = v.trim().toLowerCase()),
-          ),
-        ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(20, 4, 20, 8),
-          child: Wrap(
-            spacing: 8,
-            runSpacing: 6,
-            children: [
-              ChoiceChip(
-                label: const Text('全部'),
-                selected: _group.isEmpty,
-                onSelected: (_) => setState(() => _group = ''),
-              ),
-              for (var i = 0; i < widget.nodes.length; i++)
-                if (widget.nodes[i].isPolicy)
-                  ChoiceChip(
-                    label: Text(widget.nodes[i].name),
-                    selected: _group == 'policy:$i',
-                    onSelected: widget.busy ? null : (_) {
-                      setState(() => _group = 'policy:$i');
-                      widget.onSelect(i);
-                    },
-                  ),
-              if (hasManual)
-                ChoiceChip(
-                  label: const Text('手动导入'),
-                  selected: _group == '__manual',
-                  onSelected: (_) => setState(() => _group = '__manual'),
-                ),
-              for (final s in widget.subscriptions)
-                ChoiceChip(
-                  label: Text(s.name),
-                  selected: _group == s.id,
-                  onSelected: (_) => setState(() => _group = s.id),
-                ),
-              for (final name in providerNames)
-                ChoiceChip(
-                  label: Text(name),
-                  selected: _group == 'provider:$name',
-                  onSelected: (_) => setState(() => _group = 'provider:$name'),
-                ),
-            ],
-          ),
-        ),
-        Expanded(
-          child: widget.nodes.isEmpty
-              ? const Center(child: Text('还没有节点，点右上角「导入」粘贴链接或订阅地址'))
-              : visible.isEmpty
-                  ? const Center(child: Text('这个分组里没有匹配的节点'))
-                  : _groupedNodes(context, visible),
-        ),
-      ],
-    );
+    if (_sort)
+      indices.sort((a, b) => (widget.latency[widget.nodes[a]] ?? 0x7fffffff)
+          .compareTo(widget.latency[widget.nodes[b]] ?? 0x7fffffff));
+    final providers =
+        widget.nodes.map((n) => n.group).where((g) => g.isNotEmpty).toSet();
+    return Padding(
+        padding: const EdgeInsets.fromLTRB(22, 20, 22, 12),
+        child:
+            Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          PageHeading('节点选择（${widget.nodes.where((n) => !n.isPolicy).length}）',
+              '按来源筛选，选择适合当前连接的出口。',
+              eyebrow: 'FIND YOUR NEXT CONNECTION.',
+              actions: [
+                if (widget.onCreateChain != null)
+                  OutlinedButton.icon(
+                      onPressed: widget.busy ||
+                              widget.running ||
+                              widget.nodes.length < 2
+                          ? null
+                          : widget.onCreateChain,
+                      icon: const Icon(Icons.link, size: 16),
+                      label: const Text('链式代理')),
+                OutlinedButton.icon(
+                    onPressed: widget.busy ? null : widget.onMeasureAll,
+                    icon: const Icon(Icons.speed, size: 16),
+                    label: const Text('测速全部')),
+                FilledButton.icon(
+                    onPressed:
+                        widget.busy || widget.running ? null : widget.onImport,
+                    icon: const Icon(Icons.add, size: 16),
+                    label: const Text('导入'))
+              ]),
+          SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(children: [
+                _filter('全部', ''),
+                for (var i = 0; i < widget.nodes.length; i++)
+                  if (widget.nodes[i].isPolicy)
+                    _filter(widget.nodes[i].name, 'policy:$i', policy: i),
+                if (widget.nodes.any((n) => n.source.isEmpty))
+                  _filter('手动导入', '__manual'),
+                for (final sub in widget.subscriptions)
+                  _filter(sub.name, sub.id),
+                for (final p in providers) _filter(p, 'provider:$p')
+              ])),
+          const SizedBox(height: 10),
+          Row(children: [
+            Expanded(
+                child: TextField(
+                    controller: _search,
+                    decoration: InputDecoration(
+                        prefixIcon: const Icon(Icons.search, size: 17),
+                        hintText: '搜索节点名或服务器、地区、协议',
+                        suffixIcon: _query.isEmpty
+                            ? null
+                            : IconButton(
+                                tooltip: '清除搜索',
+                                onPressed: () {
+                                  _search.clear();
+                                  setState(() => _query = '');
+                                },
+                                icon: const Icon(Icons.close, size: 15))),
+                    onChanged: (v) =>
+                        setState(() => _query = v.trim().toLowerCase()))),
+            const SizedBox(width: 8),
+            IconButton(
+                tooltip: '按延迟排序',
+                isSelected: _sort,
+                onPressed: () => setState(() => _sort = !_sort),
+                icon: const Icon(Icons.sort)),
+            IconButton(
+                tooltip: '列表视图',
+                isSelected: !_grid,
+                onPressed: () => setState(() => _grid = false),
+                icon: const Icon(Icons.view_list_outlined)),
+            IconButton(
+                tooltip: '卡片视图',
+                isSelected: _grid,
+                onPressed: () => setState(() => _grid = true),
+                icon: const Icon(Icons.grid_view_outlined))
+          ]),
+          const SizedBox(height: 14),
+          Expanded(
+              child: widget.nodes.isEmpty
+                  ? EmptyView('还没有节点', '导入分享链接或订阅，开始建立连接。',
+                      icon: Icons.dns_outlined,
+                      action: FilledButton(
+                          onPressed: widget.onImport,
+                          child: const Text('导入节点')))
+                  : indices.isEmpty
+                      ? EmptyView('没有找到匹配的节点', '试试其他来源或关键词。',
+                          icon: Icons.search,
+                          action: TextButton(
+                              onPressed: () {
+                                _search.clear();
+                                setState(() {
+                                  _query = '';
+                                  _group = '';
+                                });
+                              },
+                              child: const Text('清除筛选')))
+                      : _grouped(indices)),
+          const SizedBox(height: 9),
+          Row(children: [
+            Expanded(
+                child: Text(
+                    '显示 ${indices.length} / ${widget.nodes.where((n) => !n.isPolicy).length} 个节点',
+                    style: Theme.of(context).textTheme.bodySmall)),
+            Text('延迟来自实际测试', style: Theme.of(context).textTheme.bodySmall)
+          ])
+        ]));
   }
 
-  Widget _groupedNodes(BuildContext context, List<int> visible) {
+  Widget _filter(String label, String value, {int? policy}) => Padding(
+      padding: const EdgeInsets.only(right: 6),
+      child: ChoiceChip(
+          label: Text(label),
+          selected: _group == value,
+          onSelected: widget.busy
+              ? null
+              : (_) {
+                  setState(() => _group = value);
+                  if (policy != null) widget.onSelect(policy);
+                }));
+  Widget _grouped(List<int> indices) {
     final groups = <String, List<int>>{};
     final labels = <String, String>{};
-    for (final i in visible) {
-      final node = widget.nodes[i];
-      final key = '${node.source}\u0000${node.group}';
-      final subscription = widget.subscriptions.where((s) => s.id == node.source);
-      final sourceName = subscription.isEmpty ? '手动导入' : subscription.first.name;
-      labels[key] = node.group.isEmpty ? sourceName : '$sourceName / ${node.group}';
+    for (final i in indices) {
+      final n = widget.nodes[i], key = '${n.source}\u0000${n.group}';
       groups.putIfAbsent(key, () => []).add(i);
+      labels[key] = sourceLabel(n, widget.subscriptions);
     }
     final keys = groups.keys.toList();
-    return ListView.builder(
-      padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
-      itemCount: keys.length,
-      itemBuilder: (context, index) {
-        final key = keys[index];
-        final indices = groups[key]!;
-        return Card(child: ExpansionTile(
-          key: PageStorageKey('$_group/$_query/$key'),
-          initiallyExpanded: keys.length <= 3 || _group.isNotEmpty || _query.isNotEmpty,
-          title: Text('${labels[key]}（${indices.length}）'),
-          leading: const Icon(Icons.folder_outlined),
-          childrenPadding: const EdgeInsets.all(10),
-          children: [GridView.builder(
-            // ExpansionTile stores a bool in PageStorage; its child scroll
-            // position must have a distinct key to avoid reading that as double.
-            key: PageStorageKey('nodes-grid/$key'),
-            primary: false,
-            shrinkWrap: true, physics: const NeverScrollableScrollPhysics(),
-            gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-              maxCrossAxisExtent: 300, mainAxisExtent: 100,
-              crossAxisSpacing: 10, mainAxisSpacing: 10,
-            ),
-            itemCount: indices.length,
-            itemBuilder: (context, i) => _nodeCard(context, indices[i], widget.nodes[indices[i]]),
-          )],
-        ));
-      },
-    );
+    return ListView.separated(
+        itemCount: keys.length,
+        separatorBuilder: (_, __) => const SizedBox(height: 10),
+        itemBuilder: (context, g) {
+          final key = keys[g], items = groups[key]!;
+          return Panel(
+              padding: EdgeInsets.zero,
+              child: ExpansionTile(
+                  key: PageStorageKey('$_group/$_query/$key'),
+                  initiallyExpanded: keys.length <= 3 ||
+                      _group.isNotEmpty ||
+                      _query.isNotEmpty,
+                  shape: const Border(),
+                  collapsedShape: const Border(),
+                  dense: true,
+                  leading: Icon(Icons.folder_outlined,
+                      size: 18, color: Theme.of(context).colorScheme.primary),
+                  title: Text('${labels[key]}（${items.length}）',
+                      style: const TextStyle(
+                          fontSize: 12, fontWeight: FontWeight.w500)),
+                  children: [
+                    if (_grid)
+                      GridView.builder(
+                          key: PageStorageKey('nodes-grid/$key'),
+                          primary: false,
+                          shrinkWrap: true,
+                          physics: const NeverScrollableScrollPhysics(),
+                          padding: const EdgeInsets.all(12),
+                          gridDelegate:
+                              const SliverGridDelegateWithMaxCrossAxisExtent(
+                                  maxCrossAxisExtent: 320,
+                                  mainAxisExtent: 118,
+                                  crossAxisSpacing: 10,
+                                  mainAxisSpacing: 10),
+                          itemCount: items.length,
+                          itemBuilder: (context, row) => _card(items[row]))
+                    else ...[
+                      const Divider(height: 1),
+                      for (final i in items) _row(i)
+                    ]
+                  ]));
+        });
   }
 
-  Widget _nodeCard(BuildContext context, int index, NodeInfo node) {
+  Widget _row(int i) {
+    final n = widget.nodes[i], selected = i == widget.selectedIndex;
     final scheme = Theme.of(context).colorScheme;
-    final selected = index == widget.selectedIndex;
-    final color = _protocolColors[node.protocol] ?? scheme.primary;
-    final ms = widget.latency[node];
-    final hasLatency = widget.latency.containsKey(node);
-    return Card(
-      margin: EdgeInsets.zero,
-      color: selected ? scheme.primaryContainer.withValues(alpha: 0.45) : null,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(14),
-        side: BorderSide(
-          color: selected ? scheme.primary : Colors.transparent,
-          width: 1.5,
-        ),
-      ),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(14),
-        onTap: () => widget.onSelect(index),
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(14, 10, 8, 10),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      node.name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 15,
-                        fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                  if (selected)
-                    Container(
-                      decoration: BoxDecoration(
-                        color: Colors.green.shade400,
-                        shape: BoxShape.circle,
-                      ),
-                      padding: const EdgeInsets.all(3),
-                      child: const Icon(Icons.check, size: 13, color: Colors.black),
-                    )
-                  else
-                    IconButton(
-                      icon: const Icon(Icons.delete_outline, size: 17),
-                      tooltip: '删除',
-                      visualDensity: VisualDensity.compact,
-                      padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints(),
-                      onPressed:
-                          widget.running ? null : () => widget.onDelete(index),
-                    ),
-                ],
-              ),
-              const Spacer(),
-              Row(
-                children: [
-                  Container(
-                    width: 8,
-                    height: 8,
-                    decoration: BoxDecoration(color: color, shape: BoxShape.circle),
-                  ),
-                  const SizedBox(width: 6),
-                  Text(
-                    node.protocol,
-                    style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
-                  ),
-                  const Spacer(),
-                  Text(
-                    !hasLatency
-                        ? '未测速'
-                        : (ms == null ? '失败' : '$ms ms'),
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                      color: !hasLatency
-                          ? scheme.onSurfaceVariant
-                          : (ms == null ? scheme.error : Colors.greenAccent),
-                    ),
-                  ),
-                ],
-              ),
-              Text(
-                '${node.server}:${node.serverPort}',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
+    return AnimatedContainer(
+        duration: UiScope.duration(context),
+        decoration: BoxDecoration(
+            color: selected
+                ? scheme.primary.withValues(alpha: .07)
+                : Colors.transparent,
+            border: Border(
+                left: BorderSide(
+                    color: selected ? scheme.primary : Colors.transparent,
+                    width: 2),
+                bottom: BorderSide(
+                    color: scheme.outlineVariant.withValues(alpha: .5)))),
+        child: InkWell(
+            onTap: widget.busy ? null : () => widget.onSelect(i),
+            child: Padding(
+                padding: EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: UiScope.of(context).compact ? 6 : 11),
+                child: LayoutBuilder(
+                    builder: (context, c) => Row(children: [
+                          RegionMark(n),
+                          const SizedBox(width: 12),
+                          Expanded(
+                              flex: 3,
+                              child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(n.name,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                            fontSize: 13,
+                                            fontWeight: selected
+                                                ? FontWeight.w600
+                                                : FontWeight.w400)),
+                                    Text('${n.server}:${n.serverPort}',
+                                        style: mono.copyWith(
+                                            fontSize: 10,
+                                            color: scheme.onSurfaceVariant),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis)
+                                  ])),
+                          if (c.maxWidth > 740) ...[
+                            const SizedBox(width: 18),
+                            Expanded(
+                                flex: 2,
+                                child: Text(
+                                    sourceLabel(n, widget.subscriptions),
+                                    style:
+                                        Theme.of(context).textTheme.bodySmall,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis))
+                          ],
+                          if (c.maxWidth > 480) ...[
+                            const SizedBox(width: 12),
+                            SizedBox(
+                                width: 85,
+                                child: Text(n.protocol.toUpperCase(),
+                                    style: mono.copyWith(
+                                        fontSize: 10,
+                                        color: scheme.onSurfaceVariant)))
+                          ],
+                          const SizedBox(width: 10),
+                          SizedBox(
+                              width: 70, child: LatencyText(n, widget.latency)),
+                          IconButton(
+                              tooltip: '节点详情',
+                              onPressed: () => _details(i),
+                              icon: const Icon(Icons.more_horiz, size: 17)),
+                          SizedBox(
+                              width: 20,
+                              child: selected
+                                  ? Icon(Icons.check_circle_outline,
+                                      color: scheme.primary, size: 17)
+                                  : const SizedBox())
+                        ])))));
+  }
+
+  Widget _card(int i) {
+    final n = widget.nodes[i], selected = i == widget.selectedIndex;
+    return Panel(
+        accent: selected,
+        padding: EdgeInsets.zero,
+        child: InkWell(
+            onTap: widget.busy ? null : () => widget.onSelect(i),
+            borderRadius: BorderRadius.circular(7),
+            child: Padding(
+                padding: const EdgeInsets.all(13),
+                child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(children: [
+                        RegionMark(n),
+                        const SizedBox(width: 10),
+                        Expanded(
+                            child: Text(n.name,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(fontSize: 13))),
+                        IconButton(
+                            tooltip: '节点详情',
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(
+                                minHeight: 24, minWidth: 24),
+                            onPressed: () => _details(i),
+                            icon: const Icon(Icons.more_horiz, size: 17))
+                      ]),
+                      const Spacer(),
+                      Row(children: [
+                        Tag(n.protocol.toUpperCase()),
+                        const Spacer(),
+                        LatencyText(n, widget.latency)
+                      ]),
+                      const SizedBox(height: 5),
+                      Text(sourceLabel(n, widget.subscriptions),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context).textTheme.bodySmall)
+                    ]))));
   }
 }

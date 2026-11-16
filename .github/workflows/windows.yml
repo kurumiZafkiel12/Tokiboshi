@@ -41,7 +41,7 @@ jobs:
       - name: Rust middle layer tests
         run: |
           $log = Join-Path $env:RUNNER_TEMP "cargo-test.log"
-          cargo test --manifest-path rust/Cargo.toml 2>&1 | Tee-Object -FilePath $log
+          cargo test --locked --manifest-path rust/Cargo.toml 2>&1 | Tee-Object -FilePath $log
           $code = $LASTEXITCODE
           if ($code -ne 0) {
             $details = (Get-Content $log -Tail 100) -join "`n"

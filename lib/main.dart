@@ -2,6 +2,14 @@ import 'package:flutter/material.dart';
 
 import 'dart:async';
 import 'dart:io';
+import 'package:flutter/services.dart';
+import 'ui/preferences.dart';
+import 'ui/design.dart';
+import 'ui/runtime.dart';
+import 'ui/node_widgets.dart';
+import 'ui/shell_widgets.dart';
+import 'pages/rules_page.dart';
+import 'pages/connections_page.dart';
 
 import 'package:tray_manager/tray_manager.dart';
 import 'package:window_manager/window_manager.dart';
@@ -16,6 +24,7 @@ import 'pages/panel_page.dart';
 import 'pages/settings_page.dart';
 import 'pages/subscriptions_page.dart';
 import 'services/clash_api.dart';
+import 'services/active_profile.dart';
 import 'services/latency.dart';
 import 'services/local_ports.dart';
 import 'services/elevated_handoff.dart';
@@ -63,7 +72,9 @@ Future<bool> _isElevated() async {
 Future<void> main(List<String> args) async {
   final handoff = args.where((a) => a.startsWith('--wait-parent=')).toList();
   if (handoff.isNotEmpty) {
-    final parent = handoff.length == 1 ? int.tryParse(handoff.single.split('=').last) : null;
+    final parent = handoff.length == 1
+        ? int.tryParse(handoff.single.split('=').last)
+        : null;
     if (parent == null || !await waitForParentExit(parent)) {
       stderr.writeln('提权交接未完成：原实例尚未退出');
       exitCode = 1;
@@ -77,7 +88,8 @@ Future<void> main(List<String> args) async {
     // loopback port — no files, no races.
     ServerSocket? lock;
     try {
-      lock = await ServerSocket.bind(InternetAddress.loopbackIPv4, kInstanceLockPort);
+      lock = await ServerSocket.bind(
+          InternetAddress.loopbackIPv4, kInstanceLockPort);
     } catch (_) {
       lock = null;
     }
@@ -112,7 +124,8 @@ Future<void> main(List<String> args) async {
         );
         try {
           socket.write('tokiboshi-show');
-          final ack = await socket.first.timeout(const Duration(milliseconds: 800));
+          final ack =
+              await socket.first.timeout(const Duration(milliseconds: 800));
           woke = String.fromCharCodes(ack).contains('tokiboshi-ok');
         } finally {
           // Always release the probe socket, even on ack timeout —
@@ -131,6 +144,11 @@ Future<void> main(List<String> args) async {
   }
   try {
     await windowManager.ensureInitialized();
+    if (Platform.isWindows) {
+      await windowManager.setMinimumSize(const Size(800, 600));
+      await windowManager.setTitleBarStyle(TitleBarStyle.hidden,
+          windowButtonVisibility: false);
+    }
   } catch (_) {
     // Window/tray niceties are optional; never block startup.
   }
@@ -138,7 +156,7 @@ Future<void> main(List<String> args) async {
   runApp(TokiboshiApp(bridge: RustCoreBridge()));
 }
 
-class TokiboshiApp extends StatelessWidget {
+class TokiboshiApp extends StatefulWidget {
   const TokiboshiApp({
     super.key,
     required this.bridge,
@@ -155,35 +173,34 @@ class TokiboshiApp extends StatelessWidget {
   final PortAllocator allocatePort;
 
   @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Tokiboshi',
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFFB71C1C),
-          brightness: Brightness.dark,
-        ),
-        useMaterial3: true,
-        visualDensity: VisualDensity.standard,
-        snackBarTheme: const SnackBarThemeData(
-          behavior: SnackBarBehavior.floating,
-          width: 420,
-        ),
-        dialogTheme: const DialogThemeData(
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.all(Radius.circular(16)),
-          ),
-        ),
-      ),
-      home: ShellPage(
-        bridge: bridge,
-        allocatePort: allocatePort,
-        store: store ?? Store(),
-        systemProxy: systemProxy ?? const WindowsSystemProxy(),
-        fetcher: fetcher ?? const HttpSubscriptionFetcher(),
-      ),
-    );
+  State<TokiboshiApp> createState() => _TokiboshiAppState();
+}
+
+class _TokiboshiAppState extends State<TokiboshiApp> {
+  final _appearance = ValueNotifier(const UiPreferences());
+  @override
+  void dispose() {
+    _appearance.dispose();
+    super.dispose();
   }
+
+  @override
+  Widget build(BuildContext context) => ListenableBuilder(
+      listenable: _appearance,
+      builder: (context, _) => UiScope(
+          controller: _appearance,
+          onChanged: (v) => _appearance.value = v,
+          child: MaterialApp(
+              debugShowCheckedModeBanner: false,
+              title: 'Tokiboshi',
+              theme: workbenchTheme(_appearance.value),
+              home: ShellPage(
+                  bridge: widget.bridge,
+                  allocatePort: widget.allocatePort,
+                  store: widget.store ?? Store(),
+                  systemProxy: widget.systemProxy ?? const WindowsSystemProxy(),
+                  fetcher: widget.fetcher ?? const HttpSubscriptionFetcher(),
+                  appearance: _appearance))));
 }
 
 class ShellPage extends StatefulWidget {
@@ -194,6 +211,7 @@ class ShellPage extends StatefulWidget {
     required this.systemProxy,
     required this.fetcher,
     required this.allocatePort,
+    required this.appearance,
   });
 
   final CoreBridge bridge;
@@ -201,13 +219,18 @@ class ShellPage extends StatefulWidget {
   final SystemProxy systemProxy;
   final SubscriptionFetcher fetcher;
   final PortAllocator allocatePort;
+  final ValueNotifier<UiPreferences> appearance;
 
   @override
   State<ShellPage> createState() => _ShellPageState();
 }
 
-class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener {
+class _ShellPageState extends State<ShellPage>
+    with WindowListener, TrayListener {
   AppData _data = AppData();
+  final RuntimeMonitor _monitor = RuntimeMonitor();
+  bool _updatingAll = false;
+  bool _cancelConnect = false;
   bool _running = false;
   bool _busy = false;
   bool _measuring = false;
@@ -229,12 +252,21 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
   bool _userStopped = false;
 
   String get _dataDir => widget.store.dir.path;
-  ClashApiClient get _clash =>
-      ClashApiClient(port: _data.clashApiPort, secret: _data.clashApiSecret);
+  ClashApiClient? _controller;
+  ClashApiClient get _clash {
+    if (_controller?.port != _data.clashApiPort ||
+        _controller?.secret != _data.clashApiSecret) {
+      _controller?.close();
+      _controller = ClashApiClient(
+          port: _data.clashApiPort, secret: _data.clashApiSecret);
+    }
+    return _controller!;
+  }
 
   @override
   void initState() {
     super.initState();
+    widget.appearance.addListener(_appearanceChanged);
     _load();
     _initTray();
     _statusTimer =
@@ -244,7 +276,16 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
   @override
   void dispose() {
     _statusTimer?.cancel();
+    widget.appearance.removeListener(_appearanceChanged);
+    _monitor.dispose();
+    _controller?.close();
     super.dispose();
+  }
+
+  void _appearanceChanged() {
+    if (!mounted) return;
+    setState(() => _data.ui = widget.appearance.value);
+    _persist();
   }
 
   Future<void> _load() async {
@@ -285,6 +326,7 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
       _data = data;
       _running = running;
     });
+    widget.appearance.value = data.ui;
     // Rule-set upkeep is decoupled from the core download (HF053-02):
     // the bundled core must never skip it. Fire-and-forget; the Rust
     // side reports progress through the Logs page.
@@ -304,13 +346,10 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
     if (mounted &&
         !_running &&
         _data.nodes.isNotEmpty &&
-        ((previousCleanExit &&
-                _data.autoConnect &&
-                _data.runningAtExit) ||
+        ((previousCleanExit && _data.autoConnect && _data.runningAtExit) ||
             resumeRequested)) {
       if (tunBlocked) {
-        _setMessage(
-            '自动连接已跳过：虚拟网卡需要管理员权限，请点「启动」并选择「以管理员身份重启」');
+        _setMessage('自动连接已跳过：虚拟网卡需要管理员权限，请点「启动」并选择「以管理员身份重启」');
         // Persist the consumption so the next load does not retry the
         // same blocked auto-connect (CV007-01 remainder).
         await _persist();
@@ -341,8 +380,8 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
     try {
       final status = await widget.bridge.coreStatus();
       if (!mounted) return;
-      var changed = status.restartCount != _restartCount ||
-          status.lastExit != _lastExit;
+      var changed =
+          status.restartCount != _restartCount || status.lastExit != _lastExit;
       if (_running && !status.running) {
         // The supervisor may restart the core within seconds; do not
         // tear the proxy down on the first blip.
@@ -354,9 +393,8 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
           _coreDownSince = null;
           changed = true;
           await widget.systemProxy.apply(false, _data.mixedPort);
-          _message = _compose(status.lastExit != null
-              ? '内核已退出：${status.lastExit}'
-              : '内核已停止');
+          _message = _compose(
+              status.lastExit != null ? '内核已退出：${status.lastExit}' : '内核已停止');
         }
       } else if (status.running && !_running && !_userStopped) {
         // Supervisor restarted the core on its own: recover the UI
@@ -424,7 +462,8 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
   }
 
   void _setMessage(String? text) {
-    if (mounted) setState(() => _message = text == null ? null : _compose(text));
+    if (mounted)
+      setState(() => _message = text == null ? null : _compose(text));
   }
 
   // ---- import / subscriptions ----
@@ -472,7 +511,8 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
   /// itself lists further subscription URLs (one link containing
   /// many), recursively fetch providers and merge their nodes.
   Future<ParseOutcome> _fetchParseExpand(String url) =>
-      SubscriptionResolver(bridge: widget.bridge, fetcher: widget.fetcher).resolve(url);
+      SubscriptionResolver(bridge: widget.bridge, fetcher: widget.fetcher)
+          .resolve(url);
 
   Future<void> _createChainDialog() async {
     if (_running || _busy || _data.nodes.length < 2) return;
@@ -482,36 +522,69 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
     final name = TextEditingController(text: '链式代理');
     final result = await showDialog<List<NodeInfo>>(
       context: context,
-      builder: (context) => StatefulBuilder(builder: (context, update) => AlertDialog(
-        title: const Text('添加链式代理'),
-        content: SizedBox(width: 460, child: Column(mainAxisSize: MainAxisSize.min, children: [
-          const Text('连接顺序：本机 → 前置节点 → 落地节点 → 目标网站。保存独立副本，不随原订阅更新。'),
-          const SizedBox(height: 12),
-          TextField(controller: name, decoration: const InputDecoration(labelText: '链名称')),
-          DropdownButtonFormField<int>(
-            initialValue: entry, isExpanded: true,
-            decoration: const InputDecoration(labelText: '前置节点'),
-            items: [for (var i = 0; i < _data.nodes.length; i++)
-              DropdownMenuItem(value: i, child: Text(_data.nodes[i].name, overflow: TextOverflow.ellipsis))],
-            onChanged: (value) => update(() => entry = value ?? entry),
-          ),
-          DropdownButtonFormField<int>(
-            initialValue: exit, isExpanded: true,
-            decoration: const InputDecoration(labelText: '落地节点'),
-            items: [for (var i = 0; i < _data.nodes.length; i++)
-              DropdownMenuItem(value: i, child: Text(_data.nodes[i].name, overflow: TextOverflow.ellipsis))],
-            onChanged: (value) => update(() => exit = value ?? exit),
-          ),
-          if (error != null) Text(error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
-        ])),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('取消')),
-          FilledButton(onPressed: () {
-            try { Navigator.pop(context, createProxyChain(_data.nodes, entry, exit, name.text)); }
-            on FormatException catch (e) { update(() => error = e.message); }
-          }, child: const Text('添加')),
-        ],
-      )),
+      builder: (context) => StatefulBuilder(
+          builder: (context, update) => AlertDialog(
+                title: const Text('添加链式代理'),
+                content: SizedBox(
+                    width: 460,
+                    child: Column(mainAxisSize: MainAxisSize.min, children: [
+                      const Text(
+                          '连接顺序：本机 → 前置节点 → 落地节点 → 目标网站。保存独立副本，不随原订阅更新。'),
+                      const SizedBox(height: 12),
+                      TextField(
+                          controller: name,
+                          decoration: const InputDecoration(labelText: '链名称')),
+                      DropdownButtonFormField<int>(
+                        initialValue: entry,
+                        isExpanded: true,
+                        decoration: const InputDecoration(labelText: '前置节点'),
+                        items: [
+                          for (var i = 0; i < _data.nodes.length; i++)
+                            DropdownMenuItem(
+                                value: i,
+                                child: Text(_data.nodes[i].name,
+                                    overflow: TextOverflow.ellipsis))
+                        ],
+                        onChanged: (value) =>
+                            update(() => entry = value ?? entry),
+                      ),
+                      DropdownButtonFormField<int>(
+                        initialValue: exit,
+                        isExpanded: true,
+                        decoration: const InputDecoration(labelText: '落地节点'),
+                        items: [
+                          for (var i = 0; i < _data.nodes.length; i++)
+                            DropdownMenuItem(
+                                value: i,
+                                child: Text(_data.nodes[i].name,
+                                    overflow: TextOverflow.ellipsis))
+                        ],
+                        onChanged: (value) =>
+                            update(() => exit = value ?? exit),
+                      ),
+                      if (error != null)
+                        Text(error!,
+                            style: TextStyle(
+                                color: Theme.of(context).colorScheme.error)),
+                    ])),
+                actions: [
+                  TextButton(
+                      onPressed: () => Navigator.pop(context),
+                      child: const Text('取消')),
+                  FilledButton(
+                      onPressed: () {
+                        try {
+                          Navigator.pop(
+                              context,
+                              createProxyChain(
+                                  _data.nodes, entry, exit, name.text));
+                        } on FormatException catch (e) {
+                          update(() => error = e.message);
+                        }
+                      },
+                      child: const Text('添加')),
+                ],
+              )),
     );
     name.dispose();
     if (result == null || !mounted) return;
@@ -568,8 +641,8 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
         if (_data.selectedIndex < 0 && _data.nodes.isNotEmpty) {
           _data.selectedIndex = 0;
         }
-        _message = _compose(
-            '已导入 ${imported.length} 个节点${_skippedNote(skipped)}');
+        _message =
+            _compose('已导入 ${imported.length} 个节点${_skippedNote(skipped)}');
       });
       await _persist();
     } catch (e) {
@@ -650,7 +723,11 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
       final group = node.group.isEmpty ? '内联节点' : node.group;
       counts[group] = (counts[group] ?? 0) + 1;
     }
-    return ['策略组：${outcome.nodes.where((n) => n.isPolicy).length} 个', for (final entry in counts.entries) '${entry.key}：${entry.value} 个', ...outcome.skipped].join('\n');
+    return [
+      '策略组：${outcome.nodes.where((n) => n.isPolicy).length} 个',
+      for (final entry in counts.entries) '${entry.key}：${entry.value} 个',
+      ...outcome.skipped
+    ].join('\n');
   }
 
   Future<void> _addSubscription(String name, String url) async {
@@ -658,7 +735,8 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
     try {
       final outcome = await _fetchParseExpand(url);
       final id = 'sub-${DateTime.now().millisecondsSinceEpoch}';
-      final nodes = resolvePolicyGroups(outcome.nodes.map((n) => n.withSource(id)).toList());
+      final nodes = resolvePolicyGroups(
+          outcome.nodes.map((n) => n.withSource(id)).toList());
       setState(() {
         _data.subscriptions = [
           ..._data.subscriptions,
@@ -695,7 +773,9 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
       final selectedFromSub = selected != null && selected.source == sub.id;
       var fresh = outcome.nodes.map((n) => n.withSource(sub.id)).toList();
       final retained = retainFailedSourceNodes(
-          _data.nodes.where((n) => n.source == sub.id).toList(), fresh, outcome.failedGroups);
+          _data.nodes.where((n) => n.source == sub.id).toList(),
+          fresh,
+          outcome.failedGroups);
       fresh.addAll(retained);
       fresh = resolvePolicyGroups(fresh);
       setState(() {
@@ -707,11 +787,16 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
         _data.subscriptions = [
           for (final s in _data.subscriptions)
             if (s.id == sub.id)
-              Subscription(id: s.id, name: s.name, url: s.url,
+              Subscription(
+                  id: s.id,
+                  name: s.name,
+                  url: s.url,
                   profileJson: outcome.profileJson,
-                  profileState: outcome.profileJson == null ? 'nodes-only' : 'parsed',
+                  profileState:
+                      outcome.profileJson == null ? 'nodes-only' : 'parsed',
                   updatedAt: DateTime.now().toIso8601String(),
-                  lastReport: '${_subscriptionReport(outcome)}${retained.isEmpty ? '' : '\n保留上次成功获取的 ${retained.length} 个节点（相关来源更新失败）'}')
+                  lastReport:
+                      '${_subscriptionReport(outcome)}${retained.isEmpty ? '' : '\n保留上次成功获取的 ${retained.length} 个节点（相关来源更新失败）'}')
             else
               s,
         ];
@@ -721,8 +806,7 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
           final idx = _data.nodes.indexWhere(
             (n) => n.source == sub.id && n.name == selected.name,
           );
-          _data.selectedIndex =
-              idx >= 0 ? idx : (_data.nodes.isEmpty ? -1 : 0);
+          _data.selectedIndex = idx >= 0 ? idx : (_data.nodes.isEmpty ? -1 : 0);
         }
         _message = _compose(
             '订阅「${sub.name}」已更新：${fresh.where((n) => !n.isPolicy).length} 个节点${_skippedNote(outcome.skipped)}');
@@ -757,11 +841,23 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
   // ---- nodes ----
 
   String _nodeTag(NodeInfo node) {
-    final index = _data.nodes.indexOf(node);
-    return index < 0 ? node.name : assignNodeTags(_data.nodes.map((n) => n.name))[index];
+    final nodes = profileNodes(_data);
+    final index = nodes.indexOf(node);
+    if (index < 0) throw const FormatException('节点不属于激活配置');
+    return assignNodeTags(nodes.map((n) => n.name))[index];
   }
 
   Future<void> _selectNode(int index) async {
+    try {
+      if (!profileNodes(_data).contains(_data.nodes[index])) {
+        _setMessage('该节点不属于当前完整配置，请先在工作台切换配置');
+        return;
+      }
+    } on FormatException catch (e) {
+      _setMessage(e.message);
+      return;
+    }
+
     setState(() => _data.selectedIndex = index);
     await _persist();
     // While the core runs, switch the selector live through the
@@ -801,6 +897,10 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
   /// being reported as failures.
   Future<void> _measureNode(NodeInfo node) async {
     if (_measuring) return;
+    if (_running && !profileNodes(_data).contains(node)) {
+      _setMessage('该节点不属于当前激活配置，无法通过运行内核测试');
+      return;
+    }
     if (!_running && _udpProtocols.contains(node.protocol)) {
       _setMessage('内核未启动：${node.protocol} 是 UDP 协议，测速需先启动内核');
       return;
@@ -819,6 +919,7 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
     var skipped = 0;
     for (final node in List.of(_data.nodes)) {
       if (node.isPolicy) continue;
+      if (_running && !profileNodes(_data).contains(node)) continue;
       if (!_running && _udpProtocols.contains(node.protocol)) {
         skipped++;
         continue;
@@ -886,9 +987,21 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
         MenuItem.separator(),
         MenuItem(key: 'toggle', label: _running ? '停止内核' : '启动内核'),
         MenuItem.separator(),
-        MenuItem(key: 'mode_rule', label: '规则模式', checked: _clashMode != 'Global' && _clashMode != 'Direct', disabled: !_running),
-        MenuItem(key: 'mode_global', label: '全局模式', checked: _clashMode == 'Global', disabled: !_running),
-        MenuItem(key: 'mode_direct', label: '直连模式', checked: _clashMode == 'Direct', disabled: !_running),
+        MenuItem(
+            key: 'mode_rule',
+            label: '规则模式',
+            checked: _clashMode != 'Global' && _clashMode != 'Direct',
+            disabled: !_running),
+        MenuItem(
+            key: 'mode_global',
+            label: '全局模式',
+            checked: _clashMode == 'Global',
+            disabled: !_running),
+        MenuItem(
+            key: 'mode_direct',
+            label: '直连模式',
+            checked: _clashMode == 'Direct',
+            disabled: !_running),
         MenuItem.separator(),
         for (var i = 0; i < _data.nodes.length && i < 15; i++)
           MenuItem(
@@ -944,7 +1057,11 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
   @override
   void onWindowClose() {
     // Close button hides to the tray instead of quitting.
-    windowManager.hide();
+    if (_data.ui.closeToTray) {
+      windowManager.hide();
+    } else {
+      _quitApp();
+    }
   }
 
   Future<void> _quitApp() async {
@@ -984,7 +1101,8 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
     final bundled = resolveSingBoxPath('', _dataDir);
     if (bundled != managed && bundled != 'sing-box.exe') {
       try {
-        if ((await widget.bridge.coreVersion(bundled)).isNotEmpty) return bundled;
+        if ((await widget.bridge.coreVersion(bundled)).isNotEmpty)
+          return bundled;
       } catch (_) {
         // Repair an absent/unusable installation via the managed download.
       }
@@ -992,6 +1110,7 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
     _setMessage('正在下载 sing-box 内核（首次启动需要）…');
     await widget.bridge.startEnsureCore(_dataDir);
     for (var i = 0; i < 200; i++) {
+      _checkConnectCancelled();
       await Future<void>.delayed(const Duration(milliseconds: 700));
       final state = await widget.bridge.ensureCoreState();
       if (state.phase == 'done') {
@@ -1007,8 +1126,20 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
     return null;
   }
 
+  void _checkConnectCancelled() {
+    if (_cancelConnect) throw const _ConnectCancelled();
+  }
+
+  void _requestCancelConnect() {
+    if (_busy && !_running) {
+      _cancelConnect = true;
+      _setMessage('正在取消连接…');
+    }
+  }
+
   Future<void> _toggleCore() async {
     if (_busy) return;
+    _cancelConnect = false;
     setState(() => _busy = true);
     var started = false;
     try {
@@ -1036,8 +1167,7 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
           context: context,
           builder: (context) => AlertDialog(
             title: const Text('需要管理员权限'),
-            content: const Text(
-                '虚拟网卡（TUN）需要以管理员身份运行才能接管全局流量。\n\n'
+            content: const Text('虚拟网卡（TUN）需要以管理员身份运行才能接管全局流量。\n\n'
                 '「以管理员身份重启」会弹出 UAC 授权并重启应用，重启后自动连接并启用 TUN。'),
             actions: [
               TextButton(
@@ -1080,6 +1210,7 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
         return;
       }
       final binary = await _ensureCoreBinary();
+      _checkConnectCancelled();
       if (binary == null) return;
       final oldMixedPort = _data.mixedPort;
       final oldApiPort = _data.clashApiPort;
@@ -1090,15 +1221,14 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
       await _persist();
       final portsChanged = mixedPort != oldMixedPort || apiPort != oldApiPort;
       final selected = _data.selected;
-      // Do not invent a multi-profile priority or bind names across sources.
-      final profiles = _data.subscriptions.where((s) => s.profileJson != null).toList();
-      if (profiles.length > 1) {
-        throw const FormatException('多个订阅包含规则，尚未指定激活配置；拒绝按更新时间隐式切换');
+      final profile = activeProfile(_data);
+      final configNodes = profileNodes(_data);
+      if (profile != null && selected == null) {
+        throw const FormatException('请先选择激活配置中的出口节点');
       }
-      final profile = profiles.isEmpty ? null : profiles.single;
-      final configNodes = profile == null ? _data.nodes
-          : _data.nodes.where((n) => n.source == profile.id).toList();
-      if (profile != null && selected != null && selected.source != profile.id) {
+      if (profile != null &&
+          selected != null &&
+          selected.source != profile.id) {
         throw const FormatException('当前节点不属于规则订阅，请选择该订阅的节点或策略组');
       }
       final config = await widget.bridge.buildConfig(
@@ -1111,11 +1241,15 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
         blockAds: _data.blockAds,
         bypassCn: _data.bypassCn,
         dataDir: _dataDir,
-        selectedName: selected == null ? null : assignNodeTags(configNodes.map((n) => n.name))[configNodes.indexOf(selected)],
+        selectedName: selected == null
+            ? null
+            : assignNodeTags(
+                configNodes.map((n) => n.name))[configNodes.indexOf(selected)],
         profileJson: profile?.profileJson ?? '',
       );
       final configFile = await widget.store
           .writeRuntimeConfig(injectClashSecret(config, _data.clashApiSecret));
+      _checkConnectCancelled();
       // Rule-set downloads run in the background after app start; if
       // they have not landed yet this config carries no 分流 rules.
       // The warning is appended to the RUNNING status message so it
@@ -1131,6 +1265,7 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
         configPath: configFile.path,
       );
       started = true;
+      _checkConnectCancelled();
       // A fresh start invalidates the stop flag: without this, the
       // next supervisor restart blip would tear the proxy down again
       // (HF053-05 remainder).
@@ -1153,11 +1288,15 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
       });
     } catch (e) {
       if (started) {
-        try { await widget.bridge.stopCore(); } catch (_) {}
-        try { await widget.systemProxy.apply(false, _data.mixedPort); } catch (_) {}
+        try {
+          await widget.bridge.stopCore();
+        } catch (_) {}
+        try {
+          await widget.systemProxy.apply(false, _data.mixedPort);
+        } catch (_) {}
         if (mounted) setState(() => _running = false);
       }
-      _setMessage('启动失败：$e');
+      _setMessage(e is _ConnectCancelled ? '已取消连接，节点选择已保留' : '启动失败：$e');
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -1196,7 +1335,8 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
     _setMessage('内核下载超时，请检查网络后重试');
   }
 
-  Future<void> _saveSettings(int port, int clashApiPort, String singBoxPath) async {
+  Future<void> _saveSettings(
+      int port, int clashApiPort, String singBoxPath) async {
     setState(() {
       _data.mixedPort = port;
       _data.clashApiPort = clashApiPort;
@@ -1398,6 +1538,7 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
           onImport: _importDialog,
           onMeasureAll: _measureAll,
           onCreateChain: _createChainDialog,
+          onMeasureNode: _measureNode,
         );
       case 3:
         page = SubscriptionsPage(
@@ -1408,9 +1549,33 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
           onAdd: _addSubscriptionDialog,
           onUpdate: _updateSubscription,
           onDelete: _deleteSubscription,
+          onUpdateAll: _updateAllSubscriptions,
         );
       case 4:
-        page = LogsPage(fetchLogs: widget.bridge.coreLogs);
+        page = LogsPage(
+            fetchLogs: widget.bridge.coreLogs,
+            onExport: (text) async {
+              final dir = Directory(
+                  '${widget.store.dir.path}${Platform.pathSeparator}exports');
+              await dir.create(recursive: true);
+              final file = File(
+                  '${dir.path}${Platform.pathSeparator}tokiboshi-${DateTime.now().millisecondsSinceEpoch}.log');
+              await file.writeAsString(text, flush: true);
+              return file.path;
+            });
+      case 6:
+        page = RulesPage(
+            subscriptions: _data.subscriptions,
+            running: _running,
+            busy: _busy,
+            api: _clash,
+            dataDir: _dataDir,
+            onApply: _running ? _restartCore : _toggleCore,
+            onSources: () => setState(() => _page = 3),
+            blockAds: _data.blockAds,
+            bypassCn: _data.bypassCn);
+      case 7:
+        page = ConnectionsPage(monitor: _monitor, running: _running);
       case 5:
         page = SettingsPage(
           mixedPort: _data.mixedPort,
@@ -1438,6 +1603,16 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
           running: _running,
           busy: _busy,
           selected: selected,
+          monitor: _monitor,
+          subscriptions: _data.subscriptions,
+          onSubscriptions: () => setState(() => _page = 3),
+          onLogs: () => setState(() => _page = 4),
+          onUpdate: _updateSubscription,
+          activeProfileId: _effectiveProfileId,
+          onActivateProfile: _activateProfile,
+          failure: _message?.contains('启动失败') == true
+              ? _message
+              : (_userStopped ? null : _lastExit),
           nodeCount: _data.nodes.where((n) => !n.isPolicy).length,
           subscriptionCount: _data.subscriptions.length,
           mixedPort: _data.mixedPort,
@@ -1453,7 +1628,7 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
           onRestart: _restartCore,
           onOpenPanel: () => setState(() => _page = 1),
           onTunChanged: _setTun,
-          onSystemProxyChanged: _setSystemProxy,
+          onSystemProxyChanged: _busy ? null : _setSystemProxy,
           onModeChanged: _setMode,
           onMeasureSelected: () {
             final node = _data.selected;
@@ -1461,157 +1636,537 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
           },
         );
     }
-    return Scaffold(
-      body: Row(
-        children: [
-          Container(
-            width: _navCollapsed ? 68 : 208,
-            color: scheme.surfaceContainerLow,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Padding(
-                  padding: EdgeInsets.fromLTRB(_navCollapsed ? 16 : 16, 18, 16, 14),
-                  child: Row(
-                    children: [
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(8),
-                        child: Image.asset(
-                          'assets/icon.png',
-                          width: 36,
-                          height: 36,
-                        ),
-                      ),
-                      if (!_navCollapsed) ...[
-                        const SizedBox(width: 10),
-                        const Expanded(
-                          child: Text(
-                            'Tokiboshi',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
-                          ),
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
-                _navItem(0, Icons.dashboard_outlined, '仪表盘'),
-                _navItem(1, Icons.web_asset_outlined, '面板'),
-                _navItem(2, Icons.dns_outlined, '节点'),
-                _navItem(3, Icons.subscriptions_outlined, '订阅'),
-                _navItem(4, Icons.terminal_outlined, '日志'),
-                _navItem(5, Icons.settings_outlined, '设置'),
-                const Spacer(),
-                IconButton(
-                  icon: Icon(
-                    _navCollapsed
-                        ? Icons.keyboard_double_arrow_right
-                        : Icons.keyboard_double_arrow_left,
-                    size: 19,
-                  ),
-                  tooltip: _navCollapsed ? '展开侧栏' : '收起侧栏',
-                  onPressed: () => setState(() => _navCollapsed = !_navCollapsed),
-                ),
-                if (!_navCollapsed)
-                  const Padding(
-                    padding: EdgeInsets.all(16),
-                    child: Text('v$kAppVersion · sing-box 1.14.4'),
-                  ),
-              ],
-            ),
-          ),
-          const VerticalDivider(width: 1),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                if (_message != null)
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted)
+        _monitor.configure(
+            running: _running,
+            port: _data.clashApiPort,
+            secret: _data.clashApiSecret);
+    });
+    final ui = UiScope.of(context);
+    const names = {
+      0: '连接',
+      1: '面板',
+      2: '节点',
+      3: '订阅',
+      4: '运行日志',
+      5: '设置',
+      6: '分流规则',
+      7: '请求'
+    };
+    return Shortcuts(
+        shortcuts: {
+          LogicalKeySet(LogicalKeyboardKey.control, LogicalKeyboardKey.keyK):
+              const _FindNodeIntent()
+        },
+        child: Actions(
+            actions: {
+              _FindNodeIntent: CallbackAction<_FindNodeIntent>(onInvoke: (_) {
+                _showNodePicker();
+                return null;
+              })
+            },
+            child: Focus(
+                autofocus: true,
+                child: Scaffold(
+                    body: Column(children: [
                   Container(
-                    margin: const EdgeInsets.fromLTRB(12, 10, 12, 4),
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                    decoration: BoxDecoration(
-                      color: scheme.surfaceContainerHighest,
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Icon(
-                          _saveFailed
-                              ? Icons.error_outline
-                              : Icons.info_outline,
-                          size: 18,
-                          color: _saveFailed
-                              ? scheme.error
-                              : scheme.primary,
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: Text(
-                            _message!,
-                            style: TextStyle(
-                              fontSize: 13,
-                              height: 1.35,
-                              color: scheme.onSurface,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                if (_busy) const LinearProgressIndicator(minHeight: 2),
-                Expanded(child: page),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
+                      height: 32,
+                      decoration: BoxDecoration(
+                          color: scheme.surfaceContainerLow,
+                          border: Border(
+                              bottom: BorderSide(color: scheme.outline))),
+                      child: Platform.isWindows
+                          ? WindowCaption(
+                              brightness: scheme.brightness,
+                              backgroundColor: scheme.surfaceContainerLow,
+                              title: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    if (ui.character) ...[
+                                      const Ribbon(size: 16),
+                                      const SizedBox(width: 10)
+                                    ],
+                                    const Text('Tokiboshi · 时星',
+                                        style: TextStyle(fontSize: 11)),
+                                    const SizedBox(width: 10),
+                                    const Tag('v$kAppVersion')
+                                  ]))
+                          : Padding(
+                              padding:
+                                  const EdgeInsets.symmetric(horizontal: 15),
+                              child: Row(children: [
+                                if (ui.character) ...[
+                                  const Ribbon(size: 16),
+                                  const SizedBox(width: 10)
+                                ],
+                                const Text('Tokiboshi · 时星',
+                                    style: TextStyle(fontSize: 11)),
+                                const SizedBox(width: 10),
+                                const Tag('v$kAppVersion'),
+                                const Spacer(),
+                                Text('WINDOWS CLIENT',
+                                    style: mono.copyWith(
+                                        fontSize: 9,
+                                        color: scheme.onSurfaceVariant))
+                              ]))),
+                  Expanded(
+                      child: LayoutBuilder(builder: (context, constraints) {
+                    final collapsed =
+                        _navCollapsed || constraints.maxWidth < 900;
+                    return Row(children: [
+                      AnimatedContainer(
+                          duration: UiScope.duration(context),
+                          width: collapsed ? 66 : 172,
+                          decoration: BoxDecoration(
+                              color: scheme.surfaceContainerLow,
+                              border: Border(
+                                  right: BorderSide(color: scheme.outline))),
+                          child: Column(children: [
+                            Padding(
+                                padding: EdgeInsets.fromLTRB(
+                                    collapsed ? 14 : 18,
+                                    23,
+                                    collapsed ? 14 : 16,
+                                    24),
+                                child: Row(children: [
+                                  Container(
+                                      padding: const EdgeInsets.all(2),
+                                      decoration: BoxDecoration(
+                                          border: Border.all(
+                                              color: ui.character
+                                                  ? gold.withValues(alpha: .35)
+                                                  : scheme.outline),
+                                          borderRadius:
+                                              BorderRadius.circular(7)),
+                                      child: Image.asset('assets/icon.png',
+                                          width: 30, height: 30)),
+                                  if (!collapsed) ...[
+                                    const SizedBox(width: 8),
+                                    const Expanded(
+                                        child: Text('Tokiboshi',
+                                            style: TextStyle(
+                                                fontSize: 19,
+                                                fontWeight: FontWeight.w700,
+                                                letterSpacing: -.7)))
+                                  ]
+                                ])),
+                            if (!collapsed)
+                              Padding(
+                                  padding:
+                                      const EdgeInsets.fromLTRB(22, 0, 0, 8),
+                                  child: Align(
+                                      alignment: Alignment.centerLeft,
+                                      child: Text('WORKSPACE',
+                                          style: mono.copyWith(
+                                              fontSize: 9,
+                                              color:
+                                                  scheme.onSurfaceVariant)))),
+                            Expanded(
+                                child: SingleChildScrollView(
+                                    child: Column(children: [
+                              _navItem(
+                                  0, Icons.grid_view_outlined, '连接', collapsed),
+                              _navItem(2, Icons.dns_outlined, '节点', collapsed,
+                                  count: _data.nodes
+                                      .where((n) => !n.isPolicy)
+                                      .length),
+                              _navItem(3, Icons.inventory_2_outlined, '订阅',
+                                  collapsed),
+                              _navItem(
+                                  6, Icons.route_outlined, '分流规则', collapsed),
+                              _navItem(7, Icons.monitor_heart_outlined, '请求',
+                                  collapsed),
+                              _navItem(4, Icons.terminal_outlined, '运行日志',
+                                  collapsed),
+                              _navItem(
+                                  1, Icons.web_asset_outlined, '面板', collapsed),
+                              _navItem(
+                                  5, Icons.settings_outlined, '设置', collapsed),
+                            ]))),
+                            if (!collapsed)
+                              Padding(
+                                  padding: const EdgeInsets.all(11),
+                                  child: Panel(
+                                      padding: const EdgeInsets.all(11),
+                                      child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            StatusDot('当前配置',
+                                                color: scheme.primary),
+                                            const SizedBox(height: 8),
+                                            Text(_profileName,
+                                                maxLines: 1,
+                                                overflow: TextOverflow.ellipsis,
+                                                style: const TextStyle(
+                                                    fontSize: 12)),
+                                            const SizedBox(height: 8),
+                                            Row(children: [
+                                              Text(
+                                                  _data.subscriptions.any((s) =>
+                                                          s.profileJson != null)
+                                                      ? '订阅规则'
+                                                      : '内置模板',
+                                                  style: const TextStyle(
+                                                      fontSize: 10)),
+                                              const Spacer(),
+                                              Text(_running ? '运行中' : '未运行',
+                                                  style: const TextStyle(
+                                                      fontSize: 10))
+                                            ])
+                                          ]))),
+                            Padding(
+                                padding: EdgeInsets.fromLTRB(collapsed ? 4 : 10,
+                                    1, collapsed ? 4 : 10, 12),
+                                child: Row(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      if (!collapsed) ...[
+                                        Container(
+                                            width: 28,
+                                            height: 28,
+                                            alignment: Alignment.center,
+                                            decoration: BoxDecoration(
+                                                border: Border.all(
+                                                    color: scheme.primary
+                                                        .withValues(alpha: .3)),
+                                                borderRadius:
+                                                    BorderRadius.circular(5)),
+                                            child: const Text('K',
+                                                style:
+                                                    TextStyle(fontSize: 11))),
+                                        const SizedBox(width: 8),
+                                        Expanded(
+                                            child: Column(
+                                                crossAxisAlignment:
+                                                    CrossAxisAlignment.start,
+                                                children: [
+                                              const Text('本地空间',
+                                                  style:
+                                                      TextStyle(fontSize: 11)),
+                                              Text('v$kAppVersion',
+                                                  style: mono.copyWith(
+                                                      fontSize: 9,
+                                                      color: scheme
+                                                          .onSurfaceVariant))
+                                            ]))
+                                      ],
+                                      IconButton(
+                                          tooltip: collapsed ? '展开侧栏' : '收起侧栏',
+                                          onPressed: () => setState(() =>
+                                              _navCollapsed = !_navCollapsed),
+                                          icon: Icon(
+                                              collapsed
+                                                  ? Icons
+                                                      .keyboard_double_arrow_right
+                                                  : Icons
+                                                      .space_dashboard_outlined,
+                                              size: 17))
+                                    ])),
+                          ])),
+                      Expanded(
+                          child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                            Container(
+                                height: 54,
+                                padding:
+                                    const EdgeInsets.symmetric(horizontal: 22),
+                                decoration: BoxDecoration(
+                                    border: Border(
+                                        bottom: BorderSide(
+                                            color: scheme.outlineVariant))),
+                                child: Row(children: [
+                                  const Icon(Icons.grid_view_outlined,
+                                      size: 16),
+                                  const SizedBox(width: 10),
+                                  Text(names[_page] ?? '连接',
+                                      style: const TextStyle(
+                                          fontSize: 13,
+                                          fontWeight: FontWeight.w600)),
+                                  const Spacer(),
+                                  if (constraints.maxWidth > 1000)
+                                    OutlinedButton.icon(
+                                        onPressed: _showNodePicker,
+                                        icon:
+                                            const Icon(Icons.search, size: 14),
+                                        label: const Text('查找节点    Ctrl K',
+                                            style: TextStyle(fontSize: 10))),
+                                  const SizedBox(width: 10),
+                                  IconButton(
+                                      tooltip: '切换动态效果',
+                                      onPressed: () => UiScope.change(
+                                          context,
+                                          ui.copyWith(
+                                              motion: ui.motion == 'reduced'
+                                                  ? 'full'
+                                                  : 'reduced')),
+                                      icon: Icon(
+                                          ui.motion == 'reduced'
+                                              ? Icons.motion_photos_off_outlined
+                                              : Icons.motion_photos_on_outlined,
+                                          size: 17)),
+                                  StatusDot(
+                                      _busy
+                                          ? '正在连接'
+                                          : _running
+                                              ? '内核运行'
+                                              : '内核停止',
+                                      color: _running
+                                          ? good
+                                          : scheme.onSurfaceVariant),
+                                  const SizedBox(width: 9),
+                                  IconButton(
+                                      tooltip: ui.light ? '切换深色' : '切换浅色',
+                                      onPressed: () => UiScope.change(context,
+                                          ui.copyWith(light: !ui.light)),
+                                      icon: Icon(
+                                          ui.light
+                                              ? Icons.dark_mode_outlined
+                                              : Icons.light_mode_outlined,
+                                          size: 17))
+                                ])),
+                            if (_message != null) _messageBanner(context),
+                            if (_busy)
+                              const LinearProgressIndicator(minHeight: 2),
+                            Expanded(
+                                child: AnimatedSwitcher(
+                                    duration: UiScope.duration(context),
+                                    switchInCurve: Curves.easeOutCubic,
+                                    layoutBuilder: (current, previous) => Stack(
+                                            fit: StackFit.expand,
+                                            children: [
+                                              ...previous,
+                                              if (current != null) current
+                                            ]),
+                                    transitionBuilder: (child, animation) =>
+                                        FadeTransition(
+                                            opacity: animation,
+                                            child: SlideTransition(
+                                                position: Tween(
+                                                        begin: const Offset(
+                                                            0, .015),
+                                                        end: Offset.zero)
+                                                    .animate(animation),
+                                                child: child)),
+                                    child: KeyedSubtree(
+                                        key: ValueKey(_page), child: page))),
+                            ConnectionDock(
+                                node: selected,
+                                subscriptions: _data.subscriptions,
+                                latency: _latency,
+                                running: _running,
+                                busy: _busy,
+                                onPick: _showNodePicker,
+                                onCancel: _requestCancelConnect,
+                                onToggle: _toggleCore,
+                                onProbe: () {
+                                  if (selected != null) _measureNode(selected);
+                                },
+                                onRestart: _restartCore),
+                          ]))
+                    ]);
+                  })),
+                  Container(
+                      height: 27,
+                      padding: const EdgeInsets.symmetric(horizontal: 14),
+                      decoration: BoxDecoration(
+                          color: scheme.surfaceContainerLow,
+                          border:
+                              Border(top: BorderSide(color: scheme.outline))),
+                      child: Row(children: [
+                        StatusDot(_running ? '内核运行中' : '内核已停止',
+                            color: _running ? good : scheme.onSurfaceVariant),
+                        const SizedBox(width: 16),
+                        Text(
+                            'MIXED  ${_data.mixedPort}    ${_clashMode?.toUpperCase() ?? '—'}',
+                            style: mono.copyWith(
+                                fontSize: 9, color: scheme.onSurfaceVariant)),
+                        const Spacer(),
+                        if (_saveFailed)
+                          const StatusDot('配置保存失败', color: danger)
+                        else
+                          Text('本地工作空间',
+                              style: mono.copyWith(
+                                  fontSize: 9, color: scheme.onSurfaceVariant)),
+                      ])),
+                ])))));
   }
 
-  Widget _navItem(int index, IconData icon, String label) {
-    final scheme = Theme.of(context).colorScheme;
-    final selected = _page == index;
-    final item = Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
-      child: Material(
-        color: selected ? scheme.primaryContainer : Colors.transparent,
-        borderRadius: BorderRadius.circular(10),
-        child: InkWell(
-          borderRadius: BorderRadius.circular(10),
-          onTap: () => setState(() => _page = index),
-          child: Padding(
-            padding: EdgeInsets.symmetric(
-              horizontal: _navCollapsed ? 8 : 12,
-              vertical: 10,
-            ),
-            child: Row(
-              mainAxisAlignment:
-                  _navCollapsed ? MainAxisAlignment.center : MainAxisAlignment.start,
-              children: [
-                Icon(
-                  icon,
-                  size: 19,
-                  color: selected ? scheme.onPrimaryContainer : scheme.onSurfaceVariant,
-                ),
-                if (!_navCollapsed) ...[
-                  const SizedBox(width: 10),
-                  Text(
-                    label,
-                    style: TextStyle(
-                      color: selected ? scheme.onPrimaryContainer : scheme.onSurface,
-                      fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-    return _navCollapsed ? Tooltip(message: label, child: item) : item;
+  String? get _effectiveProfileId {
+    try {
+      return activeProfile(_data)?.id ?? '';
+    } catch (_) {
+      return null;
+    }
   }
+
+  String get _profileName {
+    try {
+      return activeProfile(_data)?.name ?? '内置分流模板';
+    } catch (_) {
+      return '配置冲突，待选择';
+    }
+  }
+
+  Future<void> _activateProfile(String id) async {
+    if (_busy || _running) {
+      _setMessage('请先停止代理，再切换规则配置');
+      return;
+    }
+    final snapshot = _data.copyWith();
+    _data.activeProfileId = id;
+    try {
+      final nodes = profileNodes(_data);
+      if (_data.selected != null && !nodes.contains(_data.selected))
+        _data.selectedIndex = -1;
+      setState(() {});
+      if (!await _persist()) {
+        setState(() => _data = snapshot);
+        await _persist();
+        _setMessage('配置选择保存失败，已恢复先前选择');
+        return;
+      }
+      _setMessage(
+          '已选择「$_profileName」，启动后应用${_data.selected == null ? '；请先选择该配置的出口节点' : ''}');
+      if (_data.selected == null && mounted) _showNodePicker();
+    } catch (e) {
+      setState(() => _data = snapshot);
+      _setMessage('切换配置失败：$e');
+    }
+  }
+
+  Widget _messageBanner(BuildContext context) {
+    final error = _saveFailed || _message!.contains('失败');
+    final color = error
+        ? Theme.of(context).colorScheme.error
+        : Theme.of(context).colorScheme.primary;
+    return Container(
+        margin: const EdgeInsets.fromLTRB(20, 10, 20, 0),
+        padding: const EdgeInsets.fromLTRB(12, 8, 4, 8),
+        decoration: BoxDecoration(
+            color: color.withValues(alpha: .06),
+            border: Border.all(color: color.withValues(alpha: .3)),
+            borderRadius: BorderRadius.circular(6)),
+        child: Row(children: [
+          Icon(error ? Icons.error_outline : Icons.info_outline,
+              size: 17, color: color),
+          const SizedBox(width: 10),
+          Expanded(
+              child: Text(_message!,
+                  maxLines: 3,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 11))),
+          IconButton(
+              tooltip: '查看完整提示',
+              onPressed: () => showDialog<void>(
+                  context: context,
+                  builder: (context) => AlertDialog(
+                          title: const Text('运行提示'),
+                          content: SingleChildScrollView(
+                              child: SelectableText(_message!)),
+                          actions: [
+                            TextButton(
+                                onPressed: () => Navigator.pop(context),
+                                child: const Text('关闭'))
+                          ])),
+              icon: const Icon(Icons.open_in_full, size: 14)),
+          if (!_saveFailed)
+            IconButton(
+                tooltip: '收起提示',
+                onPressed: () => setState(() => _message = null),
+                icon: const Icon(Icons.close, size: 15))
+        ]));
+  }
+
+  void _showNodePicker() {
+    showDialog<void>(
+        context: context,
+        builder: (context) => NodePicker(
+            nodes: _data.nodes,
+            subscriptions: _data.subscriptions,
+            selectedIndex: _data.selectedIndex,
+            latency: _latency,
+            requiredSource: _effectiveProfileId?.isNotEmpty == true
+                ? _effectiveProfileId
+                : null,
+            busy: _busy,
+            onSelect: _selectNode,
+            onManage: () => setState(() => _page = 2),
+            onMeasure: _measureAll));
+  }
+
+  Future<void> _updateAllSubscriptions() async {
+    if (_busy || _running || _updatingAll) return;
+    _updatingAll = true;
+    try {
+      for (final sub in List<Subscription>.of(_data.subscriptions)) {
+        if (!mounted) break;
+        await _updateSubscription(sub);
+      }
+    } finally {
+      _updatingAll = false;
+    }
+  }
+
+  Widget _navItem(int index, IconData icon, String label, bool collapsed,
+      {int? count}) {
+    final scheme = Theme.of(context).colorScheme, selected = _page == index;
+    return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+        child: Tooltip(
+            message: collapsed ? label : '',
+            child: AnimatedContainer(
+                duration: UiScope.duration(context),
+                decoration: BoxDecoration(
+                    color: selected
+                        ? scheme.primary.withValues(alpha: .09)
+                        : Colors.transparent,
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(
+                        color: selected
+                            ? scheme.primary.withValues(alpha: .35)
+                            : Colors.transparent)),
+                child: InkWell(
+                    borderRadius: BorderRadius.circular(6),
+                    onTap: () => setState(() => _page = index),
+                    child: Padding(
+                        padding: EdgeInsets.symmetric(
+                            horizontal: collapsed ? 9 : 12, vertical: 11),
+                        child: Row(
+                            mainAxisAlignment: collapsed
+                                ? MainAxisAlignment.center
+                                : MainAxisAlignment.start,
+                            children: [
+                              Icon(icon,
+                                  size: 17,
+                                  color: selected
+                                      ? scheme.primary
+                                      : scheme.onSurfaceVariant),
+                              if (!collapsed) ...[
+                                const SizedBox(width: 11),
+                                Expanded(
+                                    child: Text(label,
+                                        style: TextStyle(
+                                            fontSize: 12,
+                                            color: selected
+                                                ? scheme.primary
+                                                : scheme.onSurfaceVariant))),
+                                if (count != null)
+                                  Text('$count',
+                                      style: mono.copyWith(
+                                          fontSize: 9,
+                                          color: scheme.onSurfaceVariant))
+                              ]
+                            ]))))));
+  }
+}
+
+class _FindNodeIntent extends Intent {
+  const _FindNodeIntent();
+}
+
+class _ConnectCancelled implements Exception {
+  const _ConnectCancelled();
 }

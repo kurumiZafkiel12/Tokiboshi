@@ -10,6 +10,8 @@
 
 ## 功能
 
+- **小组件工作台**：可调整的信息组件、底部出口选择器、深浅主题、三档动效与独立角色细节；流量和请求接入真实本地控制器。
+
 - **订阅与节点**：分享链接（vless / vmess / trojan / hysteria2 / ss / socks5 等）、base64 订阅、Clash YAML（含 proxy-providers）、sing-box JSON；订阅里嵌套的其他订阅链接会递归展开（深度与数量有上限，超限会提示）。
 - **分组与测速**：节点按来源分组展示，支持延迟测试与链式代理（前置 → 落地），导入的 `dialer-proxy` / `detour` 会保留。
 - **分流与模式**：规则（广告拦截、国内直连可开关）、全局、直连三种模式真实生效，可在面板或托盘切换。
@@ -23,12 +25,12 @@ Tokiboshi 不提供代理服务器或订阅服务，使用前需要导入自己�
 
 | 平台 | 版本要求 | 下载 |
 | --- | --- | --- |
-| Windows | Windows 10/11，x64 | [![Setup x64](https://img.shields.io/badge/Setup-x64-3d8ba3?style=flat-square)](https://github.com/kurumiZafkiel12/Tokiboshi/releases/download/v0.0.8/Tokiboshi-Setup-0.0.8.exe) [![ZIP x64](https://img.shields.io/badge/ZIP-x64-3d8ba3?style=flat-square)](https://github.com/kurumiZafkiel12/Tokiboshi/releases/download/v0.0.8/Tokiboshi-windows.zip) |
+| Windows | Windows 10/11，x64 | [![Setup x64](https://img.shields.io/badge/Setup-x64-3d8ba3?style=flat-square)](https://github.com/kurumiZafkiel12/Tokiboshi/releases/download/v0.0.9/Tokiboshi-Setup-0.0.9.exe) [![ZIP x64](https://img.shields.io/badge/ZIP-x64-3d8ba3?style=flat-square)](https://github.com/kurumiZafkiel12/Tokiboshi/releases/download/v0.0.9/Tokiboshi-windows.zip) |
 
 安装文件与 SHA256 校验清单（`SHA256SUMS.txt`）均在发布页。安装程序尚未做 Authenticode 签名。
 
 - 推荐使用上方简体中文安装版：安装时自动关闭本安装路径的旧进程，覆盖程序并按安装清单清理退役文件，保留节点、设置及恢复文件；便携版解压到新目录使用。
-- 首次使用：**订阅页**导入订阅 → **节点页**选节点 → **仪表盘**点「启动」→ 打开「系统代理」。内核（sing-box 1.14.4，固定版本，官方校验）随包提供，缺失时自动下载，也可在设置页手动管理。
+- 首次使用：**订阅页**导入订阅 → **节点页**选节点 → **连接工作台**点「启动代理」→ 打开「系统代理」。内核（sing-box 1.14.4，固定版本，官方校验）随包提供，缺失时自动下载，也可在设置页手动管理。
 - 虚拟网卡（TUN）需要以管理员身份运行 Tokiboshi；普通权限下会明确提示，不会静默失败。
 - 节点与设置保存在 `%APPDATA%\Tokiboshi\data.json`，升级覆盖安装不影响数据。
 - 当前版本及历史变化见[发布说明](https://github.com/kurumiZafkiel12/Tokiboshi/releases)。

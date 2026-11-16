@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -37,15 +38,57 @@ class MemoryStore extends Store {
 }
 
 void main() {
-  testWidgets('opening app connects saved node by default and can be disabled', (tester) async {
+  testWidgets('cancel connection cleans up a core that finishes starting late',
+      (t) async {
+    t.view.physicalSize = const Size(1280, 800);
+    t.view.devicePixelRatio = 1;
+    addTearDown(t.view.reset);
     final store = MemoryStore();
-    store.data.nodes = const [NodeInfo(name: 'saved', outboundJson: '{"type":"socks","server":"127.0.0.1","server_port":1080}')];
+    store.data.autoConnect = false;
+    store.data.nodes = const [
+      NodeInfo(
+          name: 'cancel-fixture',
+          outboundJson: '{"type":"socks","server":"127.0.0.1","server_port":1}')
+    ];
+    store.data.selectedIndex = 0;
+    final bridge = LateStartBridge(), proxy = NoopSystemProxy();
+    await t.pumpWidget(TokiboshiApp(
+        bridge: bridge,
+        store: store,
+        systemProxy: proxy,
+        allocatePort: (p, r) async => p));
+    await t.pumpAndSettle();
+    await t.tap(find.text('启动代理'));
+    await t.pump();
+    await t.pump(const Duration(milliseconds: 100));
+    expect(bridge.enteredStart, true);
+    await t.tap(find.text('取消连接'));
+    bridge.gate.complete();
+    await t.pumpAndSettle();
+    expect(bridge.running, false);
+    expect(proxy.calls.where((c) => c.enable), isEmpty);
+    expect(store.data.selectedIndex, 0);
+    expect(find.textContaining('已取消连接'), findsWidgets);
+    await t.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('opening app connects saved node by default and can be disabled',
+      (tester) async {
+    final store = MemoryStore();
+    store.data.nodes = const [
+      NodeInfo(
+          name: 'saved',
+          outboundJson:
+              '{"type":"socks","server":"127.0.0.1","server_port":1080}')
+    ];
     store.data.selectedIndex = 0;
     // 自动连接 restores the running state of a previous clean exit.
     store.data.runningAtExit = true;
     final bridge = FakeBridge();
     await tester.pumpWidget(TokiboshiApp(
-      bridge: bridge, store: store, systemProxy: NoopSystemProxy(),
+      bridge: bridge,
+      store: store,
+      systemProxy: NoopSystemProxy(),
       allocatePort: (port, reserved) async => port,
     ));
     await tester.pumpAndSettle();
@@ -55,7 +98,9 @@ void main() {
     store.data.autoConnect = false;
     final stoppedBridge = FakeBridge();
     await tester.pumpWidget(TokiboshiApp(
-      bridge: stoppedBridge, store: store, systemProxy: NoopSystemProxy(),
+      bridge: stoppedBridge,
+      store: store,
+      systemProxy: NoopSystemProxy(),
       allocatePort: (port, reserved) async => port,
     ));
     await tester.pumpAndSettle();
@@ -71,9 +116,8 @@ void main() {
     final bridge = FakeBridge();
     final proxy = NoopSystemProxy();
     final fetcher = FakeFetcher({
-      'https://sub.example.com/abc':
-          'ss://aes-256-gcm:pw@127.0.0.1:8388#a\n'
-              'ss://aes-256-gcm:pw@127.0.0.1:8389#b\n',
+      'https://sub.example.com/abc': 'ss://aes-256-gcm:pw@127.0.0.1:8388#a\n'
+          'ss://aes-256-gcm:pw@127.0.0.1:8389#b\n',
     });
 
     await tester.pumpWidget(
@@ -86,8 +130,8 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    expect(find.text('sing-box 已停止'), findsOneWidget);
-    expect(find.text('未选择节点'), findsOneWidget);
+    expect(find.text('未连接'), findsWidgets);
+    expect(find.text('未选择节点'), findsWidgets);
 
     // Import one ss link from the nodes page.
     await tester.tap(find.text('节点').first);
@@ -100,7 +144,7 @@ void main() {
     );
     await tester.tap(find.text('导入').last);
     await tester.pumpAndSettle();
-    expect(find.text('x'), findsOneWidget);
+    expect(find.text('x'), findsWidgets);
     expect(store.data.nodes, hasLength(1));
     expect(store.data.nodes.single.source, '');
 
@@ -124,18 +168,18 @@ void main() {
     expect(store.data.nodes.where((n) => n.source.isNotEmpty), hasLength(2));
 
     // Back on the dashboard: start and stop.
-    await tester.tap(find.text('仪表盘').first);
+    await tester.tap(find.text('连接').first);
     await tester.pumpAndSettle();
-    await tester.tap(find.text('启动'));
+    await tester.tap(find.text('启动代理'));
     await tester.pumpAndSettle();
-    expect(find.text('sing-box 运行中'), findsOneWidget);
+    expect(find.text('已连接'), findsOneWidget);
     expect(bridge.running, isTrue);
     expect(store.runtimeConfig, isNotNull);
     expect(proxy.calls, [(enable: true, port: 7890)]);
 
-    await tester.tap(find.text('停止'));
+    await tester.tap(find.text('停止代理'));
     await tester.pumpAndSettle();
-    expect(find.text('sing-box 已停止'), findsOneWidget);
+    expect(find.text('未连接'), findsWidgets);
     expect(bridge.running, isFalse);
     expect(proxy.calls.last, (enable: false, port: 7890));
   });
@@ -147,8 +191,7 @@ void main() {
     addTearDown(tester.view.reset);
     final store = MemoryStore();
     final fetcher = FakeFetcher({
-      'https://sub.example.com/abc':
-          'ss://aes-256-gcm:pw@127.0.0.1:8388#a\n',
+      'https://sub.example.com/abc': 'ss://aes-256-gcm:pw@127.0.0.1:8388#a\n',
     });
     await tester.pumpWidget(
       TokiboshiApp(
@@ -218,10 +261,21 @@ void main() {
     // Inline node + provider node; the 剩余流量 info node is excluded
     // by the provider's exclude-filter.
     expect(store.data.nodes, hasLength(2));
-    final providerNode =
-        store.data.nodes.singleWhere((n) => n.name == '香港01');
+    final providerNode = store.data.nodes.singleWhere((n) => n.name == '香港01');
     expect(providerNode.group, '源A');
     expect(providerNode.source, store.data.subscriptions.single.id);
     expect(store.data.nodes.any((n) => n.name.contains('流量')), isFalse);
   });
+}
+
+class LateStartBridge extends FakeBridge {
+  final gate = Completer<void>();
+  bool enteredStart = false;
+  @override
+  Future<void> startCore(
+      {required String singBoxPath, required String configPath}) async {
+    enteredStart = true;
+    await gate.future;
+    await super.startCore(singBoxPath: singBoxPath, configPath: configPath);
+  }
 }
