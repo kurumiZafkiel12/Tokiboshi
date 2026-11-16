@@ -26,6 +26,7 @@ class SubscriptionResolver {
   Future<ParseOutcome> resolve(String url) async {
     final cache = <String, Future<ParseOutcome>>{};
     var expansions = 0;
+    final ruleCache = <String, Future<String>>{};
     Future<ParseOutcome> expand(String link, String? ua, int depth, Set<String> path) async {
       final uri = Uri.tryParse(link);
       final inline = depth > 0 && uri?.scheme == 'data';
@@ -86,7 +87,33 @@ class SubscriptionResolver {
           failedGroups.add(provider.name);
         }
       }
-      return ParseOutcome(nodes: nodes, skipped: skipped, failedGroups: failedGroups);
+      // Named node providers cannot replace the root routing profile.
+      var profile = first.profileJson;
+      if (profile != null && depth == 0) {
+        final parsed = jsonDecode(profile) as Map<String, dynamic>;
+        final unsupported = (parsed['unsupported'] as List?) ?? const [];
+        if (unsupported.isNotEmpty) {
+          throw FormatException('订阅规则不兼容，保留上次配置：${unsupported.join('；')}');
+        }
+        final sets = (parsed['rule_sets'] as List?) ?? const [];
+        final converted = <dynamic>[];
+        for (final value in sets) {
+          final set = Map<String, dynamic>.from(value as Map);
+          if (set['__behavior'] == null) { converted.add(set); continue; }
+          final link = uri.resolve(set['url'] as String).toString();
+          if (!ruleCache.containsKey(link) && cache.length + ruleCache.length >= maxRequests) {
+            throw const FormatException('规则集请求达到上限，保留上次配置');
+          }
+          final content = await ruleCache.putIfAbsent(link, () => fetcher.fetch(link));
+          final rules = await bridge.convertRuleProvider(text: content,
+              behavior: set['__behavior'] as String, format: set['__format'] as String? ?? 'yaml');
+          converted.add({'type': 'inline', 'tag': set['tag'], 'rules': jsonDecode(rules)});
+        }
+        parsed['rule_sets'] = converted;
+        profile = jsonEncode(parsed);
+      }
+      return ParseOutcome(nodes: nodes, skipped: skipped,
+          failedGroups: failedGroups, profileJson: profile);
     }
 
     return expand(url, null, 0, {});

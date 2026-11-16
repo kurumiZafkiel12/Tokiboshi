@@ -18,6 +18,7 @@ import 'pages/subscriptions_page.dart';
 import 'services/clash_api.dart';
 import 'services/latency.dart';
 import 'services/local_ports.dart';
+import 'services/elevated_handoff.dart';
 import 'services/node_tags.dart';
 import 'services/proxy_chain.dart';
 import 'services/store.dart';
@@ -59,7 +60,16 @@ Future<bool> _isElevated() async {
   }
 }
 
-Future<void> main() async {
+Future<void> main(List<String> args) async {
+  final handoff = args.where((a) => a.startsWith('--wait-parent=')).toList();
+  if (handoff.isNotEmpty) {
+    final parent = handoff.length == 1 ? int.tryParse(handoff.single.split('=').last) : null;
+    if (parent == null || !await waitForParentExit(parent)) {
+      stderr.writeln('提权交接未完成：原实例尚未退出');
+      exitCode = 1;
+      return;
+    }
+  }
   WidgetsFlutterBinding.ensureInitialized();
   if (Platform.isWindows) {
     // Single instance (user report: two copies could run at once and
@@ -289,7 +299,7 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
     final resumeRequested = _data.resumeConnect;
     if (_data.resumeConnect) {
       _data.resumeConnect = false;
-      changed = true;
+      if (!await _persist()) return;
     }
     if (mounted &&
         !_running &&
@@ -301,6 +311,9 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
       if (tunBlocked) {
         _setMessage(
             '自动连接已跳过：虚拟网卡需要管理员权限，请点「启动」并选择「以管理员身份重启」');
+        // Persist the consumption so the next load does not retry the
+        // same blocked auto-connect (CV007-01 remainder).
+        await _persist();
       } else {
         await _toggleCore();
       }
@@ -321,7 +334,10 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
   /// machine, HF053-05): a restart blip is tolerated for a few
   /// seconds, an auto-restart recovers the UI and system proxy, and
   /// only a sustained stop (or a user stop) tears the proxy down.
+  bool _handoffInProgress = false;
+
   Future<void> _syncCoreStatus() async {
+    if (_handoffInProgress) return;
     try {
       final status = await widget.bridge.coreStatus();
       if (!mounted) return;
@@ -533,6 +549,9 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
       var skipped = const <String>[];
       if (trimmed.contains('\n') || !trimmed.contains('://')) {
         final outcome = await widget.bridge.parseSubscription(trimmed);
+        if (outcome.profileJson != null) {
+          throw const FormatException('完整配置请通过订阅 URL 导入；本次未导入，避免丢失分流规则');
+        }
         imported = outcome.nodes;
         skipped = outcome.skipped;
       } else {
@@ -649,6 +668,8 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
             url: url,
             updatedAt: DateTime.now().toIso8601String(),
             lastReport: _subscriptionReport(outcome),
+            profileJson: outcome.profileJson,
+            profileState: outcome.profileJson == null ? 'nodes-only' : 'parsed',
           ),
         ];
         _data.nodes = [..._data.nodes, ...nodes];
@@ -686,7 +707,10 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
         _data.subscriptions = [
           for (final s in _data.subscriptions)
             if (s.id == sub.id)
-              s.copyWith(updatedAt: DateTime.now().toIso8601String(),
+              Subscription(id: s.id, name: s.name, url: s.url,
+                  profileJson: outcome.profileJson,
+                  profileState: outcome.profileJson == null ? 'nodes-only' : 'parsed',
+                  updatedAt: DateTime.now().toIso8601String(),
                   lastReport: '${_subscriptionReport(outcome)}${retained.isEmpty ? '' : '\n保留上次成功获取的 ${retained.length} 个节点（相关来源更新失败）'}')
             else
               s,
@@ -1066,8 +1090,19 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
       await _persist();
       final portsChanged = mixedPort != oldMixedPort || apiPort != oldApiPort;
       final selected = _data.selected;
+      // Do not invent a multi-profile priority or bind names across sources.
+      final profiles = _data.subscriptions.where((s) => s.profileJson != null).toList();
+      if (profiles.length > 1) {
+        throw const FormatException('多个订阅包含规则，尚未指定激活配置；拒绝按更新时间隐式切换');
+      }
+      final profile = profiles.isEmpty ? null : profiles.single;
+      final configNodes = profile == null ? _data.nodes
+          : _data.nodes.where((n) => n.source == profile.id).toList();
+      if (profile != null && selected != null && selected.source != profile.id) {
+        throw const FormatException('当前节点不属于规则订阅，请选择该订阅的节点或策略组');
+      }
       final config = await widget.bridge.buildConfig(
-        nodes: _data.nodes
+        nodes: configNodes
             .map((n) => NodeSpec(name: n.name, outboundJson: n.outboundJson))
             .toList(),
         mixedPort: _data.mixedPort,
@@ -1076,7 +1111,8 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
         blockAds: _data.blockAds,
         bypassCn: _data.bypassCn,
         dataDir: _dataDir,
-        selectedName: selected == null ? null : assignNodeTags(_data.nodes.map((n) => n.name))[_data.selectedIndex],
+        selectedName: selected == null ? null : assignNodeTags(configNodes.map((n) => n.name))[configNodes.indexOf(selected)],
+        profileJson: profile?.profileJson ?? '',
       );
       final configFile = await widget.store
           .writeRuntimeConfig(injectClashSecret(config, _data.clashApiSecret));
@@ -1110,9 +1146,10 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
         _message = _compose(
             '运行中：${_data.nodes.where((n) => !n.isPolicy).length} 个节点 · mixed 127.0.0.1:${_data.mixedPort}'
             ' · 面板 127.0.0.1:${_data.clashApiPort}/ui'
+            ' · 分流：${profile == null ? '仅节点订阅/内置模板' : '订阅自带规则'}'
             '${_data.systemProxy ? ' · 系统代理已开启' : ''}'
             '${portsChanged ? ' · 原端口被占用，已自动更换并保存端口' : ''}'
-            '${rulesPending ? ' · ⚠ 规则集未就绪，重启内核后分流生效' : ''}');
+            '${profile == null && rulesPending ? ' · ⚠ 规则集未就绪，重启内核后分流生效' : ''}');
       });
     } catch (e) {
       if (started) {
@@ -1183,6 +1220,8 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
   }
 
   Future<void> _setTun(bool value) async {
+    if (_busy || _handoffInProgress) return;
+    final beforeToggle = _data.copyWith();
     setState(() {
       _data.enableTun = value;
     });
@@ -1209,7 +1248,7 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
       );
       if (!mounted) return;
       if (relaunch == true) {
-        await _relaunchElevated();
+        await _relaunchElevated(rollback: beforeToggle);
         return;
       }
       setState(() {
@@ -1236,43 +1275,58 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
   /// failed persist aborts the relaunch (CV007-04). On success the
   /// lock is released so the elevated instance can take over
   /// (CV007-02).
-  Future<void> _relaunchElevated() async {
+  Future<void> _relaunchElevated({AppData? rollback}) async {
+    // Full snapshot of everything this attempt mutates: ANY exit path
+    // that does not end in a successful UAC launch restores it (Codex
+    // CV007-01/03/04 remainders).
+    final snapshot = rollback ?? _data.copyWith();
+    _handoffInProgress = true;
     try {
       _data.cleanExit = true;
       _data.runningAtExit = _running;
       _data.resumeConnect = true;
-      final saved = await _persist();
-      if (!saved) {
+      if (!await _persist()) {
+        // CV007-04: handoff state could not be written - abort with
+        // the in-memory state restored to the pre-attempt snapshot.
+        if (mounted) setState(() => _data = snapshot);
+        await _persist(); // Replace any recoverable tmp handoff intent too.
         _setMessage('配置保存失败，已取消提权重启（应用保持当前状态）');
         return;
       }
       final exe = Platform.resolvedExecutable;
+      final quotedExe = exe.replaceAll("'", "''");
       final result = await Process.run('powershell', [
         '-NoProfile',
         '-Command',
-        'Start-Process -FilePath "$exe" -Verb RunAs',
+        "Start-Process -FilePath '$quotedExe' -ArgumentList '--wait-parent=$pid' -Verb RunAs -ErrorAction Stop",
       ]);
       if (result.exitCode != 0) {
-        // UAC declined: consume the one-shot intent, nothing torn down.
-        _data.resumeConnect = false;
-        await _persist();
+        // UAC declined: restore the pre-attempt state exactly
+        // (CV007-03) - core, proxy, tray and flags all unchanged.
+        if (mounted) setState(() => _data = snapshot);
+        await widget.store.save(_data);
         _setMessage('已取消管理员授权（未重启，连接保持原状）');
         return;
       }
+      // Accepted: the elevated instance is launching. Release the
+      // single-instance lock FIRST so it can bind even while our
+      // teardown runs (CV007-02), then stop core/proxy and exit.
+      _releaseInstanceLock();
       if (_running) {
         await widget.bridge.stopCore();
         if (_data.systemProxy) {
           await widget.systemProxy.apply(false, _data.mixedPort);
         }
       }
-      _releaseInstanceLock(); // CV007-02: let the elevated instance bind
       await trayManager.destroy();
       await windowManager.destroy();
       exit(0);
     } catch (e) {
-      _setMessage('提权重启失败：$e');
-      _data.resumeConnect = false;
+      if (mounted) setState(() => _data = snapshot);
       await _persist();
+      _setMessage('提权重启失败：$e');
+    } finally {
+      _handoffInProgress = false;
     }
   }
 

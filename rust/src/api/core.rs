@@ -29,6 +29,7 @@ pub fn build_config(
     bypass_cn: bool,
     data_dir: String,
     selected_name: Option<String>,
+    profile_json: String,
 ) -> Result<String, String> {
     let settings = CoreSettings {
         mixed_port,
@@ -39,7 +40,17 @@ pub fn build_config(
         data_dir,
         ..CoreSettings::default()
     };
-    config::build_config_multi(&nodes, &settings, selected_name.as_deref(), None)
+    let profile: Option<crate::profile::ParsedProfile> = if profile_json.trim().is_empty() {
+        None
+    } else {
+        let parsed: crate::profile::ParsedProfile = serde_json::from_str(&profile_json)
+            .map_err(|_| "订阅 profile 数据无效，拒绝回退内置规则".to_string())?;
+        if !parsed.unsupported.is_empty() {
+            return Err(format!("订阅规则不兼容，未应用：{}", parsed.unsupported.join("；")));
+        }
+        Some(parsed)
+    };
+    config::build_config_multi(&nodes, &settings, selected_name.as_deref(), profile.as_ref())
 }
 
 /// Version of the Rust middle layer (not of sing-box).
@@ -307,4 +318,9 @@ pub fn ensure_core_state() -> EnsureState {
 /// sing-box JSON config) into nodes plus skipped-entry notes.
 pub fn parse_subscription(text: String) -> Result<crate::links::ParseOutcome, String> {
     crate::links::parse_subscription(&text)
+}
+
+/// Convert a downloaded Clash rule-provider payload; never emit raw YAML as JSON source.
+pub fn convert_rule_provider(text: String, behavior: String, format: String) -> Result<String,String> {
+    crate::profile::convert_provider(&text,&behavior,&format).map(|v|v.to_string())
 }

@@ -3,6 +3,9 @@ import 'package:tokiboshi/bridge/core_bridge.dart';
 /// In-memory CoreBridge for tests. Parsing accepts only the canned
 /// links below; the authoritative parser is the Rust layer.
 class FakeBridge implements CoreBridge {
+  @override
+  Future<String> convertRuleProvider({required String text, required String behavior, required String format}) async =>
+      throw UnsupportedError('No provider conversion fixture');
   bool running = false;
   String? lastConfig;
 

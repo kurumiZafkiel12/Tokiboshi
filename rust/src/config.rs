@@ -381,17 +381,22 @@ pub fn build_config_multi(
     match profile {
         Some(p) => {
             for rs in &p.rule_sets {
+                if rs.get("__behavior").is_some() {
+                    return Err("Clash规则集尚未下载转换，请更新订阅后再启动".into());
+                }
                 let mut entry = rs.clone();
                 if let Some(obj) = entry.as_object_mut() {
                     // Strip ALL audit keys (single or double underscore):
                     // a leaked `_no_resolve` is an unknown field for the
                     // kernel (T069-S01).
                     obj.retain(|k, _| !k.starts_with('_'));
-                    obj.entry("download_detour")
-                        .or_insert_with(|| json!("direct"));
+                    if obj.get("type").and_then(Value::as_str) == Some("remote") {
+                        obj.entry("download_detour").or_insert_with(|| json!("direct"));
+                    }
                 }
                 rule_sets.push(entry);
             }
+            let mut geoip_added = std::collections::HashSet::new();
             for rule in &p.route_rules {
                 let mut rule = rule.clone();
                 // GEOIP audit marker -> rule_set reference. CN uses the
@@ -401,21 +406,19 @@ pub fn build_config_multi(
                 // 1.14 and cannot be emitted (T069-S01).
                 if let Some(cc) = rule.get("__geoip").and_then(Value::as_str) {
                     let cc_l = cc.to_ascii_lowercase();
-                    let tag = format!("geoip-{cc_l}");
-                    if cc_l == "cn" {
-                        let path = std::path::Path::new(&settings.data_dir)
-                            .join("rules")
-                            .join("geoip-cn.srs");
-                        rule_sets.push(json!({
-                            "type": "local", "tag": tag, "format": "binary",
-                            "path": path.to_string_lossy(),
-                        }));
-                    } else {
-                        rule_sets.push(json!({
-                            "type": "remote", "tag": tag, "format": "binary",
-                            "url": format!("https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-{cc_l}.srs"),
-                            "download_detour": "direct",
-                        }));
+                    let tag = format!("__tokiboshi_geoip_{cc_l}");
+                    let path = std::path::Path::new(&settings.data_dir).join("rules").join(format!("geoip-{cc_l}.srs"));
+                    if geoip_added.insert(cc_l.clone()) {
+                        if rule_sets.iter().any(|rs| rs["tag"] == tag) {
+                            return Err("订阅规则集名称与应用GEOIP规则集冲突".into());
+                        }
+                        if path.is_file() {
+                            rule_sets.push(json!({"type":"local","tag":tag,"format":"binary","path":path.to_string_lossy()}));
+                        } else {
+                            rule_sets.push(json!({"type":"remote","tag":tag,"format":"binary",
+                                "url":format!("https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-{cc_l}.srs"),
+                                "download_detour":"direct"}));
+                        }
                     }
                     rule.as_object_mut().unwrap().remove("__geoip");
                     rule.as_object_mut().unwrap().insert(
@@ -541,7 +544,7 @@ pub fn build_config_multi(
         }
     }
 
-    let config = json!({
+    let mut config = json!({
         "log": { "level": settings.log_level, "timestamp": true },
         "dns": {
             "servers": dns_servers,
@@ -569,6 +572,18 @@ pub fn build_config_multi(
             }
         }
     });
+    if let Some(native_dns) = profile.filter(|p| p.dns_native).and_then(|p| p.dns.as_ref()) {
+        config["dns"] = native_dns.clone();
+        // Keep all original DNS fields and references. Pick an existing resolver
+        // for app-owned domain dialing rather than inserting a dangling tag.
+        let resolver = native_dns.get("final").and_then(Value::as_str)
+            .or_else(|| native_dns.get("servers")?.as_array()?.first()?.get("tag")?.as_str());
+        if let Some(resolver)=resolver {
+            config["route"]["default_domain_resolver"]=json!(resolver);
+        } else {
+            return Err("原生DNS缺少可用的final/服务器tag".into());
+        }
+    }
     serde_json::to_string_pretty(&config).map_err(|e| e.to_string())
 }
 
@@ -800,6 +815,7 @@ mod tests {
             rule_sets: vec![],
             final_outbound: Some("HK".into()),
             dns: None,
+            dns_native: false,
             unsupported: vec![],
             rules_total: 4,
         };
@@ -827,6 +843,7 @@ mod tests {
             rule_sets: vec![],
             final_outbound: None,
             dns: None,
+            dns_native: false,
             unsupported: vec![],
             rules_total: 1,
         };
@@ -842,6 +859,7 @@ mod tests {
             rule_sets: vec![],
             final_outbound: None,
             dns: Some(json!({"servers":[{"type":"https","tag":"dns-sub-1","server":"doh.pub","server_port":443}]})),
+            dns_native: false,
             unsupported: vec![],
             rules_total: 0,
         };

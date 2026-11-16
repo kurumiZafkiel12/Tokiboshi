@@ -18,6 +18,10 @@ Future<List<String>> validateConfig({required String text}) =>
 /// Build the full GUI-shell sing-box config for all nodes: selector
 /// + urltest groups, route rule template, Clash API with the
 /// zashboard UI, cache file persistence.
+///
+/// T069: the subscription-carried profile reaches this through
+/// ParseOutcome.profile_json (stored per subscription and injected by
+/// the Dart layer after FRB regen — see handoff doc).
 Future<String> buildConfig(
         {required List<NodeSpec> nodes,
         required int mixedPort,
@@ -26,7 +30,8 @@ Future<String> buildConfig(
         required bool blockAds,
         required bool bypassCn,
         required String dataDir,
-        String? selectedName}) =>
+        String? selectedName,
+        required String profileJson}) =>
     RustLib.instance.api.crateApiCoreBuildConfig(
         nodes: nodes,
         mixedPort: mixedPort,
@@ -35,7 +40,8 @@ Future<String> buildConfig(
         blockAds: blockAds,
         bypassCn: bypassCn,
         dataDir: dataDir,
-        selectedName: selectedName);
+        selectedName: selectedName,
+        profileJson: profileJson);
 
 /// Version of the Rust middle layer (not of sing-box).
 Future<String> bridgeVersion() =>
@@ -60,7 +66,8 @@ Future<bool> coreRunning() => RustLib.instance.api.crateApiCoreCoreRunning();
 Future<CoreStatus> coreStatus() =>
     RustLib.instance.api.crateApiCoreCoreStatus();
 
-/// Recent core log lines (bounded ring buffer, oldest first).
+/// Recent core log lines (bounded ring buffer, oldest first), with
+/// background-work diagnostics (rule-set downloads) prepended.
 Future<List<String>> coreLogs() => RustLib.instance.api.crateApiCoreCoreLogs();
 
 /// `sing-box version` first line for the binary at `binary_path`.
@@ -84,6 +91,14 @@ Future<EnsureState> ensureCoreState() =>
 /// sing-box JSON config) into nodes plus skipped-entry notes.
 Future<ParseOutcome> parseSubscription({required String text}) =>
     RustLib.instance.api.crateApiCoreParseSubscription(text: text);
+
+/// Convert a downloaded Clash rule-provider payload; never emit raw YAML as JSON source.
+Future<String> convertRuleProvider(
+        {required String text,
+        required String behavior,
+        required String format}) =>
+    RustLib.instance.api.crateApiCoreConvertRuleProvider(
+        text: text, behavior: behavior, format: format);
 
 class CoreStatus {
   final bool running;

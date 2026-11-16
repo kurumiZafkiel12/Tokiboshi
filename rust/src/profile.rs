@@ -100,7 +100,11 @@ fn convert_rule(
         // carried as an audit marker, converted at build time into a
         // rule_set reference (local geoip-<cc>.srs for CN, remote
         // SagerNet rule-set for other codes).
-        "GEOIP" => json!({ "__geoip": payload }),
+        "GEOIP" => {
+            if payload.eq_ignore_ascii_case("private") { json!({"ip_is_private":true}) }
+            else if payload.len()==2 && payload.bytes().all(|b|b.is_ascii_alphabetic()) { json!({"__geoip":payload}) }
+            else { return Err(format!("第 {line_no} 行：GEOIP国家代码无效")); }
+        },
         "RULE-SET" => {
             let tag = providers.get(payload).ok_or_else(|| {
                 format!("RULE-SET 引用了未定义的 provider「{payload}」")
@@ -128,8 +132,13 @@ pub fn parse_clash_profile(text: &str) -> Result<Option<ParsedProfile>, String> 
     // Deserialize straight into a JSON value so the whole traversal
     // below can use one consistent Value type (serde_yaml::Value and
     // serde_json::Value do not mix).
-    let doc: Value =
-        serde_yaml::from_str(text).map_err(|e| format!("订阅 YAML 解析失败：{e}"))?;
+    let doc: Value = match serde_json::from_str(text) {
+        Ok(doc) => doc,
+        Err(_) => serde_yaml::from_str(text).map_err(|e| format!("订阅 YAML 解析失败：{e}"))?,
+    };
+    if doc.get("rules").is_some_and(|r| !r.is_array()) {
+        return Err("订阅rules必须为数组".into());
+    }
     let rules = doc.get("rules").and_then(Value::as_array);
     let providers = doc.get("rule-providers").and_then(Value::as_object);
     let dns = doc.get("dns");
@@ -188,6 +197,7 @@ pub fn parse_clash_profile(text: &str) -> Result<Option<ParsedProfile>, String> 
                 "download_detour": "direct",
                 "update_interval": "24h",
                 "__behavior": behavior,
+                "__format": format,
             }));
         }
     }
@@ -222,12 +232,12 @@ pub fn parse_clash_profile(text: &str) -> Result<Option<ParsedProfile>, String> 
                     if rule.get("__match_target").is_some() {
                         profile.final_outbound =
                             rule["__match_target"].as_str().map(str::to_string);
-                        // Drop the marker; a MATCH is expressed via final.
-                        continue;
+                        // MATCH is terminal: later rules are unreachable in Clash.
+                        break;
                     }
                     // Strip audit-only keys.
                     if let Some(obj) = rule.as_object_mut() {
-                        obj.retain(|k, _| !k.starts_with("__"));
+                        obj.retain(|k, _| !k.starts_with("__") || k == "__geoip");
                     }
                     profile.route_rules.push(rule);
                 }
@@ -493,5 +503,68 @@ rules:
         let s = p.summary();
         assert!(s.contains("1/2"), "{s}");
         assert!(s.contains("HK"), "{s}");
+    }
+}
+
+/// Convert the content of a Clash HTTP rule-provider to inline sing-box rules.
+/// Fetching, limits and ownership stay with the root subscription resolver.
+pub fn convert_provider(text: &str, behavior: &str, format: &str) -> Result<Value, String> {
+    if text.len() > 8 * 1024 * 1024 { return Err("规则集超过8MiB上限".into()); }
+    let entries: Vec<String> = match format {
+        "yaml" => {
+            let doc: Value = serde_yaml::from_str(text).map_err(|_| "规则集YAML无效")?;
+            doc.get("payload").and_then(Value::as_array).ok_or("规则集缺少payload数组")?
+                .iter().map(|v| v.as_str().map(str::to_string).ok_or("规则集payload必须为字符串".to_string())).collect::<Result<_,_>>()?
+        }
+        "text" => text.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#')).map(str::to_string).collect(),
+        _ => return Err("规则集仅支持yaml/text格式".into()),
+    };
+    if entries.len() > 100_000 { return Err("规则集超过100000条上限".into()); }
+    let mut exact=Vec::new();let mut suffix=Vec::new();let mut ips=Vec::new();
+    for entry in entries {
+        let s=entry.trim();
+        match behavior {
+            "domain" => {
+                let (s,is_suffix)=s.strip_prefix("+.").map(|s|(s,true)).unwrap_or((s,false));
+                if s.is_empty() || s.contains(['*','+','/',':',',']) || s.chars().any(char::is_whitespace) {
+                    return Err("规则集包含不支持的域名语法".into());
+                }
+                if is_suffix {suffix.push(s.to_string());} else {exact.push(s.to_string());}
+            }
+            "ip_cidr" => {
+                let (ip,bits)=s.split_once('/').ok_or("规则集IP条目缺少CIDR前缀")?;
+                let addr: std::net::IpAddr=ip.parse().map_err(|_| "规则集IP地址无效")?;
+                let bits: u8=bits.parse().map_err(|_| "规则集CIDR前缀无效")?;
+                if bits > if addr.is_ipv4(){32}else{128} {return Err("规则集CIDR前缀越界".into());}
+                ips.push(s.to_string());
+            }
+            _ => return Err("规则集仅支持domain/ipcidr行为".into()),
+        }
+    }
+    let mut rule=serde_json::Map::new();
+    if !exact.is_empty(){rule.insert("domain".into(),json!(exact));}
+    if !suffix.is_empty(){rule.insert("domain_suffix".into(),json!(suffix));}
+    if !ips.is_empty(){rule.insert("ip_cidr".into(),json!(ips));}
+    Ok(if rule.is_empty(){json!([])}else{json!([rule])})
+}
+
+#[cfg(test)]
+mod provider_regressions {
+    use super::*;
+    #[test] fn yaml_and_text_provider_are_real_inline_rules() {
+        assert_eq!(convert_provider("payload:\n - '+.example.com'\n - exact.example\n","domain","yaml").unwrap(),
+            json!([{"domain":["exact.example"],"domain_suffix":["example.com"]}]));
+        assert_eq!(convert_provider("# comment\n192.0.2.0/24\n2001:db8::/32","ip_cidr","text").unwrap(),
+            json!([{"ip_cidr":["192.0.2.0/24","2001:db8::/32"]}]));
+        assert!(convert_provider("payload: [5]","domain","yaml").is_err());
+        assert!(convert_provider("192.0.2.0/99","ip_cidr","text").is_err());
+        assert!(convert_provider("*.example.com","domain","text").is_err());
+    }
+    #[test] fn geoip_marker_survives_and_match_is_terminal() {
+        let p=parse_clash_profile("rules:\n - GEOIP,CN,DIRECT\n - MATCH,DIRECT\n - DOMAIN,unreachable.example,REJECT\n").unwrap().unwrap();
+        assert_eq!(p.route_rules.len(),1);assert_eq!(p.route_rules[0]["__geoip"],"CN");
+        assert_eq!(p.final_outbound.as_deref(),Some("DIRECT"));
+        assert!(parse_clash_profile("rules: broken").is_err());
+        assert!(parse_clash_profile("{rules: [\"MATCH,DIRECT\"]}").unwrap().is_some());
     }
 }

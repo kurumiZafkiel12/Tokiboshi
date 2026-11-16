@@ -23,11 +23,11 @@ Tokiboshi 不提供代理服务器或订阅服务，使用前需要导入自己�
 
 | 平台 | 版本要求 | 下载 |
 | --- | --- | --- |
-| Windows | Windows 10/11，x64 | [安装版与便携版](https://github.com/kurumiZafkiel12/Tokiboshi/releases/latest) |
+| Windows | Windows 10/11，x64 | [![Setup x64](https://img.shields.io/badge/Setup-x64-3d8ba3?style=flat-square)](https://github.com/kurumiZafkiel12/Tokiboshi/releases/download/v0.0.8/Tokiboshi-Setup-0.0.8.exe) [![ZIP x64](https://img.shields.io/badge/ZIP-x64-3d8ba3?style=flat-square)](https://github.com/kurumiZafkiel12/Tokiboshi/releases/download/v0.0.8/Tokiboshi-windows.zip) |
 
 安装文件与 SHA256 校验清单（`SHA256SUMS.txt`）均在发布页。安装程序尚未做 Authenticode 签名。
 
-- 推荐 [v0.0.5 中文升级安装包](https://github.com/kurumiZafkiel12/Tokiboshi/releases/download/v0.0.5/Tokiboshi-Setup-0.0.5-zh.exe)：安装时自动关闭本安装路径的旧进程，覆盖程序并按安装清单清理退役文件，保留节点、设置及恢复文件。原安装包仍需先从托盘退出；便携版解压到新目录使用。
+- 推荐使用上方简体中文安装版：安装时自动关闭本安装路径的旧进程，覆盖程序并按安装清单清理退役文件，保留节点、设置及恢复文件；便携版解压到新目录使用。
 - 首次使用：**订阅页**导入订阅 → **节点页**选节点 → **仪表盘**点「启动」→ 打开「系统代理」。内核（sing-box 1.14.4，固定版本，官方校验）随包提供，缺失时自动下载，也可在设置页手动管理。
 - 虚拟网卡（TUN）需要以管理员身份运行 Tokiboshi；普通权限下会明确提示，不会静默失败。
 - 节点与设置保存在 `%APPDATA%\Tokiboshi\data.json`，升级覆盖安装不影响数据。

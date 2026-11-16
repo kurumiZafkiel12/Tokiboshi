@@ -42,14 +42,25 @@ class ParseOutcome {
   /// empty.
   final List<ProviderInfo> providers;
 
+  /// Routing profile carried by the subscription (Clash rules /
+  /// rule-providers / DNS, or native sing-box route+dns), serialized
+  /// as JSON for the FRB boundary. None = pure node list (Hermes
+  /// T069: the UI must disclose "仅节点订阅").
+  final String? profileJson;
+
   const ParseOutcome({
     required this.nodes,
     required this.skipped,
     required this.providers,
+    this.profileJson,
   });
 
   @override
-  int get hashCode => nodes.hashCode ^ skipped.hashCode ^ providers.hashCode;
+  int get hashCode =>
+      nodes.hashCode ^
+      skipped.hashCode ^
+      providers.hashCode ^
+      profileJson.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -58,7 +69,8 @@ class ParseOutcome {
           runtimeType == other.runtimeType &&
           nodes == other.nodes &&
           skipped == other.skipped &&
-          providers == other.providers;
+          providers == other.providers &&
+          profileJson == other.profileJson;
 }
 
 /// One entry of a Clash YAML `proxy-providers:` section (http type).

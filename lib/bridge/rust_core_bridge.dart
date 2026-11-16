@@ -7,6 +7,9 @@ import 'core_bridge.dart';
 
 class RustCoreBridge implements CoreBridge {
   @override
+  Future<String> convertRuleProvider({required String text, required String behavior, required String format}) =>
+      rust_api.convertRuleProvider(text: text, behavior: behavior, format: format);
+  @override
   Future<NodeInfo> parseShareLink(String link) async {
     final n = await rust_api.parseShareLink(link: link);
     return NodeInfo(name: n.name, outboundJson: n.outboundJson);
@@ -16,8 +19,6 @@ class RustCoreBridge implements CoreBridge {
   Future<ParseOutcome> parseSubscription(String text) async {
     final outcome = await rust_api.parseSubscription(text: text);
     return ParseOutcome(
-      // T069: profileJson 需 FRB regen 后才有值（Codex 执行 codegen）。
-      // pre-regen 恒为 null，功能惰性。
       nodes: outcome.nodes
           .map((n) => NodeInfo(name: n.name, outboundJson: n.outboundJson))
           .toList(),
@@ -31,7 +32,7 @@ class RustCoreBridge implements CoreBridge {
                 filter: p.filter,
               ))
           .toList(),
-      profileJson: null,
+      profileJson: outcome.profileJson,
     );
   }
 
@@ -47,9 +48,6 @@ class RustCoreBridge implements CoreBridge {
     String? selectedName,
     String profileJson = '',
   }) {
-    // T069: profileJson 需 FRB regen 后才能传入生成的绑定（Codex 执行
-    // codegen 时接线）；pre-regen 惰性——订阅自带规则不会进入生成配置。
-    assert(profileJson.isEmpty || profileJson.isNotEmpty);
     return rust_api.buildConfig(
       nodes: nodes
           .map((n) => rust_config.NodeSpec(
@@ -64,6 +62,7 @@ class RustCoreBridge implements CoreBridge {
       bypassCn: bypassCn,
       dataDir: dataDir,
       selectedName: selectedName,
+      profileJson: profileJson,
     );
   }
 
