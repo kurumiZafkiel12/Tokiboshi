@@ -154,6 +154,26 @@ class AppData {
       (selectedIndex >= 0 && selectedIndex < nodes.length)
           ? nodes[selectedIndex]
           : null;
+
+  /// Deep-enough snapshot for the elevated-relaunch rollback: lists
+  /// copied, scalars copied (CV007-03/04).
+  AppData copyWith() => AppData(
+        nodes: List.of(nodes),
+        subscriptions: List.of(subscriptions),
+        selectedIndex: selectedIndex,
+        mixedPort: mixedPort,
+        clashApiPort: clashApiPort,
+        singBoxPath: singBoxPath,
+        systemProxy: systemProxy,
+        autoConnect: autoConnect,
+        enableTun: enableTun,
+        blockAds: blockAds,
+        bypassCn: bypassCn,
+        clashApiSecret: clashApiSecret,
+        cleanExit: cleanExit,
+        runningAtExit: runningAtExit,
+        resumeConnect: resumeConnect,
+      );
 }
 
 class Store {
