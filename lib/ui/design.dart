@@ -45,6 +45,7 @@ ThemeData workbenchTheme(UiPreferences ui) {
   final radius = BorderRadius.circular(7);
   return ThemeData(
       useMaterial3: true,
+      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
       brightness: scheme.brightness,
       colorScheme: scheme,
       scaffoldBackgroundColor: bg,

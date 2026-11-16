@@ -104,6 +104,7 @@ class _DashboardPageState extends State<DashboardPage> {
                               child: Text('我的工作台',
                                   style: TextStyle(
                                       fontSize: 23,
+                                      height: 1.3,
                                       fontWeight: FontWeight.w600,
                                       letterSpacing: -.6))),
                           Text('WORKSPACE / $kAppVersion',
@@ -113,7 +114,7 @@ class _DashboardPageState extends State<DashboardPage> {
                                       .colorScheme
                                       .onSurfaceVariant))
                         ]),
-                        const SizedBox(height: 14),
+                        const SizedBox(height: 12),
                         Row(children: [
                           Expanded(
                               child: Text('上方查看信息，下方选择连接',
@@ -135,7 +136,7 @@ class _DashboardPageState extends State<DashboardPage> {
                                   setState(() => _editing = !_editing),
                               child: Text(_editing ? '完成调整' : '调整组件'))
                         ]),
-                        const SizedBox(height: 14),
+                        const SizedBox(height: 12),
                         LayoutBuilder(builder: (context, grid) {
                           final width =
                               narrow ? grid.maxWidth : (grid.maxWidth - 14) / 2;
