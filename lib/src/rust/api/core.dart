@@ -92,6 +92,14 @@ Future<EnsureState> ensureCoreState() =>
 Future<ParseOutcome> parseSubscription({required String text}) =>
     RustLib.instance.api.crateApiCoreParseSubscription(text: text);
 
+/// Convert a downloaded Clash rule-provider payload; never emit raw YAML as JSON source.
+Future<String> convertRuleProvider(
+        {required String text,
+        required String behavior,
+        required String format}) =>
+    RustLib.instance.api.crateApiCoreConvertRuleProvider(
+        text: text, behavior: behavior, format: format);
+
 class CoreStatus {
   final bool running;
   final int restartCount;

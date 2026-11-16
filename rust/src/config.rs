@@ -381,6 +381,9 @@ pub fn build_config_multi(
     match profile {
         Some(p) => {
             for rs in &p.rule_sets {
+                if rs.get("__behavior").is_some() {
+                    return Err("Clash规则集尚未下载转换，请更新订阅后再启动".into());
+                }
                 let mut entry = rs.clone();
                 if let Some(obj) = entry.as_object_mut() {
                     // Strip ALL audit keys (single or double underscore):
@@ -392,6 +395,7 @@ pub fn build_config_multi(
                 }
                 rule_sets.push(entry);
             }
+            let mut geoip_added = std::collections::HashSet::new();
             for rule in &p.route_rules {
                 let mut rule = rule.clone();
                 // GEOIP audit marker -> rule_set reference. CN uses the
@@ -401,14 +405,17 @@ pub fn build_config_multi(
                 // 1.14 and cannot be emitted (T069-S01).
                 if let Some(cc) = rule.get("__geoip").and_then(Value::as_str) {
                     let cc_l = cc.to_ascii_lowercase();
-                    let tag = format!("geoip-{cc_l}");
-                    let path = std::path::Path::new(&settings.data_dir).join("rules").join(format!("{tag}.srs"));
-                    if !rule_sets.iter().any(|rs| rs["tag"] == tag) {
+                    let tag = format!("__tokiboshi_geoip_{cc_l}");
+                    let path = std::path::Path::new(&settings.data_dir).join("rules").join(format!("geoip-{cc_l}.srs"));
+                    if geoip_added.insert(cc_l.clone()) {
+                        if rule_sets.iter().any(|rs| rs["tag"] == tag) {
+                            return Err("订阅规则集名称与应用GEOIP规则集冲突".into());
+                        }
                         if path.is_file() {
                             rule_sets.push(json!({"type":"local","tag":tag,"format":"binary","path":path.to_string_lossy()}));
                         } else {
                             rule_sets.push(json!({"type":"remote","tag":tag,"format":"binary",
-                                "url":format!("https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/{tag}.srs"),
+                                "url":format!("https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-{cc_l}.srs"),
                                 "download_detour":"direct"}));
                         }
                     }

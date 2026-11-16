@@ -73,6 +73,8 @@ jobs:
           "SING_BOX=$env:SING_BOX" >> $env:GITHUB_ENV
           cargo test --locked --manifest-path rust/Cargo.toml 2>&1 | Tee-Object cargo-test.log
           if ($LASTEXITCODE -ne 0) { throw 'Rust tests failed' }
+      - name: Generate original-method elevation regression fixtures
+        run: python tool/release008/prepare_elevation.py .
       - name: Flutter analysis tests and Windows release build
         shell: pwsh
         run: |
@@ -87,6 +89,8 @@ jobs:
         run: |
           $env:T069_DLL=(Get-ChildItem build/windows/x64/runner/Release -Filter rust_lib_tokiboshi.dll -Recurse | Select-Object -First 1).FullName
           if (-not $env:T069_DLL) { throw 'Built DLL missing' }
+          python tool/release008/parent_wait_probe.py
+          if ($LASTEXITCODE -ne 0) { throw 'Native parent handoff failed' }
           python tool/t069_codegen/runtime_probe.py 2>&1 | Tee-Object runtime-probe.log
           if ($LASTEXITCODE -ne 0) { throw 'Actual bridge or routing failed' }
       - name: Original Rust profile semantic probes on Windows
@@ -104,6 +108,7 @@ jobs:
             lib/src/rust/
             rust/src/frb_generated.rs
             *.log
+            v007-widget-results.json
             generated-stat.txt
             generated.patch
             build/windows/x64/runner/Release/

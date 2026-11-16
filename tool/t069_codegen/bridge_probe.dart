@@ -4,6 +4,8 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:tokiboshi/src/rust/frb_generated.dart';
 import 'package:tokiboshi/bridge/rust_core_bridge.dart';
 import 'package:tokiboshi/bridge/core_bridge.dart';
+import 'package:tokiboshi/services/subscription_resolver.dart';
+import 'package:tokiboshi/services/subscription_fetcher.dart';
 
 Future<void> main() async {
  final env=Platform.environment;
@@ -19,6 +21,7 @@ proxy-groups:
   - {name: Group, type: select, proxies: [B]}
 rules:
   - DOMAIN,blocked.example,REJECT
+  - IP-CIDR,127.0.0.1/32,REJECT,no-resolve
   - DOMAIN,localhost,Group
   - MATCH,A
 dns:
@@ -52,6 +55,18 @@ dns:
   final converted=jsonDecode(await bridge.convertRuleProvider(text: "payload:\n - '+.example.com'\n",behavior:'domain',format:'yaml'));
   if(converted[0]['domain_suffix'][0]!='example.com')throw StateError('provider conversion failed');
   results['yamlProviderConverted']=converted;
+  final providerYaml=yaml.replaceFirst('DOMAIN,localhost,Group','RULE-SET,sites,Group')+
+      '\nrule-providers:\n  sites: {type: http, behavior: domain, format: yaml, url: /rules.yaml}\n';
+  final resolved=await SubscriptionResolver(bridge:bridge,fetcher:FakeFetcher({
+    'https://fixture.example/root':providerYaml,'https://fixture.example/rules.yaml':'payload:\n - localhost\n'
+  })).resolve('https://fixture.example/root');
+  final providerConfig=await build(resolved.profileJson);
+  final sets=jsonDecode(providerConfig)['route']['rule_set'] as List;
+  if(sets.single['type']!='inline')throw StateError('raw provider escaped conversion');
+  await File('${out.path}/bridge-runtime.json').writeAsString(providerConfig);
+  final providerCheck=await Process.run(env['SING_BOX']!,['check','-c','${out.path}/bridge-runtime.json']);
+  if(providerCheck.exitCode!=0)throw StateError('converted provider failed check');
+  results['rootProviderPipeline']={'inline':true,'checkExit':providerCheck.exitCode};
   results['passed']=true;
  } finally {
   await File('${out.path}/bridge-probe-results.json').writeAsString(const JsonEncoder.withIndent('  ').convert(results));

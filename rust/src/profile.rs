@@ -132,8 +132,11 @@ pub fn parse_clash_profile(text: &str) -> Result<Option<ParsedProfile>, String> 
     // Deserialize straight into a JSON value so the whole traversal
     // below can use one consistent Value type (serde_yaml::Value and
     // serde_json::Value do not mix).
-    let doc: Value =
-        serde_yaml::from_str(text).map_err(|e| format!("订阅 YAML 解析失败：{e}"))?;
+    let doc: Value = if matches!(text.trim_start().chars().next(), Some('{') | Some('[')) {
+        serde_json::from_str(text).map_err(|e| format!("订阅 JSON 解析失败：{e}"))?
+    } else {
+        serde_yaml::from_str(text).map_err(|e| format!("订阅 YAML 解析失败：{e}"))?
+    };
     if doc.get("rules").is_some_and(|r| !r.is_array()) {
         return Err("订阅rules必须为数组".into());
     }

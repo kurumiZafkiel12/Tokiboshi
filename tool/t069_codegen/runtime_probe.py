@@ -72,7 +72,12 @@ try:
   conn.request('GET','http://blocked.example/fixture');r=conn.getresponse();body=r.read().decode();result['reject']={'blocked':r.status>=400,'status':r.status,'body':body}
  except (OSError,http.client.HTTPException) as e:result['reject']={'blocked':True,'errorType':type(e).__name__}
  finally:conn.close()
- result['passed']=all(v['passed'] for v in responses.values()) and result['reject']['blocked']
+ conn=http.client.HTTPConnection('127.0.0.1',mixed,timeout=5)
+ try:
+  conn.request('GET',f'http://127.0.0.1:{origin.server_address[1]}/private');r=conn.getresponse();r.read();result['privateRule']={'blocked':r.status>=400,'status':r.status}
+ except (OSError,http.client.HTTPException):result['privateRule']={'blocked':True}
+ finally:conn.close()
+ result['passed']=all(v['passed'] for v in responses.values()) and result['reject']['blocked'] and result['privateRule']['blocked']
  if not result['passed']:raise RuntimeError('mode routing semantic mismatch')
 finally:
  if core:
