@@ -178,6 +178,16 @@ class TokiboshiApp extends StatefulWidget {
 
 class _TokiboshiAppState extends State<TokiboshiApp> {
   final _appearance = ValueNotifier(const UiPreferences());
+  late final Store _store = widget.store ?? Store();
+  late final SystemProxy _systemProxy =
+      widget.systemProxy ?? const WindowsSystemProxy();
+  late final SubscriptionFetcher _fetcher =
+      widget.fetcher ?? const HttpSubscriptionFetcher();
+  bool get _reduceMotion =>
+      _appearance.value.motion == 'reduced' ||
+      (_appearance.value.followSystem &&
+          WidgetsBinding.instance.platformDispatcher.accessibilityFeatures
+              .disableAnimations);
   @override
   void dispose() {
     _appearance.dispose();
@@ -193,13 +203,22 @@ class _TokiboshiAppState extends State<TokiboshiApp> {
           child: MaterialApp(
               debugShowCheckedModeBanner: false,
               title: 'Tokiboshi',
+              themeAnimationDuration: _reduceMotion
+                  ? Duration.zero
+                  : Duration(
+                      milliseconds:
+                          _appearance.value.motion == 'standard' ? 140 : 220),
+              builder: (context, child) => MediaQuery(
+                  data: MediaQuery.of(context)
+                      .copyWith(disableAnimations: _reduceMotion),
+                  child: child!),
               theme: workbenchTheme(_appearance.value),
               home: ShellPage(
                   bridge: widget.bridge,
                   allocatePort: widget.allocatePort,
-                  store: widget.store ?? Store(),
-                  systemProxy: widget.systemProxy ?? const WindowsSystemProxy(),
-                  fetcher: widget.fetcher ?? const HttpSubscriptionFetcher(),
+                  store: _store,
+                  systemProxy: _systemProxy,
+                  fetcher: _fetcher,
                   appearance: _appearance))));
 }
 
@@ -1894,19 +1913,39 @@ class _ShellPageState extends State<ShellPage>
                                         label: const Text('查找节点    Ctrl K',
                                             style: TextStyle(fontSize: 10))),
                                   const SizedBox(width: 10),
+                                  if (constraints.maxWidth > 1100)
+                                    OutlinedButton.icon(
+                                        onPressed: () => UiScope.change(
+                                            context,
+                                            ui.copyWith(
+                                                motion: ui.motion == 'reduced'
+                                                    ? ui.previousMotion
+                                                    : 'reduced')),
+                                        icon: Icon(
+                                            ui.motion == 'reduced'
+                                                ? Icons
+                                                    .motion_photos_off_outlined
+                                                : Icons
+                                                    .motion_photos_on_outlined,
+                                            size: 14),
+                                        label: Text(ui.motion == 'reduced' ? '动效关' : '动效开',
+                                            style:
+                                                const TextStyle(fontSize: 10)))
+                                  else
+                                    IconButton(
+                                        tooltip: '切换动态效果',
+                                        onPressed: () =>
+                                            UiScope.change(context, ui.copyWith(motion: ui.motion == 'reduced' ? ui.previousMotion : 'reduced')),
+                                        icon: Icon(ui.motion == 'reduced' ? Icons.motion_photos_off_outlined : Icons.motion_photos_on_outlined, size: 17)),
                                   IconButton(
-                                      tooltip: '切换动态效果',
+                                      tooltip: '连接光流',
                                       onPressed: () => UiScope.change(
-                                          context,
-                                          ui.copyWith(
-                                              motion: ui.motion == 'reduced'
-                                                  ? 'full'
-                                                  : 'reduced')),
-                                      icon: Icon(
-                                          ui.motion == 'reduced'
-                                              ? Icons.motion_photos_off_outlined
-                                              : Icons.motion_photos_on_outlined,
-                                          size: 17)),
+                                          context, ui.copyWith(flow: !ui.flow)),
+                                      icon: Icon(Icons.waves_outlined,
+                                          size: 17,
+                                          color: ui.flow
+                                              ? gold
+                                              : scheme.onSurfaceVariant)),
                                   StatusDot(
                                       _busy
                                           ? '正在连接'
@@ -1925,7 +1964,32 @@ class _ShellPageState extends State<ShellPage>
                                           ui.light
                                               ? Icons.dark_mode_outlined
                                               : Icons.light_mode_outlined,
-                                          size: 17))
+                                          size: 17)),
+                                  IconButton(
+                                      tooltip: '运行通知',
+                                      onPressed: () => showDialog<void>(
+                                          context: context,
+                                          builder: (context) =>
+                                              AlertDialog(
+                                                  title: const Text('运行通知'),
+                                                  content:
+                                                      SingleChildScrollView(
+                                                          child: SelectableText(
+                                                              _message ??
+                                                                  '暂无运行通知')),
+                                                  actions: [
+                                                    TextButton(
+                                                        onPressed: () =>
+                                                            Navigator.pop(
+                                                                context),
+                                                        child: const Text('关闭'))
+                                                  ])),
+                                      icon: Badge(
+                                          isLabelVisible: _message != null,
+                                          smallSize: 5,
+                                          child: const Icon(
+                                              Icons.notifications_none_outlined,
+                                              size: 17)))
                                 ])),
                             if (_message != null) _messageBanner(context),
                             if (_busy)

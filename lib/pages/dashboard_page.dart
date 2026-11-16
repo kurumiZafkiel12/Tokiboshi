@@ -273,7 +273,9 @@ class _DashboardPageState extends State<DashboardPage> {
                                         .onSurfaceVariant))),
                         StatusDot(
                             widget.busy
-                                ? 'CONNECTING'
+                                ? (widget.running
+                                    ? 'DISCONNECTING'
+                                    : 'CONNECTING')
                                 : failed
                                     ? 'CONNECTION FAILED'
                                     : widget.running
@@ -283,7 +285,7 @@ class _DashboardPageState extends State<DashboardPage> {
                         const SizedBox(height: 5),
                         Text(
                             widget.busy
-                                ? '正在连接'
+                                ? (widget.running ? '正在断开' : '正在连接')
                                 : failed
                                     ? '连接失败'
                                     : widget.running
@@ -296,7 +298,9 @@ class _DashboardPageState extends State<DashboardPage> {
                         const SizedBox(height: 5),
                         Text(
                             widget.busy
-                                ? '正在准备内核与配置，请稍候。'
+                                ? (widget.running
+                                    ? '正在停止内核并恢复系统代理。'
+                                    : '正在准备内核与配置，请稍候。')
                                 : failed
                                     ? '请查看错误详情或日志，再重试连接。'
                                     : widget.selected == null

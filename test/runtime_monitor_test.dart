@@ -24,7 +24,7 @@ void main() {
       'diagnostic export strips ANSI, URL credentials, share links and named tokens',
       () {
     const text =
-        '\x1b[31mERROR https://user:pass@example.test/private?token=fixture-secret password=abc uuid=abcdef vless://credential@server.test:443#name';
+        '\x1b[31mERROR https://user:pass@example.test/private?token=fixture-secret password=abc uuid=abcdef vless://credential@server.test:443#name "password":"two words" authorization=Bearer synthetic-bearer';
     final safe = redactDiagnostics(text);
     for (final secret in [
       'fixture-secret',
@@ -32,6 +32,8 @@ void main() {
       'password=abc',
       'abcdef',
       'credential',
+      'two words',
+      'synthetic-bearer',
       '\x1b'
     ]) {
       expect(safe, isNot(contains(secret)));

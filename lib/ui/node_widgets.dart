@@ -246,14 +246,24 @@ class NodePicker extends StatefulWidget {
 class _NodePickerState extends State<NodePicker> {
   String _query = '', _source = '';
   bool _sort = false, _measuring = false;
+  final _search = TextEditingController();
+  @override
+  void dispose() {
+    _search.dispose();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
     final indices = [
       for (var i = 0; i < widget.nodes.length; i++)
         if ((widget.requiredSource == null ||
                 widget.nodes[i].source == widget.requiredSource) &&
-            (_source.isEmpty || widget.nodes[i].source == _source) &&
-            '${widget.nodes[i].name} ${widget.nodes[i].protocol} ${sourceLabel(widget.nodes[i], widget.subscriptions)}'
+            (_source.isEmpty ||
+                (_source == '__local'
+                    ? widget.nodes[i].source.isEmpty
+                    : widget.nodes[i].source == _source)) &&
+            '${widget.nodes[i].name} ${regionLabel(widget.nodes[i])} ${widget.nodes[i].protocol} ${sourceLabel(widget.nodes[i], widget.subscriptions)}'
                 .toLowerCase()
                 .contains(_query))
           i
@@ -292,6 +302,7 @@ class _NodePickerState extends State<NodePicker> {
                     SizedBox(
                         width: 150,
                         child: DropdownButtonFormField<String>(
+                            key: ValueKey(_source),
                             initialValue: _source,
                             isExpanded: true,
                             decoration: const InputDecoration(
@@ -301,6 +312,10 @@ class _NodePickerState extends State<NodePicker> {
                               const DropdownMenuItem(
                                   value: '',
                                   child: Text('全部来源',
+                                      style: TextStyle(fontSize: 12))),
+                              const DropdownMenuItem(
+                                  value: '__local',
+                                  child: Text('本地导入',
                                       style: TextStyle(fontSize: 12))),
                               for (final sub in widget.subscriptions)
                                 DropdownMenuItem(
@@ -314,6 +329,7 @@ class _NodePickerState extends State<NodePicker> {
                     const SizedBox(width: 10),
                     Expanded(
                         child: TextField(
+                            controller: _search,
                             autofocus: true,
                             decoration: const InputDecoration(
                                 prefixIcon: Icon(Icons.search, size: 17),
@@ -348,7 +364,16 @@ class _NodePickerState extends State<NodePicker> {
               const Divider(height: 1),
               Expanded(
                   child: indices.isEmpty
-                      ? const EmptyView('没有匹配节点', '请调整筛选，或先导入订阅')
+                      ? EmptyView('没有匹配节点', '请调整筛选，或先导入订阅',
+                          action: TextButton(
+                              onPressed: () {
+                                _search.clear();
+                                setState(() {
+                                  _query = '';
+                                  _source = '';
+                                });
+                              },
+                              child: const Text('清除筛选')))
                       : ListView.builder(
                           itemCount: indices.length,
                           itemBuilder: (context, row) {

@@ -10,8 +10,10 @@ String redactDiagnostics(String input) => input
             r'(?:ss|ssr|vmess|vless|trojan|hysteria2?|hy2|tuic|anytls|socks5?)://[^\s]+',
             caseSensitive: false),
         '[节点链接已隐藏]')
+    .replaceAll(RegExp(r'Bearer\s+[A-Za-z0-9._~+/=-]+', caseSensitive: false),
+        'Bearer [已隐藏]')
     .replaceAllMapped(
         RegExp(
-            r'("?(?:password|passwd|uuid|token|authorization|secret)"?\s*[:=]\s*)[^,\s}]+',
+            r'''((?:"|')?(?:password|passwd|uuid|token|authorization|secret)(?:"|')?\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^,\s}]+)''',
             caseSensitive: false),
         (m) => '${m[1]}[已隐藏]');

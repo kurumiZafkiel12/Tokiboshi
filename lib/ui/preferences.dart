@@ -5,6 +5,7 @@ class UiPreferences {
   const UiPreferences(
       {this.light = false,
       this.motion = 'full',
+      this.previousMotion = 'full',
       this.followSystem = true,
       this.character = true,
       this.flow = true,
@@ -12,7 +13,7 @@ class UiPreferences {
       this.closeToTray = true,
       this.order = const ['status', 'traffic', 'profile', 'runtime']});
   final bool light, followSystem, character, flow, compact, closeToTray;
-  final String motion;
+  final String motion, previousMotion;
   final List<String> order;
   factory UiPreferences.fromJson(dynamic value) {
     final m = value is Map ? value : const {};
@@ -33,6 +34,11 @@ class UiPreferences {
         motion: const ['full', 'standard', 'reduced'].contains(m['motion'])
             ? m['motion'] as String
             : 'full',
+        previousMotion: const ['full', 'standard'].contains(m['previousMotion'])
+            ? m['previousMotion'] as String
+            : m['motion'] == 'standard'
+                ? 'standard'
+                : 'full',
         followSystem: flag('followSystem', true),
         character: flag('character', true),
         flow: flag('flow', true),
@@ -43,6 +49,7 @@ class UiPreferences {
   Map<String, dynamic> toJson() => {
         'light': light,
         'motion': motion,
+        'previousMotion': previousMotion,
         'followSystem': followSystem,
         'character': character,
         'flow': flow,
@@ -53,6 +60,7 @@ class UiPreferences {
   UiPreferences copyWith(
           {bool? light,
           String? motion,
+          String? previousMotion,
           bool? followSystem,
           bool? character,
           bool? flow,
@@ -62,6 +70,10 @@ class UiPreferences {
       UiPreferences(
           light: light ?? this.light,
           motion: motion ?? this.motion,
+          previousMotion: previousMotion ??
+              (motion != null && motion != "reduced"
+                  ? motion
+                  : this.previousMotion),
           followSystem: followSystem ?? this.followSystem,
           character: character ?? this.character,
           flow: flow ?? this.flow,
