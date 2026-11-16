@@ -76,6 +76,9 @@ jobs:
             exit $code
           }
 
+      - name: Original-method elevation regression fixtures
+        run: python tool/release008/prepare_elevation.py .
+
       - name: Flutter tests
         run: |
           $log = Join-Path $env:RUNNER_TEMP "flutter-test.log"
@@ -100,6 +103,18 @@ jobs:
             exit $code
           }
 
+
+      - name: Verify actual built DLL and elevated parent wait
+        shell: pwsh
+        run: |
+          $flutterBin = Split-Path (Get-Command flutter).Source -Parent
+          $env:DART_BIN = Join-Path $flutterBin 'cache/dart-sdk/bin/dart.exe'
+          $env:T069_OUT = Join-Path $env:RUNNER_TEMP 'tokiboshi-release-audit'
+          $env:T069_DLL = (Get-ChildItem build/windows/x64/runner/Release -Filter rust_lib_tokiboshi.dll -Recurse | Select-Object -First 1).FullName
+          python tool/release008/parent_wait_probe.py
+          if ($LASTEXITCODE -ne 0) { throw 'Native handoff failed' }
+          python tool/t069_codegen/runtime_probe.py
+          if ($LASTEXITCODE -ne 0) { throw 'Built DLL or route verification failed' }
 
       - name: Bundle verified core
         shell: pwsh
@@ -133,3 +148,11 @@ jobs:
           path: |
             Tokiboshi-windows.zip
             Tokiboshi-Setup-*.exe
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Tokiboshi-release-audit
+          path: |
+            v007-widget-results.json
+            ${{ runner.temp }}/tokiboshi-release-audit/
