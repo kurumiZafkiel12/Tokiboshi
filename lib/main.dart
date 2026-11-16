@@ -250,6 +250,7 @@ class _ShellPageState extends State<ShellPage>
   final RuntimeMonitor _monitor = RuntimeMonitor();
   bool _updatingAll = false;
   bool _cancelConnect = false;
+  bool _profileChanging = false;
   bool _running = false;
   bool _busy = false;
   bool _measuring = false;
@@ -867,6 +868,10 @@ class _ShellPageState extends State<ShellPage>
   }
 
   Future<void> _selectNode(int index) async {
+    if (_profileChanging) {
+      _setMessage('配置选择正在保存，请稍候');
+      return;
+    }
     try {
       if (!profileNodes(_data).contains(_data.nodes[index])) {
         _setMessage('该节点不属于当前完整配置，请先在工作台切换配置');
@@ -1157,7 +1162,7 @@ class _ShellPageState extends State<ShellPage>
   }
 
   Future<void> _toggleCore() async {
-    if (_busy) return;
+    if (_busy || _profileChanging) return;
     _cancelConnect = false;
     setState(() => _busy = true);
     var started = false;
@@ -1550,7 +1555,7 @@ class _ShellPageState extends State<ShellPage>
           subscriptions: _data.subscriptions,
           selectedIndex: _data.selectedIndex,
           running: _running,
-          busy: _busy,
+          busy: _busy || _profileChanging,
           latency: _latency,
           onSelect: _selectNode,
           onDelete: _deleteNode,
@@ -1564,7 +1569,7 @@ class _ShellPageState extends State<ShellPage>
           subscriptions: _data.subscriptions,
           nodeCounts: nodeCounts,
           running: _running,
-          busy: _busy,
+          busy: _busy || _profileChanging,
           onAdd: _addSubscriptionDialog,
           onUpdate: _updateSubscription,
           onDelete: _deleteSubscription,
@@ -1586,7 +1591,7 @@ class _ShellPageState extends State<ShellPage>
         page = RulesPage(
             subscriptions: _data.subscriptions,
             running: _running,
-            busy: _busy,
+            busy: _busy || _profileChanging,
             api: _clash,
             dataDir: _dataDir,
             onApply: _running ? _restartCore : _toggleCore,
@@ -1621,6 +1626,7 @@ class _ShellPageState extends State<ShellPage>
         page = DashboardPage(
           running: _running,
           busy: _busy,
+          profileBusy: _profileChanging,
           selected: selected,
           monitor: _monitor,
           subscriptions: _data.subscriptions,
@@ -1992,7 +1998,7 @@ class _ShellPageState extends State<ShellPage>
                                               size: 17)))
                                 ])),
                             if (_message != null) _messageBanner(context),
-                            if (_busy)
+                            if (_busy || _profileChanging)
                               const LinearProgressIndicator(minHeight: 2),
                             Expanded(
                                 child: AnimatedSwitcher(
@@ -2022,6 +2028,7 @@ class _ShellPageState extends State<ShellPage>
                                 latency: _latency,
                                 running: _running,
                                 busy: _busy,
+                                blocked: _profileChanging,
                                 onPick: _showNodePicker,
                                 onCancel: _requestCancelConnect,
                                 onToggle: _toggleCore,
@@ -2075,19 +2082,26 @@ class _ShellPageState extends State<ShellPage>
   }
 
   Future<void> _activateProfile(String id) async {
-    if (_busy || _running) {
-      _setMessage('请先停止代理，再切换规则配置');
+    if (_busy || _running || _profileChanging) {
       return;
     }
     final snapshot = _data.copyWith();
-    _data.activeProfileId = id;
+    setState(() => _profileChanging = true);
+    void restoreSelection() {
+      _data.activeProfileId = snapshot.activeProfileId;
+      _data.selectedIndex = snapshot.selectedIndex;
+    }
+
     try {
+      _data.activeProfileId = id;
       final nodes = profileNodes(_data);
       if (_data.selected != null && !nodes.contains(_data.selected))
         _data.selectedIndex = -1;
       setState(() {});
-      if (!await _persist()) {
-        setState(() => _data = snapshot);
+      final saved = await _persist();
+      if (!mounted) return;
+      if (!saved) {
+        setState(restoreSelection);
         await _persist();
         _setMessage('配置选择保存失败，已恢复先前选择');
         return;
@@ -2096,8 +2110,10 @@ class _ShellPageState extends State<ShellPage>
           '已选择「$_profileName」，启动后应用${_data.selected == null ? '；请先选择该配置的出口节点' : ''}');
       if (_data.selected == null && mounted) _showNodePicker();
     } catch (e) {
-      setState(() => _data = snapshot);
+      if (mounted) setState(restoreSelection);
       _setMessage('切换配置失败：$e');
+    } finally {
+      if (mounted) setState(() => _profileChanging = false);
     }
   }
 
@@ -2155,7 +2171,7 @@ class _ShellPageState extends State<ShellPage>
             requiredSource: _effectiveProfileId?.isNotEmpty == true
                 ? _effectiveProfileId
                 : null,
-            busy: _busy,
+            busy: _busy || _profileChanging,
             onSelect: _selectNode,
             onManage: () => setState(() => _page = 2),
             onMeasure: _measureAll));

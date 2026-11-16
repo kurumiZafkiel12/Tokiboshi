@@ -17,11 +17,12 @@ class ConnectionDock extends StatelessWidget {
       required this.onToggle,
       required this.onProbe,
       required this.onRestart,
-      this.onCancel});
+      this.onCancel,
+      this.blocked = false});
   final NodeInfo? node;
   final List<Subscription> subscriptions;
   final Map<NodeInfo, int?> latency;
-  final bool running, busy;
+  final bool running, busy, blocked;
   final VoidCallback onPick, onToggle, onProbe, onRestart;
   final VoidCallback? onCancel;
   @override
@@ -46,7 +47,7 @@ class ConnectionDock extends StatelessWidget {
                     ]),
                     const SizedBox(height: 5),
                     InkWell(
-                        onTap: busy ? null : onPick,
+                        onTap: busy || blocked ? null : onPick,
                         borderRadius: BorderRadius.circular(5),
                         child: Padding(
                             padding: const EdgeInsets.symmetric(vertical: 3),
@@ -83,11 +84,11 @@ class ConnectionDock extends StatelessWidget {
               if (!compact) ...[
                 IconButton(
                     tooltip: '测试连通性',
-                    onPressed: busy || node == null ? null : onProbe,
+                    onPressed: busy || blocked || node == null ? null : onProbe,
                     icon: const Icon(Icons.monitor_heart_outlined)),
                 IconButton(
                     tooltip: '重新连接',
-                    onPressed: running && !busy ? onRestart : null,
+                    onPressed: running && !busy && !blocked ? onRestart : null,
                     icon: const Icon(Icons.refresh)),
                 const SizedBox(width: 10)
               ],
@@ -98,7 +99,11 @@ class ConnectionDock extends StatelessWidget {
                       style: FilledButton.styleFrom(
                           padding: const EdgeInsets.symmetric(
                               horizontal: 12, vertical: 7)),
-                      onPressed: busy ? (running ? null : onCancel) : onToggle,
+                      onPressed: blocked
+                          ? null
+                          : busy
+                              ? (running ? null : onCancel)
+                              : onToggle,
                       child: Row(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [

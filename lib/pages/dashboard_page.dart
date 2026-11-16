@@ -38,7 +38,8 @@ class DashboardPage extends StatefulWidget {
       this.onUpdate,
       this.failure,
       this.activeProfileId,
-      this.onActivateProfile});
+      this.onActivateProfile,
+      this.profileBusy = false});
   final bool running, busy, systemProxy, selectedMeasured, tun;
   final NodeInfo? selected;
   final int nodeCount, subscriptionCount, mixedPort, restartCount;
@@ -52,6 +53,7 @@ class DashboardPage extends StatefulWidget {
   final List<Subscription> subscriptions;
   final RuntimeMonitor? monitor;
   final String? activeProfileId;
+  final bool profileBusy;
   final ValueChanged<String>? onActivateProfile;
   @override
   State<DashboardPage> createState() => _DashboardPageState();
@@ -470,7 +472,9 @@ class _DashboardPageState extends State<DashboardPage> {
                                     child: Text(s.name,
                                         overflow: TextOverflow.ellipsis))
                             ],
-                            onChanged: widget.running || widget.busy
+                            onChanged: widget.running ||
+                                    widget.busy ||
+                                    widget.profileBusy
                                 ? null
                                 : (v) {
                                     if (v != null)
@@ -482,10 +486,12 @@ class _DashboardPageState extends State<DashboardPage> {
                 SizedBox(
                     height: 29,
                     child: OutlinedButton.icon(
-                        onPressed:
-                            widget.busy || widget.running || viewed == null
-                                ? null
-                                : () => widget.onUpdate?.call(viewed),
+                        onPressed: widget.busy ||
+                                widget.running ||
+                                widget.profileBusy ||
+                                viewed == null
+                            ? null
+                            : () => widget.onUpdate?.call(viewed),
                         icon: const Icon(Icons.refresh, size: 14),
                         label: const Text('更新'))),
                 SizedBox(

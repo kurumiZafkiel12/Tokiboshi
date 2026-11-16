@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:async';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
@@ -37,11 +38,12 @@ void main() {
   Future<MemoryStore> mount(WidgetTester t,
       {Size size = const Size(1440, 900),
       bool light = false,
-      bool twoProfiles = false}) async {
+      bool twoProfiles = false,
+      MemoryStore? withStore}) async {
     t.view.physicalSize = size;
     t.view.devicePixelRatio = 1;
     addTearDown(t.view.reset);
-    final store = MemoryStore();
+    final store = withStore ?? MemoryStore();
     store.data.autoConnect = false;
     store.data.ui = UiPreferences(light: light, motion: 'reduced');
     store.data.nodes = const [
@@ -204,6 +206,28 @@ void main() {
     expect(store.data.selected?.source, 's2');
     await t.pumpWidget(const SizedBox());
   });
+  testWidgets('pending profile save blocks startup until commit', (t) async {
+    final store = SlowProfileStore();
+    await mount(t, withStore: store);
+    store.block = true;
+    await t.tap(find.byType(DropdownButtonFormField<String>).first);
+    await t.pumpAndSettle();
+    await t.tap(find.text('内置分流模板').last);
+    await t.pump();
+    await t.pump(const Duration(milliseconds: 100));
+    final start = find.ancestor(
+        of: find.text('启动代理'), matching: find.byType(FilledButton));
+    expect(t.widget<FilledButton>(start).onPressed, isNull);
+    expect(
+        (t.widget<TokiboshiApp>(find.byType(TokiboshiApp)).bridge as FakeBridge)
+            .running,
+        false);
+    store.gate.complete();
+    await t.pumpAndSettle();
+    expect(store.data.activeProfileId, '');
+    expect(t.widget<FilledButton>(start).onPressed, isNotNull);
+    await t.pumpWidget(const SizedBox());
+  });
   testWidgets(
       'light theme, density and character preferences survive real store roundtrip',
       (t) async {
@@ -230,4 +254,14 @@ void main() {
     });
     await t.pumpWidget(const SizedBox());
   });
+}
+
+class SlowProfileStore extends MemoryStore {
+  bool block = false;
+  final gate = Completer<void>();
+  @override
+  Future<void> save(AppData value) async {
+    if (block) await gate.future;
+    await super.save(value);
+  }
 }
