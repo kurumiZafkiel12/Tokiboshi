@@ -301,6 +301,9 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
       if (tunBlocked) {
         _setMessage(
             '自动连接已跳过：虚拟网卡需要管理员权限，请点「启动」并选择「以管理员身份重启」');
+        // Persist the consumption so the next load does not retry the
+        // same blocked auto-connect (CV007-01 remainder).
+        await _persist();
       } else {
         await _toggleCore();
       }
@@ -1258,12 +1261,18 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
   /// lock is released so the elevated instance can take over
   /// (CV007-02).
   Future<void> _relaunchElevated() async {
+    // Full snapshot of everything this attempt mutates: ANY exit path
+    // that does not end in a successful UAC launch restores it (Codex
+    // CV007-01/03/04 remainders).
+    final snapshot = _data.copyWith();
     try {
       _data.cleanExit = true;
       _data.runningAtExit = _running;
       _data.resumeConnect = true;
-      final saved = await _persist();
-      if (!saved) {
+      if (!await _persist()) {
+        // CV007-04: handoff state could not be written - abort with
+        // the in-memory state restored to the pre-attempt snapshot.
+        if (mounted) setState(() => _data = snapshot);
         _setMessage('配置保存失败，已取消提权重启（应用保持当前状态）');
         return;
       }
@@ -1274,26 +1283,30 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
         'Start-Process -FilePath "$exe" -Verb RunAs',
       ]);
       if (result.exitCode != 0) {
-        // UAC declined: consume the one-shot intent, nothing torn down.
-        _data.resumeConnect = false;
-        await _persist();
+        // UAC declined: restore the pre-attempt state exactly
+        // (CV007-03) - core, proxy, tray and flags all unchanged.
+        if (mounted) setState(() => _data = snapshot);
+        await widget.store.save(_data);
         _setMessage('已取消管理员授权（未重启，连接保持原状）');
         return;
       }
+      // Accepted: the elevated instance is launching. Release the
+      // single-instance lock FIRST so it can bind even while our
+      // teardown runs (CV007-02), then stop core/proxy and exit.
+      _releaseInstanceLock();
       if (_running) {
         await widget.bridge.stopCore();
         if (_data.systemProxy) {
           await widget.systemProxy.apply(false, _data.mixedPort);
         }
       }
-      _releaseInstanceLock(); // CV007-02: let the elevated instance bind
       await trayManager.destroy();
       await windowManager.destroy();
       exit(0);
     } catch (e) {
-      _setMessage('提权重启失败：$e');
-      _data.resumeConnect = false;
+      if (mounted) setState(() => _data = snapshot);
       await _persist();
+      _setMessage('提权重启失败：$e');
     }
   }
 
