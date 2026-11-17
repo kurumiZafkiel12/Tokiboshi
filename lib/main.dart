@@ -2583,6 +2583,7 @@ class _ShellPageState extends State<ShellPage>
           break;
         if (source.refreshMinutes <= 0) continue;
         final last = _lastSourceAttempt[source.id] ??
+            DateTime.tryParse(source.lastAttemptAt ?? '') ??
             DateTime.tryParse(source.updatedAt ?? '');
         if (last != null &&
             DateTime.now().difference(last).inMinutes < source.refreshMinutes)

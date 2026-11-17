@@ -71,6 +71,35 @@ void main() {
       await t.pumpWidget(const SizedBox());
     });
   }
+  testWidgets('restart respects the persisted failed-refresh cooldown',
+      (t) async {
+    desktop(t);
+    final store = MemoryStore();
+    store.data.autoConnect = false;
+    store.data.subscriptions = [
+      Subscription(
+          id: 's',
+          name: 'fixture',
+          url: 'https://fixture.example/sub',
+          updatedAt: '2020-01-01',
+          refreshMinutes: 60,
+          lastAttemptAt: DateTime.now().toIso8601String(),
+          lastError: 'synthetic failure')
+    ];
+    final fetcher = FakeFetcher({});
+    await t.pumpWidget(TokiboshiApp(
+        bridge: FakeBridge(),
+        store: store,
+        fetcher: fetcher,
+        systemProxy: NoopSystemProxy(),
+        allocatePort: (p, r) async => p));
+    await t.pumpAndSettle();
+    await t.pump(const Duration(seconds: 61));
+    await t.pumpAndSettle();
+    expect(fetcher.requested, isEmpty);
+    expect(store.data.subscriptions.single.lastError, 'synthetic failure');
+    await t.pumpWidget(const SizedBox());
+  });
   testWidgets('live core defers scheduled subscriptions', (t) async {
     desktop(t);
     final store = MemoryStore();
