@@ -769,8 +769,9 @@ class _AndroidShellState extends State<AndroidShell> {
                   contentPadding: EdgeInsets.zero,
                   title: const Text('打开应用自动连接'),
                   subtitle: const Text('首次连接仍需要系统 VPN 授权。'),
-                  value: c.data.desktop.autoRun,
-                  onChanged: c.busy ? null : (v) => c.saveOptions(autoRun: v)),
+                  value: c.data.autoConnect,
+                  onChanged:
+                      c.busy ? null : (v) => c.saveOptions(autoConnect: v)),
               SwitchListTile(
                   contentPadding: EdgeInsets.zero,
                   title: const Text('校验 TLS 证书'),

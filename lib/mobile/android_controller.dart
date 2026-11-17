@@ -61,8 +61,7 @@ class AndroidController extends ChangeNotifier {
     await refresh();
     if (poll)
       _timer = Timer.periodic(const Duration(seconds: 2), (_) => refresh());
-    if (!running && data.desktop.autoRun && data.selected != null)
-      await toggle();
+    if (!running && data.autoConnect && data.selected != null) await toggle();
   }
 
   Future<void> refresh() async {
@@ -478,7 +477,7 @@ class AndroidController extends ChangeNotifier {
         await commit(next);
       });
   Future<void> saveOptions({
-    bool? autoRun,
+    bool? autoConnect,
     bool? verifyTls,
     String? userAgent,
   }) =>
@@ -489,8 +488,8 @@ class AndroidController extends ChangeNotifier {
                 userAgent.codeUnits.any((c) => c > 255)))
           throw const FormatException('User-Agent 需为单行 HTTP 字符，最长512字符');
         final next = data.copyWith();
+        if (autoConnect != null) next.autoConnect = autoConnect;
         next.desktop = next.desktop.copyWith(
-          autoRun: autoRun,
           verifyTls: verifyTls,
           userAgent: userAgent,
         );

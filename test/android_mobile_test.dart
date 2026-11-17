@@ -94,7 +94,11 @@ void main() {
         .setMockMethodCallHandler(androidVpnChannel, (call) async {
       if (call.method == 'status') {
         polls++;
-        return {'phase': 'stopped', 'running': false, 'serviceAlive': polls < 3};
+        return {
+          'phase': 'stopped',
+          'running': false,
+          'serviceAlive': polls < 3
+        };
       }
       return null;
     });
@@ -143,6 +147,33 @@ void main() {
     await c.updateSource(c.data.subscriptions.single, (_) async => false);
     expect(c.data.nodes, hasLength(1));
     expect(c.data.selected?.name, 'remote');
+  });
+  test('mobile auto-connect defaults on and a saved opt-out survives reopening',
+      () async {
+    final store = MemoryStore();
+    store.data.nodes = const [
+      NodeInfo(
+          name: 'fixture',
+          outboundJson:
+              '{"type":"socks","server":"127.0.0.1","server_port":1080}')
+    ];
+    store.data.selectedIndex = 0;
+    final bridge = FakeBridge();
+    final controller =
+        AndroidController(bridge: bridge, store: store, data: store.data);
+    expect(controller.data.autoConnect, true);
+    await controller.initialize(poll: false);
+    expect(bridge.running, true);
+    expect(controller.message, 'VPN 已连接');
+    await controller.saveOptions(autoConnect: false);
+    controller.dispose();
+    await bridge.stopCore();
+    final reopened = AndroidController(
+        bridge: bridge, store: store, data: await store.load());
+    addTearDown(reopened.dispose);
+    await reopened.initialize(poll: false);
+    expect(reopened.data.autoConnect, false);
+    expect(bridge.running, false);
   });
   final capture = Platform.environment['TOKIBOSHI_ANDROID_UI_CAPTURE'];
   setUpAll(() async {
