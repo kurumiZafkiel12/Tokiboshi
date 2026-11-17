@@ -5,7 +5,7 @@ Android 7.0/API24及以上，arm64-v8a、armeabi-v7a、x86_64。
 
 ## 固定工具链
 
-Flutter3.50.0、FRB2.11.1（本轮无API/codegen改动）、JDK17、Gradle9.5.0（wrapper校验）、AGP9.3.1、Kotlin2.4.20、NDK28.2.13676358、Go1.25.5、gomobile0.1.12、sing-box/libbox1.14.4固定c005f35300ce76427dc285481ec5695f5b179cd2。Cargokit Android插件使用注入ExecOperations以适配Gradle9；兼容DSL开关保留到FRB后续迁移。Go依赖使用上游go.mod/go.sum，Rust使用Cargo.lock。
+Flutter3.50.0、FRB2.11.1（本轮无API/codegen改动）、JDK21（构建运行时；应用字节码仍17）、Gradle9.5.0（wrapper校验）、AGP9.3.1、Kotlin2.4.20、NDK28.2.13676358、Go1.25.5、gomobile0.1.12、sing-box/libbox1.14.4固定c005f35300ce76427dc285481ec5695f5b179cd2。Cargokit Android插件使用注入ExecOperations以适配Gradle9；兼容DSL开关保留到FRB后续迁移。Go依赖使用上游go.mod/go.sum，Rust使用Cargo.lock。
 
 ```bash
 flutter pub get --enforce-lockfile
