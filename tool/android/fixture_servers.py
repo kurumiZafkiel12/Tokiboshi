@@ -42,7 +42,7 @@ class Dns(socketserver.BaseRequestHandler):
   end=i+5
   if end>len(query):return
   response=query[:2]+b'\x81\x80\x00\x01\x00\x01\x00\x00\x00\x00'+query[12:end]+b'\xc0\x0c\x00\x01\x00\x01\x00\x00\x00\x1e\x00\x04\xcb\x00\x71\x0a'
-  sock.sendto(response,self.client_address);event('dns')
+  sock.sendto(response,self.client_address);event('dns',transactionId=int.from_bytes(query[:2],'big'),queryHex=query.hex(),responseHex=response.hex())
 class Tcp(socketserver.ThreadingTCPServer):allow_reuse_address=True;daemon_threads=True
 class Udp(socketserver.ThreadingUDPServer):allow_reuse_address=True;daemon_threads=True
 servers=[Tcp(('127.0.0.1',18080),Socks),Tcp(('127.0.0.1',18082),Socks),http.server.ThreadingHTTPServer(('127.0.0.1',18081),Origin),Udp(('127.0.0.1',15353),Dns)]

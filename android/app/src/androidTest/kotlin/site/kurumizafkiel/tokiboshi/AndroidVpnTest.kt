@@ -26,8 +26,10 @@ class AndroidVpnTest {
     private val instrumentation=InstrumentationRegistry.getInstrumentation()
     private val context=instrumentation.targetContext
     private val device=UiDevice.getInstance(instrumentation)
+    private val evidence=JSONObject()
     @After fun captureDiagnostics(){
         val directory=File(context.getExternalFilesDir(null),"diagnostics").apply{mkdirs()}
+        File(directory,"progress.json").writeText(evidence.toString(2))
         File(directory,"vpn-state.json").writeText(JSONObject()
             .put("phase",VpnState.phase).put("error",VpnState.error)
             .put("logs",JSONArray(VpnState.logs())).toString(2))
@@ -97,6 +99,31 @@ class AndroidVpnTest {
         val request=listOf("GET /android-fixture HTTP/1.1","Host: fixture.example","Connection: close","","").joinToString(crlf)
         return exchange("toybox timeout 12 toybox nc -w 8 -q 2 $target $port",request.toByteArray()).toString(Charsets.UTF_8)
     }
+    private fun validDnsAnswer(bytes:ByteArray):Boolean = runCatching {
+        fun number(i:Int)=((bytes[i].toInt() and 255) shl 8) or (bytes[i+1].toInt() and 255)
+        fun skipName(start:Int):Int {
+            var offset=start
+            repeat(128) {
+                val length=bytes[offset].toInt() and 255
+                if(length==0)return offset+1
+                if((length and 192)==192){require(offset+1<bytes.size);return offset+2}
+                require(length<=63);offset+=length+1;require(offset<=bytes.size)
+            }
+            error("DNS名称超长")
+        }
+        require(bytes.size>=12 && number(0)==0x1234 && (number(2) and 0x800f)==0x8000)
+        var offset=12
+        repeat(number(4)){offset=skipName(offset)+4}
+        var matched=false
+        repeat(number(6)) {
+            offset=skipName(offset)
+            val type=number(offset);val klass=number(offset+2);val length=number(offset+8)
+            offset+=10;require(offset+length<=bytes.size)
+            if(type==1 && klass==1 && length==4 && bytes.copyOfRange(offset,offset+4).contentEquals(byteArrayOf(203.toByte(),0,113,10)))matched=true
+            offset+=length
+        }
+        matched
+    }.getOrDefault(false)
     private fun fixtureData(){
         val nodes=JSONArray()
         for((name,port) in listOf("Android Fixture A" to 18080,"Android Fixture B" to 18082)){
@@ -117,7 +144,6 @@ class AndroidVpnTest {
         shell("pm grant ${context.packageName} android.permission.POST_NOTIFICATIONS")
         assertNull("系统授权后不应重复索要权限",VpnService.prepare(context))
         fixtureData()
-        val evidence=JSONObject()
         ActivityScenario.launch(MainActivity::class.java).use {
             device.wait(Until.hasObject(By.pkg(context.packageName).depth(0)),20000)
             Thread.sleep(2500)
@@ -159,8 +185,11 @@ class AndroidVpnTest {
             context.startForegroundService(Intent(context,TokiboshiVpnService::class.java).putExtra("configPath",dnsConfig.path))
             await("DNS测试 VPN"){VpnState.phase=="running"}
             val query=byteArrayOf(0x12,0x34,1,0,0,1,0,0,0,0,0,0,7)+"fixture".toByteArray()+byteArrayOf(7)+"example".toByteArray()+byteArrayOf(0,0,1,0,1)
-            val response=exchange("toybox timeout 8 toybox nc -u -w 4 -q 2 172.19.0.2 53",query)
-            assertTrue("DNS响应必须包含正确事务与A记录",response.size>=16 && response[0]==0x12.toByte() && response[1]==0x34.toByte() && response.takeLast(4)==byteArrayOf(203.toByte(),0,113,10).toList())
+            val testApk=instrumentation.context.packageCodePath
+            val targetApk=context.packageCodePath
+            val response=exchange("env CLASSPATH=$testApk:$targetApk app_process /system/bin site.kurumizafkiel.tokiboshi.DnsShellProbe",query)
+            File(context.getExternalFilesDir(null),"dns-response.bin").writeBytes(response)
+            assertTrue("DNS响应必须包含正确事务与A记录，收到${response.size}字节",validDnsAnswer(response))
             evidence.put("udpDnsHijack",true)
             context.stopService(Intent(context,TokiboshiVpnService::class.java));await("系统销毁服务清理"){VpnState.phase=="stopped"&&TokiboshiVpnService.instance==null};evidence.put("systemDestroyCleanup",true)
         }

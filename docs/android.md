@@ -41,3 +41,6 @@ python3 tool/android/verify_apks.py
 ## 许可证
 
 Android组合发行按GPL-3.0-or-later，新增安卓接线与完整对应源码公开。上游libbox许可证、固定源码/构建参数以及原有组件版权保存在assets/licenses，并可从应用开源许可证查看。Rust桥接原有MIT OR Apache-2.0声明保留；不修改历史Windows发行包或其他组件授权。
+
+
+2026-11-18 Codex接续Hermes：保留617cd08起的编译/生命周期修订及Hermes恢复接收证书，CMS备份新增Cloud接收证书，两端任一对应私钥均可恢复；接收证书不是APK签名身份，未替换既有APK签名。DNS探针只放测试APK，app_process校验shell UID2000并直接使用UDP socket，避免netcat启动/EOF行为；DNS响应按记录解析，不假设A记录一定在包末尾。测试改为先构建/安装再直接am instrument，拉取数据后由模拟器销毁清理，避免AGP测试结束卸载先删除诊断。全部成功仍以完整CI和签名恢复实测为准。

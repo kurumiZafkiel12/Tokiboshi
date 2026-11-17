@@ -26,13 +26,15 @@ properties.write_text(f'storeFile={key}\nstorePassword={password}\nkeyAlias={ali
 environment=dict(os.environ,TOKIBOSHI_SIGN_STORE=password)
 certificate=public/'android-signer.der'
 subprocess.run(['keytool','-exportcert','-keystore',str(key),'-alias',alias,'-storepass:env','TOKIBOSHI_SIGN_STORE','-file',str(certificate)],env=environment,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,check=True)
+subject=subprocess.run(['openssl','x509','-inform','DER','-in',str(certificate),'-noout','-subject'],capture_output=True,text=True,check=True).stdout
+if 'Android Debug' in subject:raise SystemExit('Refusing a debug signing identity')
 fingerprint=hashlib.sha256(certificate.read_bytes()).hexdigest()
-(public/'signing-fingerprint.json').write_text(json.dumps({'certificateSha256':fingerprint,'algorithm':'RSA3072/SHA256','releaseKey':True,'restoredExistingKey':bool(restore)},indent=2)+'\n')
+(public/'signing-fingerprint.json').write_text(json.dumps({'certificateSha256':fingerprint,'algorithm':'restored existing key' if restore else 'RSA3072/SHA256','releaseKey':True,'restoredExistingKey':bool(restore)},indent=2)+'\n')
 with tempfile.TemporaryDirectory(dir=private) as temp:
  directory=pathlib.Path(temp)
  (directory/'signing.json').write_text(json.dumps({'storePassword':password,'keyPassword':key_password,'keyAlias':alias,'certificateSha256':fingerprint}))
  archive=directory/'signing.tar'
  with tarfile.open(archive,'w') as tar:
   tar.add(key,arcname='tokiboshi-android.jks');tar.add(directory/'signing.json',arcname='signing.json')
- subprocess.run(['openssl','cms','-encrypt','-aes-256-gcm','-binary','-outform','DER','-in',str(archive),'-out',str(public/'Tokiboshi-Android-signing-backup.cms'),str(root/'tool/android/signing-recovery-public.pem')],check=True)
+ subprocess.run(['openssl','cms','-encrypt','-aes-256-gcm','-binary','-outform','DER','-in',str(archive),'-out',str(public/'Tokiboshi-Android-signing-backup.cms'),str(root/'tool/android/signing-recovery-public.pem'),str(root/'tool/android/signing-recovery-codex-public.pem')],check=True)
 print('Release signing configured; certificate SHA256:',fingerprint)
