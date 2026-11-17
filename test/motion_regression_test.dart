@@ -1,3 +1,6 @@
+import 'dart:ui' as ui;
+import 'package:flutter/foundation.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tokiboshi/ui/motion.dart';
@@ -6,6 +9,44 @@ import 'package:tokiboshi/ui/traffic_chart.dart';
 import 'package:tokiboshi/ui/import_dialog.dart';
 
 void main() {
+  testWidgets('hover remains visible above an opaque card and stops when idle',
+      (t) async {
+    await t.pumpWidget(const MaterialApp(
+        home: Scaffold(
+            body: Center(
+                child: RepaintBoundary(
+                    key: ValueKey('opaque-card'),
+                    child: MotionHover(
+                        child: SizedBox(
+                            width: 200,
+                            height: 100,
+                            child: ColoredBox(
+                                color: Colors.black,
+                                child: Center(child: Text('卡片'))))))))));
+    await t.pumpAndSettle();
+    Future<Uint8List> pixels() async => (await t.runAsync(() async {
+          final frame = await t
+              .renderObject<RenderRepaintBoundary>(
+                  find.byKey(const ValueKey('opaque-card')))
+              .toImage();
+          final bytes =
+              await frame.toByteData(format: ui.ImageByteFormat.rawRgba);
+          frame.dispose();
+          return bytes!.buffer.asUint8List();
+        }))!;
+    final before = await pixels();
+    final mouse = await t.createGesture(kind: ui.PointerDeviceKind.mouse);
+    await mouse.addPointer(location: Offset.zero);
+    await mouse.moveTo(t.getCenter(find.byKey(const ValueKey('opaque-card'))));
+    await t.pumpAndSettle();
+    expect(listEquals(before, await pixels()), false);
+    expect(t.hasRunningAnimations, false);
+    await mouse.moveTo(Offset.zero);
+    await t.pumpAndSettle();
+    expect(listEquals(before, await pixels()), true);
+    await mouse.removePointer();
+    await t.pumpWidget(const SizedBox());
+  });
   for (final mode in ['full', 'standard', 'reduced']) {
     testWidgets('motion $mode survives rapid updates and becomes idle',
         (t) async {

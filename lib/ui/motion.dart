@@ -89,6 +89,11 @@ class _MotionHoverState extends State<MotionHover> {
             child: AnimatedContainer(
                 duration: UiScope.duration(context, 180),
                 curve: Curves.easeOutCubic,
+                foregroundDecoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(7),
+                    border: Border.all(
+                        color: color.withValues(alpha: _hover ? .22 : 0)),
+                    color: color.withValues(alpha: _hover ? .018 : 0)),
                 decoration: BoxDecoration(
                     borderRadius: BorderRadius.circular(7),
                     color: _hover
