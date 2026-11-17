@@ -27,7 +27,7 @@ android工作流构建内核，再在API35/x86_64模拟器通过Flutter界面真
 
 正式发布使用稳定RSA3072签名，不发布debug签名APK。若已提供TOKIBOSHI_ANDROID_KEYSTORE_BASE64/STORE_PASSWORD/KEY_PASSWORD/KEY_ALIAS的Actions secrets，恢复既有密钥；首次发行可生成密钥，恢复材料用维护者的公开接收证书AES256-GCM加密。只上传加密备份、公开证书及指纹，私钥和密码不入库/日志/公开APK。已发行版本缺少既有签名时拒绝自动换签。
 
-当前连接无Actions Secrets管理权限，不能声称已保存GitHub Secrets。首次签名的加密备份须与接收私钥一起离线保管；Codex在私有工作区解密核对后保留恢复包，后续更新必须复用密钥。未经恢复不得另生密钥覆盖发行身份。
+签名 Secrets 可用时恢复已有密钥；首次正式发行前，必须确认加密恢复备份能在维护者设备解密。当前恢复接收证书由维护者 Windows 设备生成，其私钥只以当前用户 DPAPI 密文保存，不入库。首次发行完成后保存同一签名身份供后续构建使用，禁止换签覆盖。加密备份与公开指纹可归档，但任何私钥、签名密码、解密后的密钥包均不得进入源码或公开日志。
 
 配置android/key.properties后构建：
 
