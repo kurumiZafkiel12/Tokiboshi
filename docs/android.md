@@ -44,3 +44,11 @@ Android组合发行按GPL-3.0-or-later，新增安卓接线与完整对应源码
 
 
 2026-11-18 Codex接续Hermes：保留617cd08起的编译/生命周期修订及Hermes恢复接收证书，CMS备份新增Cloud接收证书，两端任一对应私钥均可恢复；接收证书不是APK签名身份，未替换既有APK签名。DNS探针只放测试APK，app_process校验shell UID2000并直接使用UDP socket，避免netcat启动/EOF行为；DNS响应按记录解析，不假设A记录一定在包末尾。测试改为先构建/安装再直接am instrument，拉取数据后由模拟器销毁清理，避免AGP测试结束卸载先删除诊断。全部成功仍以完整CI和签名恢复实测为准。
+
+恢复备份（只在维护者私有目录操作，输出包含密钥与密码，不提交）：
+
+```bash
+python3 tool/android/recover_signing.py --backup Tokiboshi-Android-signing-backup.cms --private-key signing-recovery-private.pem --output-dir /private/new-signing-directory
+```
+
+恢复器只接受固定的两个普通文件，校验导出证书指纹后写入私有文件；恢复的key.properties可用于后续同签更新。恢复包/接收私钥不是APK，不得上传公开发行附件。

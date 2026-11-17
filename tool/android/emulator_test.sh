@@ -14,6 +14,6 @@ adb logcat -d > "$RUNNER_TEMP/android-audit/logcat.log"
 adb pull /sdcard/Android/data/site.kurumizafkiel.tokiboshi/files/ "$RUNNER_TEMP/android-audit/device-files"
 cat "$RUNNER_TEMP/android-audit/native-tests.log"
 # am instrument may exit zero even on JUnit failure. Require explicit success.
-if [ "$instrument_exit" -ne 0 ] || ! rg -q 'OK \(1 test\)' "$RUNNER_TEMP/android-audit/native-tests.log"; then
+if [ "$instrument_exit" -ne 0 ] || ! grep -Fq 'OK (1 test)' "$RUNNER_TEMP/android-audit/native-tests.log"; then
   exit 1
 fi

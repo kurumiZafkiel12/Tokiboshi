@@ -191,7 +191,13 @@ class AndroidVpnTest {
             File(context.getExternalFilesDir(null),"dns-response.bin").writeBytes(response)
             assertTrue("DNS响应必须包含正确事务与A记录，收到${response.size}字节",validDnsAnswer(response))
             evidence.put("udpDnsHijack",true)
-            context.stopService(Intent(context,TokiboshiVpnService::class.java));await("系统销毁服务清理"){VpnState.phase=="stopped"&&TokiboshiVpnService.instance==null};evidence.put("systemDestroyCleanup",true)
+            // stopService alone does not destroy an active VPN: Android still binds
+            // its service. Revoke consent, then prepare again so system_server resets
+            // the TUN, delivers onRevoke and unbinds (AOSP Vpn.prepareInternal).
+            shell("appops set ${context.packageName} ACTIVATE_VPN ignore")
+            assertNotNull("撤销授权后必须重新确认",VpnService.prepare(context))
+            await("系统撤销 VPN 授权并销毁服务"){VpnState.phase=="stopped"&&TokiboshiVpnService.instance==null}
+            evidence.put("systemRevokeCleanup",true).put("systemDestroyCleanup",true)
         }
         evidence.put("coreVersion",io.nekohasekai.libbox.Libbox.version()).put("passed",true)
         File(context.getExternalFilesDir(null),"android-vpn-results.json").writeText(evidence.toString(2))
