@@ -60,6 +60,7 @@ void main(){
   addTearDown(t.view.reset);
   final m=Memory();m.data.enableTun=tun;m.data.autoConnect=auto;m.data.runningAtExit=oldRunning;m.data.resumeConnect=resume;
   m.data.nodes=const[NodeInfo(name:'fixture',outboundJson:'{"type":"socks","server":"127.0.0.1","server_port":1}')];
+  m.data.selectedIndex=0;
   m.data.systemProxy=true;
   final b=Bridge()..running=running;final proxy=Proxy();
   final key=GlobalKey();

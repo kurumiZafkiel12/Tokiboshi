@@ -291,6 +291,12 @@ class _NodesPageState extends State<NodesPage> {
       keys.sort((a, b) => groups[a]!
           .reduce((x, y) => x < y ? x : y)
           .compareTo(groups[b]!.reduce((x, y) => x < y ? x : y)));
+    bool initiallyOpen(String key) =>
+        keys.length <= 3 ||
+        key == keys.first ||
+        groups[key]!.contains(widget.selectedIndex) ||
+        _group.isNotEmpty ||
+        _query.isNotEmpty;
     return CustomScrollView(slivers: [
       for (final key in keys) ...[
         SliverToBoxAdapter(
@@ -300,10 +306,7 @@ class _NodesPageState extends State<NodesPage> {
                     padding: EdgeInsets.zero,
                     child: InkWell(
                         onTap: () => setState(() => _expanded[key] =
-                            !(_expanded[key] ??
-                                (keys.length <= 3 ||
-                                    _group.isNotEmpty ||
-                                    _query.isNotEmpty))),
+                            !(_expanded[key] ?? initiallyOpen(key))),
                         child: Padding(
                             padding: const EdgeInsets.symmetric(
                                 horizontal: 16, vertical: 15),
@@ -319,16 +322,12 @@ class _NodesPageState extends State<NodesPage> {
                                           fontSize: 14,
                                           fontWeight: FontWeight.w600))),
                               Icon(
-                                  (_expanded[key] ??
-                                          (keys.length <= 3 ||
-                                              _group.isNotEmpty ||
-                                              _query.isNotEmpty))
+                                  (_expanded[key] ?? initiallyOpen(key))
                                       ? Icons.expand_less
                                       : Icons.expand_more,
                                   size: 18)
                             ])))))),
-        if (_expanded[key] ??
-            (keys.length <= 3 || _group.isNotEmpty || _query.isNotEmpty))
+        if (_expanded[key] ?? initiallyOpen(key))
           if (_grid)
             SliverPadding(
                 padding: const EdgeInsets.symmetric(vertical: 10),

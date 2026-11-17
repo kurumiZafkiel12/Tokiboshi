@@ -945,7 +945,7 @@ class _ShellPageState extends State<ShellPage>
       });
       if (!await _persistImport(before)) return;
       _setMessage(
-          '订阅「${sub.name}」已更新：${fresh.where((n) => !n.isPolicy).length} 个节点${_skippedNote(outcome.skipped)}');
+          '订阅「${sub.name}」已更新：${fresh.where((n) => !n.isPolicy).length} 个节点${_skippedNote(outcome.skipped)}${selectedFromSub && _data.selectedIndex < 0 ? '；原出口已变化或存在歧义，请重新选择节点' : ''}');
     } on ImportCancelled {
       _importCancelling = true;
       _setMessage('已取消更新，原配置保留');

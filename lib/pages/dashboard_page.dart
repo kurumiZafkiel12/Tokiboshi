@@ -328,13 +328,22 @@ class _DashboardPageState extends State<DashboardPage> {
                               child: StatusDot(
                                   widget.selectedMeasured
                                       ? widget.selectedLatency == null
-                                          ? '连通性测试超时'
-                                          : '连通性 ${widget.selectedLatency} ms'
-                                      : '连通性未测试',
-                                  color: widget.selectedMeasured &&
-                                          widget.selectedLatency == null
-                                      ? danger
-                                      : good)),
+                                          ? (widget.running
+                                              ? '连通性测试超时'
+                                              : 'TCP 端口探测失败')
+                                          : '${widget.running ? '连通性' : 'TCP 端口'} ${widget.selectedLatency} ms'
+                                      : (widget.running
+                                          ? '连通性未测试'
+                                          : '未测试 · 连接后可测出口'),
+                                  color: !widget.selectedMeasured
+                                      ? Theme.of(context)
+                                          .colorScheme
+                                          .onSurfaceVariant
+                                      : widget.selectedLatency == null
+                                          ? danger
+                                          : widget.running
+                                              ? good
+                                              : gold)),
                           Text(uptime,
                               style: mono.copyWith(
                                   color: Theme.of(context)

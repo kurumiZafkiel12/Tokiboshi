@@ -1,3 +1,5 @@
+import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tokiboshi/main.dart';
@@ -153,4 +155,120 @@ void main() {
     expect(t.takeException(), isNull);
     await t.pumpWidget(const SizedBox());
   });
+  testWidgets('starting requires an explicit selected exit', (t) async {
+    desktop(t);
+    final store = MemoryStore();
+    store.data.autoConnect = false;
+    store.data.nodes = const [
+      NodeInfo(
+          name: 'unselected',
+          outboundJson:
+              '{"type":"socks","server":"127.0.0.1","server_port":1080}')
+    ];
+    final bridge = FakeBridge();
+    await t.pumpWidget(TokiboshiApp(
+        bridge: bridge,
+        store: store,
+        systemProxy: NoopSystemProxy(),
+        allocatePort: (p, r) async => p));
+    await t.pumpAndSettle();
+    await t.tap(find.text('启动代理'));
+    await t.pumpAndSettle();
+    expect(bridge.running, false);
+    expect(store.data.selectedIndex, -1);
+    await t.pumpWidget(const SizedBox());
+  });
+  for (final diskFailure in [false, true]) {
+    testWidgets(
+        'live selection rolls back on ${diskFailure ? 'disk' : 'controller'} failure',
+        (t) async {
+      desktop(t);
+      final oldOverrides = HttpOverrides.current;
+      HttpOverrides.global = _NativeHttp();
+      final server = await t
+          .runAsync(() => HttpServer.bind(InternetAddress.loopbackIPv4, 0));
+      var active = 'old-node';
+      final puts = <String>[];
+      server!.listen((request) async {
+        request.response.headers.contentType = ContentType.json;
+        if (request.uri.path == '/proxies' && request.method == 'GET') {
+          request.response.write(jsonEncode({
+            'proxies': {
+              'proxy': {'now': active}
+            }
+          }));
+        } else if (request.method == 'PUT') {
+          final data = jsonDecode(await request
+              .cast<List<int>>()
+              .transform(utf8.decoder)
+              .join()) as Map;
+          final name = data['name'] as String;
+          puts.add(name);
+          if (!diskFailure && name == 'new-node') {
+            request.response.statusCode = 500;
+            request.response.write('{}');
+          } else {
+            active = name;
+            request.response.statusCode = 204;
+          }
+        } else {
+          request.response
+              .write('{"connections":[],"downloadTotal":0,"uploadTotal":0}');
+        }
+        await request.response.close();
+      });
+      final store = _FailingStore();
+      store.data.autoConnect = false;
+      store.data.clashApiSecret = 'synthetic-only';
+      store.data.clashApiPort = server.port;
+      store.data.nodes = const [
+        NodeInfo(
+            name: 'old-node',
+            outboundJson:
+                '{"type":"socks","server":"127.0.0.1","server_port":1080}'),
+        NodeInfo(
+            name: 'new-node',
+            outboundJson:
+                '{"type":"socks","server":"127.0.0.1","server_port":1081}')
+      ];
+      store.data.selectedIndex = 0;
+      try {
+        await t.pumpWidget(TokiboshiApp(
+            bridge: FakeBridge()..running = true,
+            store: store,
+            systemProxy: NoopSystemProxy(),
+            allocatePort: (p, r) async => p));
+        await t.pumpAndSettle();
+        await t.tap(find.text('节点').first);
+        await t.pumpAndSettle();
+        store.fail = diskFailure;
+        t.widget<NodesPage>(find.byType(NodesPage)).onSelect(1);
+        for (var i = 0; i < 20 && puts.length < 2; i++) {
+          await t.runAsync(
+              () => Future<void>.delayed(const Duration(milliseconds: 30)));
+          await t.pump();
+        }
+        await t.pumpAndSettle();
+        expect(puts, ['new-node', 'old-node']);
+        expect(active, 'old-node');
+        expect(store.data.selectedIndex, 0);
+        expect(t.widget<NodesPage>(find.byType(NodesPage)).selectedIndex, 0);
+      } finally {
+        await t.pumpWidget(const SizedBox());
+        await t.runAsync(() => server.close(force: true));
+        HttpOverrides.global = oldOverrides;
+      }
+    });
+  }
+}
+
+class _NativeHttp extends HttpOverrides {}
+
+class _FailingStore extends MemoryStore {
+  bool fail = false;
+  @override
+  Future<void> save(AppData data) async {
+    if (fail) throw StateError("synthetic disk failure");
+    await super.save(data);
+  }
 }
