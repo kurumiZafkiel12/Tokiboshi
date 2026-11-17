@@ -16,9 +16,17 @@ import java.util.concurrent.atomic.AtomicInteger
 
 /** All core lifecycle operations are serialized; stopping invalidates in-flight starts. */
 class TokiboshiVpnService : VpnService(), PlatformInterface, CommandServerHandler {
-    companion object { @Volatile var instance:TokiboshiVpnService?=null; const val CHANNEL="tokiboshi-vpn" }
-    private val worker=Executors.newSingleThreadExecutor()
+    companion object {
+        @Volatile var instance:TokiboshiVpnService?=null
+        const val CHANNEL="tokiboshi-vpn"
+        // Share the lifecycle queue across service instances so an old destroy cannot
+        // race a new libbox instance for its database, controller or TUN descriptor.
+        private val worker=Executors.newSingleThreadExecutor()
+    }
     private val generation=AtomicInteger()
+    private val mainHandler=Handler(Looper.getMainLooper())
+    @Volatile private var destroyed=false
+    @Volatile private var latestStartId=0
     private var server:CommandServer?=null
     private var logClient:CommandClient?=null
     private var tunnel:ParcelFileDescriptor?=null
@@ -35,6 +43,7 @@ class TokiboshiVpnService : VpnService(), PlatformInterface, CommandServerHandle
     }
     override fun onCreate(){super.onCreate();instance=this}
     override fun onStartCommand(intent:Intent?,flags:Int,startId:Int):Int {
+        latestStartId=startId
         val token=generation.incrementAndGet()
         VpnState.phase="starting";VpnState.error=null
         showNotification("正在连接…")
@@ -65,15 +74,31 @@ class TokiboshiVpnService : VpnService(), PlatformInterface, CommandServerHandle
                 if(token==generation.get()){
                     VpnState.error=e.message?.take(2000) ?: "VPN 启动失败"
                     VpnState.phase="error";VpnState.log("启动失败：${VpnState.error}")
-                    stopForeground(STOP_FOREGROUND_REMOVE);stopSelf()
+                    mainHandler.post {
+                        if(!destroyed && instance===this && token==generation.get()) {
+                            stopForeground(STOP_FOREGROUND_REMOVE);stopSelfResult(startId)
+                        }
+                    }
                 }
             }
         }
         return START_NOT_STICKY
     }
     fun requestStop(){
-        generation.incrementAndGet();VpnState.phase="stopping"
-        worker.execute {closeCore();VpnState.phase="stopped";VpnState.error=null;VpnState.log("VPN 已断开");stopForeground(STOP_FOREGROUND_REMOVE);stopSelf()}
+        if(destroyed)return
+        val token=generation.incrementAndGet()
+        val stoppingStartId=latestStartId
+        VpnState.phase="stopping"
+        worker.execute {
+            if(destroyed || token!=generation.get())return@execute
+            closeCore()
+            mainHandler.post {
+                if(!destroyed && instance===this && token==generation.get()) {
+                    stopForeground(STOP_FOREGROUND_REMOVE)
+                    stopSelfResult(stoppingStartId)
+                }
+            }
+        }
     }
     private fun closeCore(){
         runCatching{logClient?.disconnect()};logClient=null
@@ -84,9 +109,22 @@ class TokiboshiVpnService : VpnService(), PlatformInterface, CommandServerHandle
     }
     override fun onRevoke(){requestStop();super.onRevoke()}
     override fun onDestroy(){
-        generation.incrementAndGet();instance=null
-        worker.execute{closeCore();if(VpnState.phase!="error")VpnState.phase="stopped"}
-        worker.shutdown();super.onDestroy()
+        destroyed=true;generation.incrementAndGet()
+        worker.execute {
+            closeCore()
+            // Final state is published on Android's lifecycle thread, so a new
+            // onCreate cannot interleave between the identity check and the write.
+            mainHandler.post {
+                if(instance===this) {
+                    instance=null
+                    if(VpnState.phase!="error") {
+                        VpnState.error=null;VpnState.phase="stopped"
+                        VpnState.log("VPN 已断开")
+                    }
+                }
+            }
+        }
+        super.onDestroy()
     }
     private fun showNotification(text:String){
         val manager=getSystemService(NotificationManager::class.java)

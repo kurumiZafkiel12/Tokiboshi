@@ -45,7 +45,8 @@ class AndroidCoreBridge extends RustCoreBridge {
     await channel.invokeMethod<void>('stop');
     for (var i = 0; i < 200; i++) {
       final current = await status();
-      if (current['phase'] == 'stopped' || current['phase'] == 'error') return;
+      if ((current['phase'] == 'stopped' || current['phase'] == 'error') &&
+          current['serviceAlive'] != true) return;
       await Future<void>.delayed(const Duration(milliseconds: 100));
     }
     throw TimeoutException('VPN 尚未完全停止');

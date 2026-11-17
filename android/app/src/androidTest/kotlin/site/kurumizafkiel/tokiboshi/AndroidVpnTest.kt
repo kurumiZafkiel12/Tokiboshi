@@ -16,7 +16,8 @@ import org.json.JSONArray
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
-import java.util.Base64
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 /** Real Android system VPN, loaded Rust bridge and embedded Go core; synthetic servers only. */
 @RunWith(AndroidJUnit4::class)
@@ -45,10 +46,29 @@ class AndroidVpnTest {
         if(authorized)conn.setRequestProperty("Authorization","Bearer android-synthetic-secret")
         return try{val status=conn.responseCode;status to (if(status<400)conn.inputStream else conn.errorStream).bufferedReader().use{it.readText()}}finally{conn.disconnect()}
     }
+    private fun exchange(command:String,input:ByteArray):ByteArray {
+        // UiAutomation uses Runtime.exec, not a shell: pipes/quotes are not interpreted.
+        // The child runs as shell UID, which is intentionally outside the app VPN exclusion.
+        val descriptors=instrumentation.uiAutomation.executeShellCommandRw(command)
+        val pool=Executors.newSingleThreadExecutor { runnable -> Thread(runnable,"vpn-probe-reader").apply{isDaemon=true} }
+        val reader=pool.submit<ByteArray> {
+            android.os.ParcelFileDescriptor.AutoCloseInputStream(descriptors[0]).use{it.readBytes()}
+        }
+        try {
+            android.os.ParcelFileDescriptor.AutoCloseOutputStream(descriptors[1]).use{it.write(input)}
+            return reader.get(15,TimeUnit.SECONDS)
+        } finally {
+            runCatching{descriptors[0].close()};runCatching{descriptors[1].close()}
+            reader.cancel(true);pool.shutdownNow()
+        }
+    }
     private fun request(target:String="203.0.113.10",port:Int=80):String {
-        val request="GET /android-fixture HTTP/1.1\r\nHost: fixture.example\r\nConnection: close\r\n\r\n"
-        val encoded=Base64.getEncoder().encodeToString(request.toByteArray())
-        return shell("echo '$encoded' | base64 -d | toybox nc -w 8 $target $port").toString(Charsets.UTF_8)
+        val request="GET /android-fixture HTTP/1.1
+\nHost: fixture.example
+\nConnection: close
+\n
+\n"
+        return exchange("toybox timeout 12 toybox nc -w 8 -q 2 $target $port",request.toByteArray()).toString(Charsets.UTF_8)
     }
     private fun fixtureData(){
         val nodes=JSONArray()
@@ -109,8 +129,7 @@ class AndroidVpnTest {
             context.startForegroundService(Intent(context,TokiboshiVpnService::class.java).putExtra("configPath",dnsConfig.path))
             await("DNS测试 VPN"){VpnState.phase=="running"}
             val query=byteArrayOf(0x12,0x34,1,0,0,1,0,0,0,0,0,0,7)+"fixture".toByteArray()+byteArrayOf(7)+"example".toByteArray()+byteArrayOf(0,0,1,0,1)
-            val encoded=Base64.getEncoder().encodeToString(query)
-            val response=shell("echo '$encoded' | base64 -d | toybox nc -u -w 4 172.19.0.2 53")
+            val response=exchange("toybox timeout 8 toybox nc -u -w 4 -q 2 172.19.0.2 53",query)
             assertTrue("DNS响应必须包含正确事务与A记录",response.size>=16 && response[0]==0x12.toByte() && response[1]==0x34.toByte() && response.takeLast(4)==byteArrayOf(203.toByte(),0,113,10).toList())
             evidence.put("udpDnsHijack",true)
             context.stopService(Intent(context,TokiboshiVpnService::class.java));await("系统销毁服务清理"){VpnState.phase=="stopped"&&TokiboshiVpnService.instance==null};evidence.put("systemDestroyCleanup",true)

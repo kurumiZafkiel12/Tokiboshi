@@ -88,6 +88,23 @@ void main() {
         throwsFormatException);
     expect(calls.last, 'stop');
   });
+  test('Android stop waits for service cleanup after terminal phase', () async {
+    var polls = 0;
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(androidVpnChannel, (call) async {
+      if (call.method == 'status') {
+        polls++;
+        return {'phase': 'stopped', 'running': false, 'serviceAlive': polls < 3};
+      }
+      return null;
+    });
+    addTearDown(() => TestDefaultBinaryMessengerBinding
+        .instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(androidVpnChannel, null));
+    await AndroidCoreBridge().stopCore();
+    expect(polls, 3);
+  });
+
   test('mobile failed persistence preserves prior nodes and configuration',
       () async {
     final store = FailingMobileStore();

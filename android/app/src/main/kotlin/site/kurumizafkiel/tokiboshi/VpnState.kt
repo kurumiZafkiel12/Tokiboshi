@@ -9,5 +9,5 @@ object VpnState {
         messages.addLast(message.take(2000))
     }
     @Synchronized fun logs():List<String> = messages.toList()
-    fun snapshot():Map<String,Any?> = mapOf("phase" to phase,"running" to (phase=="running"),"error" to error)
+    fun snapshot():Map<String,Any?> = mapOf("phase" to phase,"running" to (phase=="running"),"error" to error,"serviceAlive" to (TokiboshiVpnService.instance!=null))
 }

@@ -87,6 +87,25 @@ jobs:
         run: |
           flutter pub get --enforce-lockfile
           flutter analyze --no-fatal-infos
+      - name: Prove stop-cleanup regression fails on the prior bridge
+        run: |
+          git fetch --no-tags origin 617cd084ef8d8d8575ccd5e5ba6f324c225d532a
+          python3 - <<'PY'
+          import os,pathlib,subprocess
+          source=pathlib.Path('lib/mobile/android_bridge.dart')
+          fixed=source.read_bytes()
+          audit=pathlib.Path(os.environ['RUNNER_TEMP'])/'android-audit'
+          audit.mkdir(parents=True,exist_ok=True)
+          try:
+              source.write_bytes(subprocess.check_output(['git','show','617cd084ef8d8d8575ccd5e5ba6f324c225d532a:lib/mobile/android_bridge.dart']))
+              result=subprocess.run(['flutter','test','--no-pub','test/android_mobile_test.dart','--plain-name','Android stop waits for service cleanup after terminal phase'],capture_output=True,text=True)
+              text=result.stdout+result.stderr
+              (audit/'stop-cleanup-red.log').write_text(text)
+              assert result.returncode != 0 and 'Expected: <3>' in text and 'Actual: <1>' in text,text
+              print('Regression detected the prior early-stop return (1 poll, expected 3).')
+          finally:
+              source.write_bytes(fixed)
+          PY
       - name: Flutter regression and phone layouts
         env:
           TOKIBOSHI_UI_FONT: /usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc
