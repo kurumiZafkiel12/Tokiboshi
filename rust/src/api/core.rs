@@ -90,7 +90,11 @@ pub fn start_core(binary_path: String, config_path: String) -> Result<(), String
         for inbound in inbounds {
             if inbound["type"] == "mixed" {
                 if let Some(port) = inbound["listen_port"].as_u64() {
-                    listeners.push(format!("{}:{port}", inbound["listen"].as_str().unwrap_or("127.0.0.1")));
+                    let host = inbound["listen"].as_str().unwrap_or("127.0.0.1");
+                    let address = host.parse::<std::net::IpAddr>()
+                        .map(|ip| std::net::SocketAddr::new(ip, port as u16).to_string())
+                        .unwrap_or_else(|_| format!("{host}:{port}"));
+                    listeners.push(address);
                 }
             }
         }
@@ -136,7 +140,7 @@ pub fn start_core(binary_path: String, config_path: String) -> Result<(), String
         }
         for (i, addr) in listeners.iter().enumerate() {
             if !ready[i] {
-                ready[i] = addr.parse().ok().is_some_and(|address|
+                ready[i] = readiness_address(addr).is_some_and(|address|
                     std::net::TcpStream::connect_timeout(&address, std::time::Duration::from_millis(100)).is_ok());
             }
         }
@@ -323,4 +327,26 @@ pub fn parse_subscription(text: String) -> Result<crate::links::ParseOutcome, St
 /// Convert a downloaded Clash rule-provider payload; never emit raw YAML as JSON source.
 pub fn convert_rule_provider(text: String, behavior: String, format: String) -> Result<String,String> {
     crate::profile::convert_provider(&text,&behavior,&format).map(|v|v.to_string())
+}
+
+// Wildcard addresses describe a bind, not a portable destination to connect to.
+fn readiness_address(bind: &str) -> Option<std::net::SocketAddr> {
+    let mut address = bind.parse::<std::net::SocketAddr>().ok()?;
+    if address.ip().is_unspecified() {
+        address.set_ip(if address.is_ipv4() {
+            std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)
+        } else { std::net::IpAddr::V6(std::net::Ipv6Addr::LOCALHOST) });
+    }
+    Some(address)
+}
+#[cfg(test)]
+mod readiness_tests {
+    use super::readiness_address;
+    #[test]
+    fn wildcard_probes_use_matching_loopback_family() {
+        assert_eq!(readiness_address("0.0.0.0:7890").unwrap().to_string(), "127.0.0.1:7890");
+        assert_eq!(readiness_address("[::]:9090").unwrap().to_string(), "[::1]:9090");
+        assert_eq!(readiness_address("192.0.2.1:7890").unwrap().to_string(), "192.0.2.1:7890");
+        assert!(readiness_address("bad-address").is_none());
+    }
 }

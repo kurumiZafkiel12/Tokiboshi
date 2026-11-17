@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import '../app_version.dart';
 import '../ui/shell_widgets.dart';
 import '../ui/design.dart';
+import '../ui/general_settings.dart';
+import '../services/desktop_settings.dart';
 
 /// Settings: local port, sing-box path, system proxy, about.
 class SettingsPage extends StatefulWidget {
@@ -24,6 +26,14 @@ class SettingsPage extends StatefulWidget {
     this.bypassCn = true,
     this.onBlockAdsChanged,
     this.onBypassCnChanged,
+    this.desktop = const DesktopSettings(),
+    this.onDesktopChanged,
+    this.settingsBusy = false,
+    this.onCheckUpdate,
+    this.onOpenUpdate,
+    this.updateStatus,
+    this.checkingUpdate = false,
+    this.onCopyControllerSecret,
   });
 
   final int mixedPort;
@@ -42,6 +52,11 @@ class SettingsPage extends StatefulWidget {
   final bool bypassCn;
   final ValueChanged<bool>? onBlockAdsChanged;
   final ValueChanged<bool>? onBypassCnChanged;
+  final DesktopSettings desktop;
+  final ValueChanged<DesktopSettings>? onDesktopChanged;
+  final bool settingsBusy, checkingUpdate;
+  final VoidCallback? onCheckUpdate, onOpenUpdate, onCopyControllerSecret;
+  final String? updateStatus;
 
   @override
   State<SettingsPage> createState() => _SettingsPageState();
@@ -54,6 +69,20 @@ class _SettingsPageState extends State<SettingsPage> {
       TextEditingController(text: '${widget.clashApiPort}');
   late final _pathController = TextEditingController(text: widget.singBoxPath);
   String? _error;
+
+  @override
+  void didUpdateWidget(covariant SettingsPage old) {
+    super.didUpdateWidget(old);
+    if (old.mixedPort != widget.mixedPort &&
+        _portController.text == '${old.mixedPort}')
+      _portController.text = '${widget.mixedPort}';
+    if (old.clashApiPort != widget.clashApiPort &&
+        _clashPortController.text == '${old.clashApiPort}')
+      _clashPortController.text = '${widget.clashApiPort}';
+    if (old.singBoxPath != widget.singBoxPath &&
+        _pathController.text == old.singBoxPath)
+      _pathController.text = widget.singBoxPath;
+  }
 
   @override
   void dispose() {
@@ -95,12 +124,17 @@ class _SettingsPageState extends State<SettingsPage> {
           const Text('连接与启动',
               style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
           const SizedBox(height: 12),
-          SwitchListTile(
-            title: const Text('启动时恢复上次运行状态'),
-            subtitle: const Text('仅当上次正常退出时内核在运行才自动连接；崩溃或手动退出后不会自启'),
-            value: widget.autoConnect,
-            onChanged: widget.onAutoConnectChanged,
-          ),
+          GeneralSettings(
+              value: widget.desktop,
+              onChanged: widget.onDesktopChanged ?? (_) {},
+              busy: widget.settingsBusy,
+              autoConnect: widget.autoConnect,
+              onAutoConnectChanged: widget.onAutoConnectChanged,
+              onCheckUpdate: widget.onCheckUpdate ?? () {},
+              onOpenUpdate: widget.onOpenUpdate,
+              updateStatus: widget.updateStatus,
+              checkingUpdate: widget.checkingUpdate,
+              onCopyControllerSecret: widget.onCopyControllerSecret ?? () {}),
           Card(
             child: Padding(
               padding: const EdgeInsets.all(16),
@@ -230,7 +264,7 @@ class _SettingsPageState extends State<SettingsPage> {
                       style: TextStyle(fontWeight: FontWeight.w600)),
                   const SizedBox(height: 8),
                   const Text(
-                      'Tokiboshi v$kAppVersion · Flutter 壳 + Rust 中间层 + sing-box 内核'),
+                      'Tokiboshi · 時の星 v$kAppVersion · 修订 2（build $kAppBuild） · Flutter + Rust + sing-box'),
                   const Text(
                       '面板为 zashboard（由 sing-box 托管于 127.0.0.1:9090/ui）；内核 sing-box 1.14.4 随安装包提供，缺失时自动下载'),
                   const SelectableText(

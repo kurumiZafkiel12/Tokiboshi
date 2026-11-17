@@ -55,7 +55,7 @@ impl ParsedProfile {
 /// Rule types this phase can carry into sing-box. Everything else is
 /// reported as unsupported with its line number (HF053: no silent
 /// drops).
-const SUPPORTED: [&str; 8] = [
+const SUPPORTED: [&str; 14] = [
     "DOMAIN",
     "DOMAIN-SUFFIX",
     "DOMAIN-KEYWORD",
@@ -64,6 +64,7 @@ const SUPPORTED: [&str; 8] = [
     "GEOIP",
     "RULE-SET",
     "MATCH",
+    "DST-PORT", "SRC-PORT", "NETWORK", "SRC-IP-CIDR", "PROCESS-NAME", "PROCESS-PATH",
 ];
 
 fn is_supported(t: &str) -> bool {
@@ -96,12 +97,17 @@ fn convert_rule(
         "DOMAIN-SUFFIX" => json!({ "domain_suffix": [payload] }),
         "DOMAIN-KEYWORD" => json!({ "domain_keyword": [payload] }),
         "IP-CIDR" | "IP-CIDR6" => json!({ "ip_cidr": [payload] }),
+        "SRC-IP-CIDR" => json!({ "source_ip_cidr": [payload] }),
+        "DST-PORT" | "SRC-PORT" => port_rule(payload, rtype.eq_ignore_ascii_case("SRC-PORT"))?,
+        "NETWORK" => { let network=payload.to_ascii_lowercase(); if !["tcp","udp"].contains(&network.as_str()){return Err("NETWORK 仅支持 TCP/UDP".into());} json!({"network":[network]}) },
+        "PROCESS-NAME" => json!({"process_name":[payload]}),
+        "PROCESS-PATH" => json!({"process_path":[payload]}),
         // GEOIP route rules were removed in sing-box 1.14 (T069-S01):
         // carried as an audit marker, converted at build time into a
         // rule_set reference (local geoip-<cc>.srs for CN, remote
         // SagerNet rule-set for other codes).
         "GEOIP" => {
-            if payload.eq_ignore_ascii_case("private") { json!({"ip_is_private":true}) }
+            if payload.eq_ignore_ascii_case("private") || payload.eq_ignore_ascii_case("lan") { json!({"ip_is_private":true}) }
             else if payload.len()==2 && payload.bytes().all(|b|b.is_ascii_alphabetic()) { json!({"__geoip":payload}) }
             else { return Err(format!("第 {line_no} 行：GEOIP国家代码无效")); }
         },
@@ -123,6 +129,21 @@ fn convert_rule(
         }
     }
     Ok(Some(out))
+}
+
+fn port_rule(payload:&str,source:bool)->Result<Value,String>{
+    let mut ports=Vec::new();let mut ranges=Vec::new();
+    for part in payload.split('/') {
+        if let Some((from,to))=part.split_once('-') {
+            let a:u16=from.trim().parse().map_err(|_|"端口范围无效")?;
+            let b:u16=to.trim().parse().map_err(|_|"端口范围无效")?;
+            if a==0||a>b{return Err("端口范围越界".into());}ranges.push(format!("{a}:{b}"));
+        } else {let port:u16=part.trim().parse().map_err(|_|"端口无效")?;if port==0{return Err("端口不能为0".into());}ports.push(port);}
+    }
+    let mut rule=serde_json::Map::new();
+    if !ports.is_empty(){rule.insert(if source{"source_port"}else{"port"}.into(),json!(ports));}
+    if !ranges.is_empty(){rule.insert(if source{"source_port_range"}else{"port_range"}.into(),json!(ranges));}
+    Ok(Value::Object(rule))
 }
 
 /// Parse the routing part of a Clash YAML subscription.
@@ -167,9 +188,10 @@ pub fn parse_clash_profile(text: &str) -> Result<Option<ParsedProfile>, String> 
             let behavior = match btype {
                 "domain" => "domain",
                 "ipcidr" => "ip_cidr",
+                "classical" => "classical",
                 _ => {
                     profile.unsupported.push(format!(
-                        "rule-provider「{name}」behavior={btype:?} 暂不支持（仅 domain/ipcidr）"
+                        "rule-provider「{name}」behavior={btype:?} 暂不支持（支持 domain/ipcidr/classical）"
                     ));
                     continue;
                 }
@@ -520,6 +542,20 @@ pub fn convert_provider(text: &str, behavior: &str, format: &str) -> Result<Valu
         _ => return Err("规则集仅支持yaml/text格式".into()),
     };
     if entries.len() > 100_000 { return Err("规则集超过100000条上限".into()); }
+    if behavior=="classical" {
+        let mut rules=Vec::new();
+        for (i,entry) in entries.iter().enumerate() {
+            let mut parts:Vec<&str>=entry.trim().split(',').map(str::trim).collect();
+            if parts.len()<2 || parts.len()>3 || (parts.len()==3&&!parts[2].eq_ignore_ascii_case("no-resolve")) {return Err(format!("classical 第{}行必须为无策略的匹配规则",i+1));}
+            let no_resolve=parts.len()==3;
+            parts.truncate(2);parts.push("__provider__");if no_resolve{parts.push("no-resolve");}
+            let mut rule=convert_rule(&parts,i+1,&std::collections::BTreeMap::new())?.ok_or("classical 空规则")?;
+            let object=rule.as_object_mut().ok_or("classical 规则无效")?;
+            if object.contains_key("__geoip")||object.contains_key("__match_target")||object.contains_key("ip_is_private") {return Err(format!("classical 第{}行需要外部地理数据或完整策略，无法转换为内联规则集",i+1));}
+            object.remove("outbound");object.remove("_no_resolve");rules.push(rule);
+        }
+        return Ok(json!(rules));
+    }
     let mut exact=Vec::new();let mut suffix=Vec::new();let mut ips=Vec::new();
     for entry in entries {
         let s=entry.trim();
@@ -538,7 +574,7 @@ pub fn convert_provider(text: &str, behavior: &str, format: &str) -> Result<Valu
                 if bits > if addr.is_ipv4(){32}else{128} {return Err("规则集CIDR前缀越界".into());}
                 ips.push(s.to_string());
             }
-            _ => return Err("规则集仅支持domain/ipcidr行为".into()),
+            _ => return Err("规则集仅支持domain/ipcidr/classical行为".into()),
         }
     }
     let mut rule=serde_json::Map::new();
@@ -566,5 +602,20 @@ mod provider_regressions {
         assert_eq!(p.final_outbound.as_deref(),Some("DIRECT"));
         assert!(parse_clash_profile("rules: broken").is_err());
         assert!(parse_clash_profile("{rules: [\"MATCH,DIRECT\"]}").unwrap().is_some());
+    }
+}
+
+#[cfg(test)]
+mod import_compat_tests {
+    use super::*;
+    #[test] fn ports_lan_and_processes_are_normalized(){
+        let p=parse_clash_profile("rules:\n - DST-PORT,80/443/8000-8010,DIRECT\n - SRC-PORT,53,DIRECT\n - GEOIP,LAN,DIRECT\n - PROCESS-NAME,app.exe,DIRECT\n - NETWORK,UDP,DIRECT\n").unwrap().unwrap();
+        assert!(p.unsupported.is_empty(),"{:?}",p.unsupported);assert_eq!(p.route_rules[0]["port"],json!([80,443]));assert_eq!(p.route_rules[0]["port_range"],json!(["8000:8010"]));assert_eq!(p.route_rules[2]["ip_is_private"],true);
+        for value in ["0","70000","90-80","1-70000"]{assert!(port_rule(value,false).is_err());}
+    }
+    #[test] fn classical_is_or_list_not_a_conjunction(){
+        let result=convert_provider("payload:\n - PROCESS-NAME,app.exe\n - DOMAIN-SUFFIX,example.com\n - DST-PORT,443\n - IP-CIDR,192.0.2.0/24,no-resolve\n","classical","yaml").unwrap();
+        assert_eq!(result.as_array().unwrap().len(),4);assert_eq!(result[0]["process_name"],json!(["app.exe"]));assert!(result[0].get("outbound").is_none());
+        assert!(convert_provider("GEOIP,CN","classical","text").is_err());assert!(convert_provider("MATCH,DIRECT","classical","text").is_err());assert!(convert_provider("DOMAIN,example.com,DIRECT","classical","text").is_err());
     }
 }

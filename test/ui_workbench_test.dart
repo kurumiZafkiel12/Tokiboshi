@@ -11,6 +11,7 @@ import 'package:tokiboshi/services/store.dart';
 import 'package:tokiboshi/services/system_proxy.dart';
 import 'package:tokiboshi/ui/preferences.dart';
 import 'package:tokiboshi/ui/node_widgets.dart';
+import 'package:tokiboshi/ui/import_dialog.dart';
 import 'fake_bridge.dart';
 import 'widget_test.dart' show MemoryStore;
 
@@ -116,6 +117,53 @@ void main() {
     });
   }
 
+  for (final size in [const Size(1440, 900), const Size(800, 600)]) {
+    testWidgets(
+        'reissue import and general settings surfaces fit ${size.width}',
+        (t) async {
+      await mount(t, size: size);
+      await t.tap(size.width < 900
+          ? find.byTooltip('节点').first
+          : find.text('节点').first);
+      await t.pumpAndSettle();
+      for (final method in ['二维码', '文件', '链接', '剪贴板', '自定义']) {
+        await t.tap(find.text('导入'));
+        await t.pumpAndSettle();
+        await t.tap(find.text(method == '剪贴板' ? '剪贴板 / 文本' : method));
+        await t.pumpAndSettle();
+        expect(find.byType(ImportDialog), findsOneWidget);
+        expect(t.takeException(), isNull);
+        await screenshot(
+            t,
+            'import-${{
+              '二维码': 'qr',
+              '文件': 'file',
+              '链接': 'link',
+              '剪贴板': 'clipboard',
+              '自定义': 'custom'
+            }[method]}-${size.width.toInt()}');
+        await t.tap(find.text('取消').last);
+        await t.pumpAndSettle();
+      }
+      await t.tap(size.width < 900
+          ? find.byTooltip('设置').first
+          : find.text('设置').first);
+      await t.pumpAndSettle();
+      for (final section in ['启动与后台', '请求与更新', '入站与控制']) {
+        await t.ensureVisible(find.text(section));
+        await t.pumpAndSettle();
+        expect(t.takeException(), isNull);
+        await screenshot(
+            t,
+            'general-${{
+              '启动与后台': 'startup',
+              '请求与更新': 'requests',
+              '入站与控制': 'inbound'
+            }[section]}-${size.width.toInt()}');
+      }
+      await t.pumpWidget(const SizedBox());
+    });
+  }
   for (final size in [
     const Size(1440, 900),
     const Size(1280, 800),

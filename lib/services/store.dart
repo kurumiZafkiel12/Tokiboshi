@@ -16,6 +16,7 @@ import 'dart:math';
 
 import '../bridge/core_bridge.dart';
 import '../ui/preferences.dart';
+import 'desktop_settings.dart';
 
 /// Thrown when a save cannot be committed to main OR the backup (e.g.
 /// a Windows file lock). The newest data survives in the tmp file and
@@ -37,6 +38,9 @@ class Subscription {
     this.lastReport,
     this.profileJson,
     this.profileState,
+    this.nodesOnly = false,
+    this.localPath,
+    this.inlineContent,
   });
   final String id;
   final String name;
@@ -53,6 +57,9 @@ class Subscription {
   /// downloaded / parsed / saved / pending-applied / applied —
   /// persisted so the UI can show an honest lifecycle.
   final String? profileState;
+  final bool nodesOnly;
+  final String? localPath, inlineContent;
+  bool get isRemote => localPath == null && inlineContent == null;
 
   Subscription copyWith(
           {String? name,
@@ -60,7 +67,10 @@ class Subscription {
           String? updatedAt,
           String? lastReport,
           String? profileJson,
-          String? profileState}) =>
+          String? profileState,
+          bool? nodesOnly,
+          String? localPath,
+          String? inlineContent}) =>
       Subscription(
         id: id,
         name: name ?? this.name,
@@ -69,6 +79,9 @@ class Subscription {
         lastReport: lastReport ?? this.lastReport,
         profileJson: profileJson ?? this.profileJson,
         profileState: profileState ?? this.profileState,
+        nodesOnly: nodesOnly ?? this.nodesOnly,
+        localPath: localPath ?? this.localPath,
+        inlineContent: inlineContent ?? this.inlineContent,
       );
 
   Map<String, dynamic> toJson() => {
@@ -79,6 +92,9 @@ class Subscription {
         'lastReport': lastReport,
         'profileJson': profileJson,
         'profileState': profileState,
+        'nodesOnly': nodesOnly,
+        'localPath': localPath,
+        'inlineContent': inlineContent,
       };
 
   factory Subscription.fromJson(Map<String, dynamic> json) => Subscription(
@@ -89,6 +105,9 @@ class Subscription {
         lastReport: json['lastReport'] as String?,
         profileJson: json['profileJson'] as String?,
         profileState: json['profileState'] as String?,
+        nodesOnly: json['nodesOnly'] as bool? ?? false,
+        localPath: json['localPath'] as String?,
+        inlineContent: json['inlineContent'] as String?,
       );
 }
 
@@ -111,6 +130,7 @@ class AppData {
     this.resumeConnect = false,
     this.ui = const UiPreferences(),
     this.activeProfileId,
+    this.desktop = const DesktopSettings(),
   }) : clashApiSecret = clashApiSecret ?? '';
 
   List<NodeInfo> nodes;
@@ -158,6 +178,7 @@ class AppData {
   bool resumeConnect;
 
   UiPreferences ui;
+  DesktopSettings desktop;
 
   /// null: legacy unique-source inference; empty: explicit built-in template.
   String? activeProfileId;
@@ -185,6 +206,7 @@ class AppData {
         runningAtExit: runningAtExit,
         resumeConnect: resumeConnect,
         ui: ui,
+        desktop: desktop,
         activeProfileId: activeProfileId,
       );
 }
@@ -304,6 +326,7 @@ class Store {
         runningAtExit: runningAtExitRaw ?? migratedRunningAtExit,
         resumeConnect: (map['resumeConnect'] as bool?) ?? false,
         ui: UiPreferences.fromJson(map['ui']),
+        desktop: DesktopSettings.fromJson(map['desktop']),
         activeProfileId: map['activeProfileId'] is String
             ? map['activeProfileId'] as String
             : null,
@@ -349,6 +372,7 @@ class Store {
       'runningAtExit': data.runningAtExit,
       'resumeConnect': data.resumeConnect,
       'ui': data.ui.toJson(),
+      'desktop': data.desktop.toJson(),
       'activeProfileId': data.activeProfileId,
     };
     // Rotation: previous main BECOMES the backup (rename, not copy),

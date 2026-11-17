@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import '../services/store.dart';
 import '../ui/design.dart';
 import '../ui/diagnostics.dart';
+import '../ui/import_menu.dart';
+import '../ui/motion.dart';
 
 class SubscriptionsPage extends StatelessWidget {
   const SubscriptionsPage(
@@ -13,13 +15,17 @@ class SubscriptionsPage extends StatelessWidget {
       required this.onAdd,
       required this.onUpdate,
       required this.onDelete,
-      this.onUpdateAll});
+      this.onUpdateAll,
+      this.onImportMethod,
+      this.onRetryFull});
   final List<Subscription> subscriptions;
   final Map<String, int> nodeCounts;
   final bool running, busy;
   final VoidCallback onAdd;
   final VoidCallback? onUpdateAll;
   final ValueChanged<Subscription> onUpdate, onDelete;
+  final ValueChanged<String>? onImportMethod;
+  final ValueChanged<Subscription>? onRetryFull;
   Future<void> _delete(BuildContext context, Subscription sub) async {
     final yes = await showDialog<bool>(
         context: context,
@@ -47,6 +53,13 @@ class SubscriptionsPage extends StatelessWidget {
                       child: SelectableText(redactDiagnostics(
                           sub.lastReport ?? '请更新订阅以获取来源诊断')))),
               actions: [
+                if (sub.nodesOnly && !busy && !running && onRetryFull != null)
+                  TextButton(
+                      onPressed: () {
+                        Navigator.pop(context);
+                        onRetryFull!(sub);
+                      },
+                      child: const Text('尝试完整配置')),
                 TextButton(
                     onPressed: () => Navigator.pop(context),
                     child: const Text('关闭'))
@@ -64,10 +77,12 @@ class SubscriptionsPage extends StatelessWidget {
                       : onUpdateAll,
                   icon: const Icon(Icons.refresh, size: 16),
                   label: const Text('更新全部')),
-              FilledButton.icon(
-                  onPressed: busy || running ? null : onAdd,
-                  icon: const Icon(Icons.add, size: 16),
-                  label: const Text('添加订阅'))
+              ImportMenuButton(
+                  label: '添加订阅',
+                  enabled: !busy && !running,
+                  onSelected: (method) => onImportMethod == null
+                      ? onAdd()
+                      : onImportMethod!(method))
             ]),
         if (running)
           Padding(
@@ -92,107 +107,123 @@ class SubscriptionsPage extends StatelessWidget {
                     separatorBuilder: (_, __) => const SizedBox(height: 14),
                     itemBuilder: (context, i) {
                       final sub = subscriptions[i];
-                      final host = Uri.tryParse(sub.url)?.host ?? '地址已隐藏';
+                      final host = sub.isRemote
+                          ? (Uri.tryParse(sub.url)?.host ?? '地址已隐藏')
+                          : sub.localPath != null
+                              ? '本地文件 · ${sub.localPath!.split(RegExp(r"[\\/]")).last}'
+                              : '粘贴的本地配置';
                       final updated = DateTime.tryParse(sub.updatedAt ?? '');
-                      return Panel(
-                          padding: EdgeInsets.zero,
-                          child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Padding(
-                                    padding: const EdgeInsets.fromLTRB(
-                                        20, 18, 20, 14),
-                                    child: Row(children: [
-                                      Icon(Icons.inventory_2_outlined,
-                                          color: sub.profileJson != null
-                                              ? gold
-                                              : Theme.of(context)
-                                                  .colorScheme
-                                                  .primary,
-                                          size: 23),
-                                      const SizedBox(width: 13),
-                                      Expanded(
-                                          child: Column(
-                                              crossAxisAlignment:
-                                                  CrossAxisAlignment.start,
-                                              children: [
-                                            Text(sub.name,
-                                                style: const TextStyle(
-                                                    fontSize: 16,
-                                                    fontWeight:
-                                                        FontWeight.w600)),
-                                            const SizedBox(height: 4),
-                                            Text(host,
-                                                style: mono.copyWith(
-                                                    color: Theme.of(context)
-                                                        .colorScheme
-                                                        .onSurfaceVariant))
-                                          ])),
-                                      Tag(
-                                          sub.profileJson != null
-                                              ? '完整配置'
-                                              : '仅节点',
-                                          color: sub.profileJson != null
-                                              ? Theme.of(context)
-                                                  .colorScheme
-                                                  .primary
-                                              : null)
-                                    ])),
-                                Padding(
-                                    padding: const EdgeInsets.symmetric(
-                                        horizontal: 20),
-                                    child: Wrap(
-                                        spacing: 30,
-                                        runSpacing: 8,
-                                        children: [
-                                          _fact(context, '节点',
-                                              '${nodeCounts[sub.id] ?? 0}'),
-                                          _fact(
-                                              context,
-                                              '规则',
-                                              sub.profileJson != null
-                                                  ? '随订阅提供'
-                                                  : '使用应用模板'),
-                                          _fact(
-                                              context,
-                                              '上次更新',
-                                              updated == null
-                                                  ? '尚未更新'
-                                                  : updated
-                                                      .toLocal()
-                                                      .toString()
-                                                      .split('.')
-                                                      .first)
-                                        ])),
-                                const SizedBox(height: 16),
-                                const Divider(height: 1),
-                                Padding(
-                                    padding:
-                                        const EdgeInsets.fromLTRB(14, 6, 12, 6),
-                                    child: Row(children: [
-                                      TextButton.icon(
-                                          onPressed: () =>
-                                              _details(context, sub),
-                                          icon: const Icon(Icons.info_outline,
-                                              size: 15),
-                                          label: const Text('来源与识别详情')),
-                                      const Spacer(),
-                                      IconButton(
-                                          tooltip: '更新',
-                                          onPressed: busy || running
-                                              ? null
-                                              : () => onUpdate(sub),
-                                          icon: const Icon(Icons.refresh,
-                                              size: 17)),
-                                      IconButton(
-                                          tooltip: '删除',
-                                          onPressed: busy || running
-                                              ? null
-                                              : () => _delete(context, sub),
-                                          icon: const Icon(Icons.delete_outline,
-                                              size: 17))
-                                    ]))
-                              ]));
+                      return MotionEntrance(
+                          order: i,
+                          child: MotionHover(
+                              lift: true,
+                              child: Panel(
+                                  padding: EdgeInsets.zero,
+                                  child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Padding(
+                                            padding: const EdgeInsets.fromLTRB(
+                                                20, 18, 20, 14),
+                                            child: Row(children: [
+                                              Icon(Icons.inventory_2_outlined,
+                                                  color: sub.profileJson != null
+                                                      ? gold
+                                                      : Theme.of(context)
+                                                          .colorScheme
+                                                          .primary,
+                                                  size: 23),
+                                              const SizedBox(width: 13),
+                                              Expanded(
+                                                  child: Column(
+                                                      crossAxisAlignment:
+                                                          CrossAxisAlignment
+                                                              .start,
+                                                      children: [
+                                                    Text(sub.name,
+                                                        style: const TextStyle(
+                                                            fontSize: 16,
+                                                            fontWeight:
+                                                                FontWeight
+                                                                    .w600)),
+                                                    const SizedBox(height: 4),
+                                                    Text(host,
+                                                        style: mono.copyWith(
+                                                            color: Theme.of(
+                                                                    context)
+                                                                .colorScheme
+                                                                .onSurfaceVariant))
+                                                  ])),
+                                              Tag(
+                                                  sub.profileJson != null
+                                                      ? '完整配置'
+                                                      : '仅节点',
+                                                  color: sub.profileJson != null
+                                                      ? Theme.of(context)
+                                                          .colorScheme
+                                                          .primary
+                                                      : null)
+                                            ])),
+                                        Padding(
+                                            padding: const EdgeInsets.symmetric(
+                                                horizontal: 20),
+                                            child: Wrap(
+                                                spacing: 30,
+                                                runSpacing: 8,
+                                                children: [
+                                                  _fact(context, '节点',
+                                                      '${nodeCounts[sub.id] ?? 0}'),
+                                                  _fact(
+                                                      context,
+                                                      '规则',
+                                                      sub.profileJson != null
+                                                          ? '随订阅提供'
+                                                          : '使用应用模板'),
+                                                  _fact(
+                                                      context,
+                                                      '上次更新',
+                                                      updated == null
+                                                          ? '尚未更新'
+                                                          : updated
+                                                              .toLocal()
+                                                              .toString()
+                                                              .split('.')
+                                                              .first)
+                                                ])),
+                                        const SizedBox(height: 16),
+                                        const Divider(height: 1),
+                                        Padding(
+                                            padding: const EdgeInsets.fromLTRB(
+                                                14, 6, 12, 6),
+                                            child: Row(children: [
+                                              TextButton.icon(
+                                                  onPressed: () =>
+                                                      _details(context, sub),
+                                                  icon: const Icon(
+                                                      Icons.info_outline,
+                                                      size: 15),
+                                                  label: const Text('来源与识别详情')),
+                                              const Spacer(),
+                                              IconButton(
+                                                  tooltip: '更新',
+                                                  onPressed: busy || running
+                                                      ? null
+                                                      : () => onUpdate(sub),
+                                                  icon: const Icon(
+                                                      Icons.refresh,
+                                                      size: 17)),
+                                              IconButton(
+                                                  tooltip: '删除',
+                                                  onPressed: busy || running
+                                                      ? null
+                                                      : () =>
+                                                          _delete(context, sub),
+                                                  icon: const Icon(
+                                                      Icons.delete_outline,
+                                                      size: 17))
+                                            ]))
+                                      ]))));
                     })),
         const SizedBox(height: 12),
         Text('来源更新失败会保留先前已保存的数据。订阅地址和凭据默认隐藏。',

@@ -6,6 +6,8 @@ import '../services/store.dart';
 import '../ui/design.dart';
 import '../ui/preferences.dart';
 import '../ui/runtime.dart';
+import '../ui/motion.dart';
+import '../ui/traffic_chart.dart';
 
 class DashboardPage extends StatefulWidget {
   const DashboardPage(
@@ -158,7 +160,12 @@ class _DashboardPageState extends State<DashboardPage> {
                                         204.0,
                                     width: width,
                                     height: 194,
-                                    child: _editable(key, modules[key]!),
+                                    child: MotionEntrance(
+                                        order: ui.order.indexOf(key),
+                                        child: MotionHover(
+                                            lift: true,
+                                            child:
+                                                _editable(key, modules[key]!))),
                                   )
                               ]));
                         }),
@@ -352,9 +359,29 @@ class _DashboardPageState extends State<DashboardPage> {
             crossAxisAlignment: CrossAxisAlignment.baseline,
             textBaseline: TextBaseline.alphabetic,
             children: [
-              Text(ready ? text.substring(0, split) : '—',
-                  style: const TextStyle(
-                      fontSize: 27, fontWeight: FontWeight.w400)),
+              if (ready)
+                AnimatedMetric(
+                    value: value,
+                    format: (v) {
+                      final divisor = value >= 1073741824
+                          ? 1073741824.0
+                          : value >= 1048576
+                              ? 1048576.0
+                              : value >= 1024
+                                  ? 1024.0
+                                  : 1.0;
+                      return (v / divisor).toStringAsFixed(divisor >= 1048576
+                          ? 2
+                          : divisor >= 1024
+                              ? 1
+                              : 0);
+                    },
+                    style: const TextStyle(
+                        fontSize: 27, fontWeight: FontWeight.w400))
+              else
+                const Text('—',
+                    style:
+                        TextStyle(fontSize: 27, fontWeight: FontWeight.w400)),
               const SizedBox(width: 4),
               Text(ready ? '${text.substring(split + 1)}/s' : 'B/s',
                   style: mono.copyWith(fontSize: 9))
@@ -383,13 +410,9 @@ class _DashboardPageState extends State<DashboardPage> {
               ]),
               const SizedBox(height: 10),
               Expanded(
-                  child: RepaintBoundary(
-                      child: CustomPaint(
-                          painter: TrafficPainter(
-                              m?.downHistory ?? [],
-                              m?.upHistory ?? [],
-                              Theme.of(context).colorScheme.primary,
-                              gold)))),
+                  child: SmoothTrafficChart(
+                      down: m?.downHistory ?? const [],
+                      up: m?.upHistory ?? const [])),
               const SizedBox(height: 8),
               Row(children: [
                 Expanded(
@@ -658,43 +681,6 @@ class Segments<T> extends StatelessWidget {
                                             : null))))))
             ])
           ])));
-}
-
-class TrafficPainter extends CustomPainter {
-  TrafficPainter(this.down, this.up, this.downColor, this.upColor);
-  final List<double> down, up;
-  final Color downColor, upColor;
-  @override
-  void paint(Canvas canvas, Size size) {
-    final maxValue = math.max(1024.0, [...down, ...up, 0.0].reduce(math.max));
-    for (final data in [(down, downColor), (up, upColor)]) {
-      final path = Path();
-      final values = data.$1;
-      if (values.length < 2) {
-        path.moveTo(0, size.height - 1);
-        path.lineTo(size.width, size.height - 1);
-      } else {
-        for (var i = 0; i < values.length; i++) {
-          final x = i / (values.length - 1) * size.width,
-              y = size.height - 2 - values[i] / maxValue * (size.height - 4);
-          if (i == 0)
-            path.moveTo(x, y);
-          else
-            path.lineTo(x, y);
-        }
-      }
-      canvas.drawPath(
-          path,
-          Paint()
-            ..color = data.$2.withValues(alpha: .7)
-            ..style = PaintingStyle.stroke
-            ..strokeWidth = 1.1);
-    }
-  }
-
-  @override
-  bool shouldRepaint(TrafficPainter old) =>
-      old.down != down || old.up != up || old.downColor != downColor;
 }
 
 class _CornerPainter extends CustomPainter {
