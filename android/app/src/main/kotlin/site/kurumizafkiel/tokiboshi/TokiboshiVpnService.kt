@@ -92,7 +92,7 @@ class TokiboshiVpnService : VpnService(), PlatformInterface, CommandServerHandle
         val manager=getSystemService(NotificationManager::class.java)
         if(Build.VERSION.SDK_INT>=26)manager.createNotificationChannel(NotificationChannel(CHANNEL,"VPN 连接",NotificationManager.IMPORTANCE_LOW))
         val pending=PendingIntent.getActivity(this,0,Intent(this,MainActivity::class.java),PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
-        val builder=if(Build.VERSION.SDK_INT>=26)Notification.Builder(this,CHANNEL)else Notification.Builder(this)
+        val builder=if(Build.VERSION.SDK_INT>=26)android.app.Notification.Builder(this,CHANNEL)else android.app.Notification.Builder(this)
         startForeground(1,builder.setSmallIcon(site.kurumizafkiel.tokiboshi.R.drawable.ic_vpn).setContentTitle("Tokiboshi · 時の星").setContentText(text).setContentIntent(pending).setOngoing(true).build())
     }
     override fun openTun(options:TunOptions):Int {
