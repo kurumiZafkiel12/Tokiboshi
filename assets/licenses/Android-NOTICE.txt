@@ -1,0 +1,17 @@
+Tokiboshi Android 0.0.9 r2
+
+The combined Android application is distributed under GNU GPL v3 or later.
+Android integration code: Copyright (c) 2026 Tokiboshi contributors.
+
+sing-box / libbox: Copyright (C) 2022 nekohasekai and contributors.
+Version 1.14.4, source c005f35300ce76427dc285481ec5695f5b179cd2:
+https://github.com/SagerNet/sing-box/tree/v1.14.4
+Build tags: with_gvisor,with_quic,with_wireguard,with_utls,with_clash_api,with_low_memory
+The complete corresponding Tokiboshi Android source and reproducible build instructions:
+https://github.com/kurumiZafkiel12/Tokiboshi
+The build script pins upstream source and module checksums; no upstream code is hidden.
+See sing-box-GPL-3.0.txt for the full GPL license.
+
+Existing Flutter, Rust and other third-party components retain their original licenses.
+Rust bridge package: MIT OR Apache-2.0. Flutter/Dart: BSD-3-Clause.
+Flutter's generated license registry includes Dart package notices.

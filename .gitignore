@@ -16,3 +16,14 @@ rust/target/
 .idea/
 .vscode/
 *.iml
+
+# Android generated libraries and private release signing
+android/app/libs/*.aar
+android/key.properties
+*.jks
+*.keystore
+
+android/app/libs/*.jar
+
+__pycache__/
+*.pyc

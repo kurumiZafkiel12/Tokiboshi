@@ -15,6 +15,7 @@ import 'package:tray_manager/tray_manager.dart';
 import 'package:window_manager/window_manager.dart';
 
 import 'app_version.dart';
+import 'mobile/android_app.dart';
 import 'bridge/core_bridge.dart';
 import 'bridge/rust_core_bridge.dart';
 import 'pages/dashboard_page.dart';
@@ -88,6 +89,11 @@ Future<void> main(List<String> args) async {
     }
   }
   WidgetsFlutterBinding.ensureInitialized();
+  if (Platform.isAndroid) {
+    await RustLib.init();
+    runApp(await AndroidApp.create());
+    return;
+  }
   if (Platform.isWindows) {
     // Single instance (user report: two copies could run at once and
     // fight over the same kernel/ports). The lock is a dedicated

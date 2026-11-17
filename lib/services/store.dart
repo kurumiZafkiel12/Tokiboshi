@@ -459,7 +459,7 @@ class Store {
   /// its file (the Rust layer starts the core with this path).
   Future<File> writeRuntimeConfig(String configJson) async {
     await dir.create(recursive: true);
-    final configFile = File('${dir.path}\\config.json');
+    final configFile = File('${dir.path}${Platform.pathSeparator}config.json');
     await configFile.writeAsString(configJson);
     return configFile;
   }
