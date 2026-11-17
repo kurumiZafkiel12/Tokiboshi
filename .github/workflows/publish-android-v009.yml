@@ -1,0 +1,80 @@
+name: Publish verified Android 0.0.9 r2
+on:
+  push:
+    branches: ['release/publish-android-v009-codex']
+    paths: ['.github/workflows/publish-android-v009.yml']
+  workflow_dispatch:
+permissions:
+  actions: read
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Publish exact verified APKs and append Android download buttons
+        run: |
+          python3 - <<'PY'
+          import hashlib,json,os,pathlib,subprocess
+          config={'source': '9aa0c3bc60906130d9f52b7dfd9109bd91fef8c5', 'main': '35f7c39d2401e83df3cac7c5a039b286a4d6139a', 'tree': 'a5c6c491940e0a1cfa7ff0549c72e3005d3e623d', 'androidRun': 44119946722, 'windowsRun': 44119946810, 'smokeRun': 44123768844, 'smokeSource': '30e3c967dc5e9cb7914fec88c06481ce4d79488d', 'releaseId': 448890478, 'windowsTag': '7ba5c5f537f28c3b3ef2e3599d2df49400e9960d', 'windowsAssets': [{'id': 758639290, 'name': 'SHA256SUMS.txt', 'size': 183, 'digest': 'sha256:cc7a4088148273fc64c75d30dcaf040e5ea74e06c6eb4a70ecdbff951306eae4'}, {'id': 758639283, 'name': 'Tokiboshi-Setup-0.0.9-r2.exe', 'size': 37645712, 'digest': 'sha256:9ca9c1ca5eb6ca4c54095cfb76c0e87fcdadfb6f1a44260328f1af1841a5ffff'}, {'id': 758639285, 'name': 'Tokiboshi-windows.zip', 'size': 50914083, 'digest': 'sha256:f4da03da88f05064af9239c933d07dcb25c14f3d5ea1ac04f4adbce71800d317'}], 'windowsBodySha256': 'b6a856502ec3e49568c5186e8b2fda5a0012b9a1b8fc20da121481f321396aff', 'hashes': {'SHA256SUMS-android.txt': '6c7e9343a9567bc18a9580a421f92d8571dba9356acf6dbacd9435d00cc7ffe2', 'Tokiboshi-0.0.9-android-arm64-v8a.apk': 'f73b0ad3edd6b104c3c9cdac6546b60a796b1677a0577fc935acde409e8275e6', 'Tokiboshi-0.0.9-android-armeabi-v7a.apk': 'd5b3bdd7d95598b996bac8a2558316a06ffc01bc4fe5c507c17613d1350b7e01', 'Tokiboshi-0.0.9-android-x86_64.apk': '9f37563174cc4d8f4cc5e96e6a4324c94e30c69051cb944c92c32984fbbf7865', 'android-package-verification.json': '816ab459587f5f32b1301cf5c70011b05085a3f0ae27f4d9edc919a85a048ce3'}, 'certificate': 'c91d88b4284c40e97e2e270677c0ba083c40789a8f8bc85bbb3c70d02b49c726'}
+          repo=os.environ['GH_REPO'];root=pathlib.Path(os.environ['RUNNER_TEMP']);evidence=root/'publication';evidence.mkdir()
+          def gh(*args,input=None):
+              return subprocess.check_output(['gh',*args],input=input)
+          def api(path):return json.loads(gh('api',f'repos/{repo}/{path}'))
+          def patch(path,value):return json.loads(gh('api','--method','PATCH',f'repos/{repo}/{path}','--input','-',input=json.dumps(value).encode()))
+          def save(name,value):(evidence/name).write_text(json.dumps(value,indent=2)+'\n')
+          def assets(release):return sorted([{k:a[k] for k in ['id','name','size','digest']} for a in release['assets']],key=lambda a:a['name'])
+          for run in [config['androidRun'],config['windowsRun']]:
+              result=api(f'actions/runs/{run}');save(f'run-{run}.json',result)
+              assert result['conclusion']=='success' and result['head_sha']==config['source']
+          smoke=api(f"actions/runs/{config['smokeRun']}");save('signed-release-smoke-run.json',smoke)
+          assert smoke['conclusion']=='success' and smoke['head_sha']==config['smokeSource']
+          assert api('git/ref/tags/v0.0.9-android-r1')['object']['sha']==config['source']
+          assert api('git/ref/tags/v0.0.9-r2')['object']['sha']==config['windowsTag']
+          assert api('git/ref/heads/main')['object']['sha']==config['main']
+          assert api('commits/'+config['main'])['commit']['tree']['sha']==config['tree']
+          assert api('commits/'+config['source'])['commit']['tree']['sha']==config['tree']
+          windows=api('releases/448478259');save('windows-before.json',windows)
+          assert assets(windows)==config['windowsAssets']
+          assert hashlib.sha256(windows['body'].encode()).hexdigest()==config['windowsBodySha256']
+          assert api('releases/latest')['tag_name']=='v0.0.9-r2'
+          draft=api(f"releases/{config['releaseId']}");save('android-draft.json',draft)
+          assert draft['draft'] and not draft['prerelease'] and not draft['assets']
+          assert draft['tag_name']=='v0.0.9-android-r1' and draft['target_commitish']==config['source']
+          packages=root/'packages';packages.mkdir()
+          gh('run','download',str(config['androidRun']),'--name','Tokiboshi-Android','--dir',str(packages))
+          assert sorted(p.name for p in packages.iterdir())==sorted(config['hashes'])
+          for name,digest in config['hashes'].items():assert hashlib.sha256((packages/name).read_bytes()).hexdigest()==digest,name
+          subprocess.run(['sha256sum','--check','SHA256SUMS-android.txt'],cwd=packages,check=True)
+          verification=json.loads((packages/'android-package-verification.json').read_text());assert verification['passed']
+          assert len(verification['packages'])==3
+          assert {p['certificateSha256'] for p in verification['packages'].values()}=={config['certificate']}
+          gh('release','upload','v0.0.9-android-r1',*[str(packages/name) for name in config['hashes']])
+          uploaded=api(f"releases/{config['releaseId']}");save('android-uploaded.json',uploaded)
+          assert sorted(a['name'] for a in uploaded['assets'])==sorted(config['hashes'])
+          for asset in uploaded['assets']:
+              assert asset['state']=='uploaded' and asset['digest']=='sha256:'+config['hashes'][asset['name']]
+              assert asset['size']==(packages/asset['name']).stat().st_size
+          published=patch(f"releases/{config['releaseId']}",{'draft':False,'make_latest':'false'});save('android-published.json',published)
+          assert not published['draft'] and not published['prerelease']
+          marker='<!-- tokiboshi-android-v009-r1 -->'
+          assert marker not in windows['body']
+          doc=pathlib.Path('docs/releases/v0.0.9-android-r1.md').read_text()
+          row=next(line for line in doc.splitlines() if line.startswith('| Android |'))
+          addition='\n\n'+marker+'\n## Android 0.0.9 r2\n\nAndroid 7.0及以上；一般手机选择arm64-v8a。以下三包使用同一发布签名。\n\n| 系统 | 下载 |\n| --- | --- |\n'+row+'\n\n[Android发行说明与SHA256校验](https://github.com/'+repo+'/releases/tag/v0.0.9-android-r1)\n'
+          updated=patch('releases/448478259',{'body':windows['body']+addition});save('windows-after.json',updated)
+          assert assets(updated)==config['windowsAssets'] and updated['body']==windows['body']+addition
+          assert api('releases/latest')['tag_name']=='v0.0.9-r2'
+          assert api('git/ref/tags/v0.0.9-r2')['object']['sha']==config['windowsTag']
+          save('verified-publication.json',config)
+          print('Three APKs, SHA256 and verification report published; Windows assets/tag/latest preserved and Android badges appended.')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Android-v009-publication-evidence
+          path: ${{ runner.temp }}/publication/
