@@ -1,0 +1,69 @@
+name: Publish verified v0.0.9
+on:
+  push:
+    branches: ['release/publish-v009-codex']
+    paths: ['.github/workflows/publish-v009.yml']
+  workflow_dispatch:
+permissions:
+  actions: read
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Verify immutable build and test results
+        run: |
+          set -euo pipefail
+          for run in 43983026916; do
+            gh run view "$run" --json conclusion,headSha > "$RUNNER_TEMP/run-$run.json"
+            jq -e '.conclusion == "success" and .headSha == "f87bd621831c95b1c50ed87b4d2b442704b32ba0"' "$RUNNER_TEMP/run-$run.json"
+          done
+          gh api "repos/$GH_REPO/git/ref/tags/v0.0.9" | jq -e '.object.sha == "f87bd621831c95b1c50ed87b4d2b442704b32ba0"'
+          gh api "repos/$GH_REPO/commits/f25ac56d19c4daf86ce56a4718d66b16b7ef6980" | jq -e '.commit.tree.sha == "7006d0f54813a892570a75c6786f5243eb5d684b"'
+          gh api "repos/$GH_REPO/releases/447795635" > "$RUNNER_TEMP/release-before.json"
+          jq -e '.draft == true and (.assets | length) == 0 and .tag_name == "v0.0.9" and .target_commitish == "f87bd621831c95b1c50ed87b4d2b442704b32ba0"' "$RUNNER_TEMP/release-before.json"
+      - name: Download exact packages and verify SHA256
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/packages"
+          gh run download 43983026916 --name Tokiboshi-windows --dir "$RUNNER_TEMP/packages"
+          cd "$RUNNER_TEMP/packages"
+          echo 'b5b5150a037a688b4803a121803d5b2e47bd8926e2391c440d98a7992ad88055  Tokiboshi-Setup-0.0.9.exe' > SHA256SUMS.txt
+          echo '5ab9dff373a1e0c7fe1c2ff0116b62ca935f614193d703d9024f8c3b05f915d9  Tokiboshi-windows.zip' >> SHA256SUMS.txt
+          sha256sum --check SHA256SUMS.txt
+      - name: Upload without overwriting and verify server digests
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/packages"
+          gh release upload v0.0.9 Tokiboshi-Setup-0.0.9.exe Tokiboshi-windows.zip SHA256SUMS.txt
+          gh api "repos/$GH_REPO/releases/447795635" > "$RUNNER_TEMP/release-uploaded.json"
+          python - <<'PY'
+          import json,hashlib,os,pathlib
+          root=pathlib.Path(os.environ['RUNNER_TEMP'])
+          r=json.loads((root/'release-uploaded.json').read_text())
+          expected=['Tokiboshi-Setup-0.0.9.exe','Tokiboshi-windows.zip','SHA256SUMS.txt']
+          assert sorted(a['name'] for a in r['assets'])==sorted(expected)
+          for asset in r['assets']:
+              p=root/'packages'/asset['name']
+              assert asset['state']=='uploaded'
+              assert asset['digest']=='sha256:'+hashlib.sha256(p.read_bytes()).hexdigest()
+          print('All three uploaded assets match the verified build bytes.')
+          PY
+      - name: Publish the verified draft
+        run: |
+          set -euo pipefail
+          gh release edit v0.0.9 --draft=false --latest
+          gh api "repos/$GH_REPO/releases/447795635" > "$RUNNER_TEMP/release-published.json"
+          jq -e '.draft == false and .prerelease == false and .tag_name == "v0.0.9" and (.assets | length) == 3' "$RUNNER_TEMP/release-published.json"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: v009-publication-evidence
+          path: |
+            ${{ runner.temp }}/run-*.json
+            ${{ runner.temp }}/release-*.json
+            ${{ runner.temp }}/packages/SHA256SUMS.txt
