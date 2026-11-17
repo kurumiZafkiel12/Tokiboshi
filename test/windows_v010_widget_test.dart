@@ -27,6 +27,7 @@ void main() {
       desktop(t);
       final store = MemoryStore();
       store.data.autoConnect = false;
+      store.data.desktop = store.data.desktop.copyWith(autoCheckUpdates: false);
       store.data.nodes = const [
         NodeInfo(
             name: 'old-node',
@@ -76,6 +77,7 @@ void main() {
     desktop(t);
     final store = MemoryStore();
     store.data.autoConnect = false;
+    store.data.desktop = store.data.desktop.copyWith(autoCheckUpdates: false);
     store.data.subscriptions = [
       Subscription(
           id: 's',
@@ -104,6 +106,7 @@ void main() {
     desktop(t);
     final store = MemoryStore();
     store.data.autoConnect = false;
+    store.data.desktop = store.data.desktop.copyWith(autoCheckUpdates: false);
     store.data.subscriptions = const [
       Subscription(
           id: 's',
@@ -188,6 +191,7 @@ void main() {
     desktop(t);
     final store = MemoryStore();
     store.data.autoConnect = false;
+    store.data.desktop = store.data.desktop.copyWith(autoCheckUpdates: false);
     store.data.nodes = const [
       NodeInfo(
           name: 'unselected',
@@ -248,6 +252,7 @@ void main() {
       });
       final store = _FailingStore();
       store.data.autoConnect = false;
+      store.data.desktop = store.data.desktop.copyWith(autoCheckUpdates: false);
       store.data.clashApiSecret = 'synthetic-only';
       store.data.clashApiPort = server.port;
       store.data.nodes = const [
