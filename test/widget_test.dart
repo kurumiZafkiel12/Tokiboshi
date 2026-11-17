@@ -177,7 +177,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('启动代理'));
     await tester.pumpAndSettle();
-    expect(find.text('已连接'), findsOneWidget);
+    expect(find.text('内核已运行'), findsOneWidget);
     expect(bridge.running, isTrue);
     expect(store.runtimeConfig, isNotNull);
     expect(proxy.calls, [(enable: true, port: 7890)]);

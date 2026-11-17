@@ -17,6 +17,7 @@ import 'dart:math';
 import '../bridge/core_bridge.dart';
 import '../ui/preferences.dart';
 import 'desktop_settings.dart';
+import 'client_preferences.dart';
 
 /// Thrown when a save cannot be committed to main OR the backup (e.g.
 /// a Windows file lock). The newest data survives in the tmp file and
@@ -41,6 +42,9 @@ class Subscription {
     this.nodesOnly = false,
     this.localPath,
     this.inlineContent,
+    this.refreshMinutes = 0,
+    this.lastError,
+    this.lastAttemptAt,
   });
   final String id;
   final String name;
@@ -59,21 +63,30 @@ class Subscription {
   final String? profileState;
   final bool nodesOnly;
   final String? localPath, inlineContent;
+  final int refreshMinutes;
+  final String? lastError, lastAttemptAt;
   bool get isRemote => localPath == null && inlineContent == null;
 
-  Subscription copyWith(
-          {String? name,
-          String? url,
-          String? updatedAt,
-          String? lastReport,
-          String? profileJson,
-          String? profileState,
-          bool? nodesOnly,
-          String? localPath,
-          String? inlineContent}) =>
+  Subscription copyWith({
+    String? lastError,
+    String? lastAttemptAt,
+    int? refreshMinutes,
+    String? name,
+    String? url,
+    String? updatedAt,
+    String? lastReport,
+    String? profileJson,
+    String? profileState,
+    bool? nodesOnly,
+    String? localPath,
+    String? inlineContent,
+  }) =>
       Subscription(
         id: id,
         name: name ?? this.name,
+        refreshMinutes: refreshMinutes ?? this.refreshMinutes,
+        lastError: lastError ?? this.lastError,
+        lastAttemptAt: lastAttemptAt ?? this.lastAttemptAt,
         url: url ?? this.url,
         updatedAt: updatedAt ?? this.updatedAt,
         lastReport: lastReport ?? this.lastReport,
@@ -85,6 +98,9 @@ class Subscription {
       );
 
   Map<String, dynamic> toJson() => {
+        'lastError': lastError,
+        'lastAttemptAt': lastAttemptAt,
+        'refreshMinutes': refreshMinutes,
         'id': id,
         'name': name,
         'url': url,
@@ -98,6 +114,12 @@ class Subscription {
       };
 
   factory Subscription.fromJson(Map<String, dynamic> json) => Subscription(
+        lastError: json['lastError'] as String?,
+        lastAttemptAt: json['lastAttemptAt'] as String?,
+        refreshMinutes: json['refreshMinutes'] is int &&
+                (json['refreshMinutes'] as int) >= 0
+            ? json['refreshMinutes'] as int
+            : 0,
         id: json['id'] as String,
         name: json['name'] as String,
         url: json['url'] as String,
@@ -131,6 +153,7 @@ class AppData {
     this.ui = const UiPreferences(),
     this.activeProfileId,
     this.desktop = const DesktopSettings(),
+    this.client = const ClientPreferences(),
   }) : clashApiSecret = clashApiSecret ?? '';
 
   List<NodeInfo> nodes;
@@ -179,6 +202,7 @@ class AppData {
 
   UiPreferences ui;
   DesktopSettings desktop;
+  ClientPreferences client;
 
   /// null: legacy unique-source inference; empty: explicit built-in template.
   String? activeProfileId;
@@ -207,6 +231,7 @@ class AppData {
         resumeConnect: resumeConnect,
         ui: ui,
         desktop: desktop,
+        client: client,
         activeProfileId: activeProfileId,
       );
 }
@@ -297,7 +322,15 @@ class Store {
   Future<AppData?> _tryLoad(File file) async {
     try {
       if (!await file.exists()) return null;
-      final map = jsonDecode(await file.readAsString()) as Map<String, dynamic>;
+      return decodeData(await file.readAsString());
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static AppData? decodeData(String text) {
+    try {
+      final map = jsonDecode(text) as Map<String, dynamic>;
       final nodes = (map['nodes'] as List<dynamic>? ?? [])
           .map((e) => NodeInfo.fromJson(e as Map<String, dynamic>))
           .toList();
@@ -327,6 +360,7 @@ class Store {
         resumeConnect: (map['resumeConnect'] as bool?) ?? false,
         ui: UiPreferences.fromJson(map['ui']),
         desktop: DesktopSettings.fromJson(map['desktop']),
+        client: ClientPreferences.fromJson(map['client'], strict: true),
         activeProfileId: map['activeProfileId'] is String
             ? map['activeProfileId'] as String
             : null,
@@ -353,28 +387,31 @@ class Store {
     return next;
   }
 
+  static Map<String, dynamic> encodeData(AppData data) => {
+        'nodes': data.nodes.map((n) => n.toJson()).toList(),
+        'subscriptions': data.subscriptions.map((s) => s.toJson()).toList(),
+        'selectedIndex': data.selectedIndex,
+        'mixedPort': data.mixedPort,
+        'clashApiPort': data.clashApiPort,
+        'singBoxPath': data.singBoxPath,
+        'systemProxy': data.systemProxy,
+        'autoConnect': data.autoConnect,
+        'enableTun': data.enableTun,
+        'blockAds': data.blockAds,
+        'bypassCn': data.bypassCn,
+        'clashApiSecret': data.clashApiSecret,
+        'cleanExit': data.cleanExit,
+        'runningAtExit': data.runningAtExit,
+        'resumeConnect': data.resumeConnect,
+        'ui': data.ui.toJson(),
+        'desktop': data.desktop.toJson(),
+        'client': data.client.toJson(),
+        'activeProfileId': data.activeProfileId,
+      };
+
   Future<void> _saveNow(AppData data) async {
     await dir.create(recursive: true);
-    final map = {
-      'nodes': data.nodes.map((n) => n.toJson()).toList(),
-      'subscriptions': data.subscriptions.map((s) => s.toJson()).toList(),
-      'selectedIndex': data.selectedIndex,
-      'mixedPort': data.mixedPort,
-      'clashApiPort': data.clashApiPort,
-      'singBoxPath': data.singBoxPath,
-      'systemProxy': data.systemProxy,
-      'autoConnect': data.autoConnect,
-      'enableTun': data.enableTun,
-      'blockAds': data.blockAds,
-      'bypassCn': data.bypassCn,
-      'clashApiSecret': data.clashApiSecret,
-      'cleanExit': data.cleanExit,
-      'runningAtExit': data.runningAtExit,
-      'resumeConnect': data.resumeConnect,
-      'ui': data.ui.toJson(),
-      'desktop': data.desktop.toJson(),
-      'activeProfileId': data.activeProfileId,
-    };
+    final map = encodeData(data);
     // Rotation: previous main BECOMES the backup (rename, not copy),
     // then tmp becomes main. An unhealthy main is quarantined as
     // .corrupt instead — and the existing good backup is NOT touched

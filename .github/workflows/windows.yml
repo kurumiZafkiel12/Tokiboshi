@@ -20,9 +20,12 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@v1
 
       - name: Fetch verified sing-box for native tests and packaging
+        env:
+          GH_TOKEN: ${{ github.token }}
         shell: pwsh
         run: |
-          $release = Invoke-RestMethod 'https://api.github.com/repos/SagerNet/sing-box/releases/tags/v1.14.4'
+          $headers = @{ Authorization = "Bearer $env:GH_TOKEN"; Accept = 'application/vnd.github+json' }
+          $release = Invoke-RestMethod 'https://api.github.com/repos/SagerNet/sing-box/releases/tags/v1.14.4' -Headers $headers
           $asset = $release.assets | Where-Object name -eq 'sing-box-1.14.4-windows-amd64.zip'
           if (-not $asset -or -not $asset.digest.StartsWith('sha256:')) { throw 'Missing official core asset digest' }
           $archive = Join-Path $env:RUNNER_TEMP 'sing-box.zip'
@@ -155,7 +158,7 @@ jobs:
           $ver = (Select-String -Path pubspec.yaml -Pattern '^version:\s*([0-9]+\.[0-9]+\.[0-9]+)').Matches[0].Groups[1].Value
           $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
           if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress }
-          & $iscc "/DAppVersion=$ver" "/DOutputSuffix=-r2" installer\tokiboshi.iss
+          & $iscc "/DAppVersion=$ver" installer\tokiboshi.iss
           if ($LASTEXITCODE -ne 0) { throw "ISCC failed with exit code $LASTEXITCODE" }
 
       - uses: actions/upload-artifact@v4

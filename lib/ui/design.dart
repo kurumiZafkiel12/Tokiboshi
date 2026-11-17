@@ -2,10 +2,10 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'preferences.dart';
 
-const brand = Color(0xFFE9A0B4);
-const wine = Color(0xFF96354E);
+const brand = Color(0xFFFFB1C0);
+const wine = Color(0xFFB83B5E);
 const gold = Color(0xFFDBBB80);
-const good = Color(0xFFA3C8B1);
+const good = Color(0xFF60DCB2);
 const danger = Color(0xFFF19592);
 const mono = TextStyle(
     fontFamily: 'Cascadia Code',
@@ -17,13 +17,13 @@ ThemeData workbenchTheme(UiPreferences ui) {
   final character = ui.character;
   final bg = light
       ? (character ? const Color(0xFFF4F0F3) : const Color(0xFFF1F2F5))
-      : (character ? const Color(0xFF171518) : const Color(0xFF151619));
+      : (character ? const Color(0xFF141217) : const Color(0xFF151619));
   final surface = light
       ? const Color(0xFFFEFBFD)
       : (character ? const Color(0xFF1D1B20) : const Color(0xFF1A1C20));
-  final line = light ? const Color(0xFFD8C6D0) : const Color(0xFF3A333F);
+  final line = light ? const Color(0xFFD8C6D0) : const Color(0xFF322C38);
   final ink = light ? const Color(0xFF36232E) : const Color(0xFFF1EDF0);
-  final sub = light ? const Color(0xFF6E5465) : const Color(0xFFC7BECB);
+  final sub = light ? const Color(0xFF6E5465) : const Color(0xFFB6AAB8);
   final accent = light ? const Color(0xFFA33258) : brand;
   final scheme = ColorScheme.fromSeed(
           seedColor: wine,
@@ -39,10 +39,10 @@ ThemeData workbenchTheme(UiPreferences ui) {
           outlineVariant: line.withValues(alpha: .65),
           error: light ? const Color(0xFFB3473B) : danger,
           surfaceContainerLow:
-              light ? const Color(0xFFFBF8FA) : const Color(0xFF131115),
+              light ? const Color(0xFFFBF8FA) : const Color(0xFF0F0D12),
           surfaceContainerHighest:
               light ? const Color(0xFFEDE3E9) : const Color(0xFF28242C));
-  final radius = BorderRadius.circular(7);
+  final radius = BorderRadius.circular(9);
   return ThemeData(
       useMaterial3: true,
       materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
@@ -59,8 +59,8 @@ ThemeData workbenchTheme(UiPreferences ui) {
           .black
           .apply(bodyColor: ink, displayColor: ink)
           .copyWith(
-              bodyMedium: TextStyle(fontSize: 13, color: ink, height: 1.5),
-              bodySmall: TextStyle(fontSize: 11, color: sub, height: 1.5),
+              bodyMedium: TextStyle(fontSize: 14, color: ink, height: 1.5),
+              bodySmall: TextStyle(fontSize: 12, color: sub, height: 1.5),
               titleMedium: TextStyle(
                   fontSize: 14, color: ink, fontWeight: FontWeight.w600),
               labelLarge: TextStyle(
@@ -129,12 +129,19 @@ class Panel extends StatelessWidget {
   Widget build(BuildContext context) => Container(
       decoration: BoxDecoration(
           color: Theme.of(context).colorScheme.surface,
-          borderRadius: BorderRadius.circular(7),
+          borderRadius: BorderRadius.circular(12),
           border: Border.all(
               color: accent
-                  ? Theme.of(context).colorScheme.primary.withValues(alpha: .4)
-                  : Theme.of(context).dividerColor)),
-      child: Padding(padding: padding, child: child));
+                  ? Theme.of(context).colorScheme.primary.withValues(alpha: .32)
+                  : Theme.of(context).dividerColor),
+          boxShadow: accent
+              ? [BoxShadow(color: wine.withValues(alpha: .04), blurRadius: 24)]
+              : null),
+      child: ClipRRect(
+          borderRadius: BorderRadius.circular(12),
+          child: Material(
+              color: Colors.transparent,
+              child: Padding(padding: padding, child: child))));
 }
 
 class Tag extends StatelessWidget {
@@ -197,7 +204,7 @@ class PageHeading extends StatelessWidget {
           ],
           Text(title,
               style: const TextStyle(
-                  fontSize: 23,
+                  fontSize: 26,
                   fontWeight: FontWeight.w600,
                   letterSpacing: -.6)),
           if (subtitle.isNotEmpty) ...[

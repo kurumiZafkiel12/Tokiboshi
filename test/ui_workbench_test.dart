@@ -283,6 +283,8 @@ void main() {
     await screenshot(t, 'dashboard-light');
     await t.tap(find.text('设置').first);
     await t.pumpAndSettle();
+    await t.tap(find.text('外观动效'));
+    await t.pumpAndSettle();
     await t.tap(find.widgetWithText(ChoiceChip, '紧凑'));
     await t.pumpAndSettle();
     expect(store.data.ui.compact, true);

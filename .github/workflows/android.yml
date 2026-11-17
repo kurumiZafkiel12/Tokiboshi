@@ -11,6 +11,8 @@ permissions:
   contents: read
 jobs:
   libbox:
+    # This branch delivers a Windows candidate only; Android retains its published version.
+    if: ${{ !startsWith(github.head_ref || github.ref_name, 'feat/windows-') }}
     runs-on: ubuntu-latest
     timeout-minutes: 35
     steps:

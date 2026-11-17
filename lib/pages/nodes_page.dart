@@ -39,7 +39,14 @@ class NodesPage extends StatefulWidget {
 }
 
 class _NodesPageState extends State<NodesPage> {
-  String _query = '', _group = '';
+  String _query = '', _group = '', _source = '';
+  final Map<String, bool> _expanded = {};
+  @override
+  void didUpdateWidget(covariant NodesPage old) {
+    super.didUpdateWidget(old);
+    if (!identical(old.nodes, widget.nodes)) _group = '';
+  }
+
   bool _grid = false, _sort = false;
   final _search = TextEditingController();
   @override
@@ -57,6 +64,7 @@ class _NodesPageState extends State<NodesPage> {
   }
 
   Future<void> _delete(int index) async {
+    final target = widget.nodes[index];
     final confirm = await showDialog<bool>(
         context: context,
         builder: (context) => AlertDialog(
@@ -71,7 +79,10 @@ class _NodesPageState extends State<NodesPage> {
                       onPressed: () => Navigator.pop(context, true),
                       child: const Text('删除'))
                 ]));
-    if (confirm == true && mounted) widget.onDelete(index);
+    if (confirm == true && mounted) {
+      final current = widget.nodes.indexOf(target);
+      if (current >= 0) widget.onDelete(current);
+    }
   }
 
   @override
@@ -83,6 +94,9 @@ class _NodesPageState extends State<NodesPage> {
         : <int>{};
     bool visible(NodeInfo n, int i) {
       if (n.isPolicy) return false;
+      if (_source == '__manual' && n.source.isNotEmpty) return false;
+      if (_source.isNotEmpty && _source != '__manual' && n.source != _source)
+        return false;
       if (policyIndex != null && !members.contains(i)) return false;
       if (policyIndex == null && _group.isNotEmpty) {
         if (_group == '__manual') {
@@ -136,16 +150,54 @@ class _NodesPageState extends State<NodesPage> {
           SingleChildScrollView(
               scrollDirection: Axis.horizontal,
               child: Row(children: [
-                _filter('全部', ''),
-                for (var i = 0; i < widget.nodes.length; i++)
-                  if (widget.nodes[i].isPolicy)
-                    _filter(widget.nodes[i].name, 'policy:$i', policy: i),
-                if (widget.nodes.any((n) => n.source.isEmpty))
-                  _filter('手动导入', '__manual'),
-                for (final sub in widget.subscriptions)
-                  _filter(sub.name, sub.id),
-                for (final p in providers) _filter(p, 'provider:$p')
+                Text('来源', style: Theme.of(context).textTheme.bodySmall),
+                const SizedBox(width: 10),
+                for (final entry in {
+                  '': '全部来源',
+                  if (widget.nodes.any((n) => n.source.isEmpty))
+                    '__manual': '手动导入',
+                  for (final sub in widget.subscriptions) sub.id: sub.name
+                }.entries)
+                  Padding(
+                      padding: const EdgeInsets.only(right: 6),
+                      child: ChoiceChip(
+                          label: Text(entry.value),
+                          selected: _source == entry.key,
+                          onSelected: widget.busy
+                              ? null
+                              : (_) => setState(() {
+                                    _source = entry.key;
+                                    _group = '';
+                                  })))
               ])),
+          const SizedBox(height: 10),
+          SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(children: [
+                Text('分组', style: Theme.of(context).textTheme.bodySmall),
+                const SizedBox(width: 10),
+                _filter('全部节点', ''),
+                for (var i = 0; i < widget.nodes.length; i++)
+                  if (widget.nodes[i].isPolicy &&
+                      (_source.isEmpty || widget.nodes[i].source == _source))
+                    _filter(widget.nodes[i].name, 'policy:$i'),
+                for (final provider in providers)
+                  _filter(provider, 'provider:$provider')
+              ])),
+          if (policyIndex != null)
+            Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Row(children: [
+                  const Expanded(
+                      child: Text('当前仅筛选策略成员；使用策略组需明确切换。',
+                          style: TextStyle(fontSize: 12))),
+                  TextButton.icon(
+                      onPressed: widget.busy
+                          ? null
+                          : () => widget.onSelect(policyIndex),
+                      icon: const Icon(Icons.play_arrow, size: 16),
+                      label: const Text('使用此策略组'))
+                ])),
           const SizedBox(height: 10),
           Row(children: [
             Expanded(
@@ -199,6 +251,7 @@ class _NodesPageState extends State<NodesPage> {
                                 setState(() {
                                   _query = '';
                                   _group = '';
+                                  _source = '';
                                 });
                               },
                               child: const Text('清除筛选')))
@@ -209,12 +262,13 @@ class _NodesPageState extends State<NodesPage> {
                 child: Text(
                     '显示 ${indices.length} / ${widget.nodes.where((n) => !n.isPolicy).length} 个节点',
                     style: Theme.of(context).textTheme.bodySmall)),
-            Text('延迟来自实际测试', style: Theme.of(context).textTheme.bodySmall)
+            Text(widget.running ? '内核 URL 测速 · 含代理握手' : 'TCP 端口探测 · 不代表代理可用',
+                style: Theme.of(context).textTheme.bodySmall)
           ])
         ]));
   }
 
-  Widget _filter(String label, String value, {int? policy}) => Padding(
+  Widget _filter(String label, String value) => Padding(
       padding: const EdgeInsets.only(right: 6),
       child: ChoiceChip(
           label: Text(label),
@@ -223,7 +277,6 @@ class _NodesPageState extends State<NodesPage> {
               ? null
               : (_) {
                   setState(() => _group = value);
-                  if (policy != null) widget.onSelect(policy);
                 }));
   Widget _grouped(List<int> indices) {
     final groups = <String, List<int>>{};
@@ -234,79 +287,90 @@ class _NodesPageState extends State<NodesPage> {
       labels[key] = sourceLabel(n, widget.subscriptions);
     }
     final keys = groups.keys.toList();
-    return ListView.separated(
-        itemCount: keys.length,
-        separatorBuilder: (_, __) => const SizedBox(height: 10),
-        itemBuilder: (context, g) {
-          final key = keys[g], items = groups[key]!;
-          return Panel(
-              padding: EdgeInsets.zero,
-              child: ExpansionTile(
-                  key: PageStorageKey('$_group/$_query/$key'),
-                  initiallyExpanded: keys.length <= 3 ||
-                      _group.isNotEmpty ||
-                      _query.isNotEmpty,
-                  shape: const Border(),
-                  collapsedShape: const Border(),
-                  dense: true,
-                  leading: Icon(Icons.folder_outlined,
-                      size: 18, color: Theme.of(context).colorScheme.primary),
-                  title: Text('${labels[key]}（${items.length}）',
-                      style: const TextStyle(
-                          fontSize: 12, fontWeight: FontWeight.w500)),
-                  children: [
-                    if (_grid)
-                      GridView.builder(
-                          key: PageStorageKey('nodes-grid/$key'),
-                          primary: false,
-                          shrinkWrap: true,
-                          physics: const NeverScrollableScrollPhysics(),
-                          padding: const EdgeInsets.all(12),
-                          gridDelegate:
-                              const SliverGridDelegateWithMaxCrossAxisExtent(
-                                  maxCrossAxisExtent: 320,
-                                  mainAxisExtent: 118,
-                                  crossAxisSpacing: 10,
-                                  mainAxisSpacing: 10),
-                          itemCount: items.length,
-                          itemBuilder: (context, row) => row < 12
-                              ? MotionEntrance(
-                                  order: row,
-                                  child: MotionHover(
-                                      lift: true, child: _card(items[row])))
-                              : _card(items[row]))
-                    else ...[
-                      const Divider(height: 1),
-                      if (items.length <= 80)
-                        SizedBox(
-                            height: items.length *
+    if (_sort)
+      keys.sort((a, b) => groups[a]!
+          .reduce((x, y) => x < y ? x : y)
+          .compareTo(groups[b]!.reduce((x, y) => x < y ? x : y)));
+    return CustomScrollView(slivers: [
+      for (final key in keys) ...[
+        SliverToBoxAdapter(
+            child: Padding(
+                padding: const EdgeInsets.only(top: 10),
+                child: Panel(
+                    padding: EdgeInsets.zero,
+                    child: InkWell(
+                        onTap: () => setState(() => _expanded[key] =
+                            !(_expanded[key] ??
+                                (keys.length <= 3 ||
+                                    _group.isNotEmpty ||
+                                    _query.isNotEmpty))),
+                        child: Padding(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 16, vertical: 15),
+                            child: Row(children: [
+                              Icon(Icons.folder_outlined,
+                                  size: 20,
+                                  color: Theme.of(context).colorScheme.primary),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                  child: Text(
+                                      '${labels[key]}（${groups[key]!.length}）',
+                                      style: const TextStyle(
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.w600))),
+                              Icon(
+                                  (_expanded[key] ??
+                                          (keys.length <= 3 ||
+                                              _group.isNotEmpty ||
+                                              _query.isNotEmpty))
+                                      ? Icons.expand_less
+                                      : Icons.expand_more,
+                                  size: 18)
+                            ])))))),
+        if (_expanded[key] ??
+            (keys.length <= 3 || _group.isNotEmpty || _query.isNotEmpty))
+          if (_grid)
+            SliverPadding(
+                padding: const EdgeInsets.symmetric(vertical: 10),
+                sliver: SliverGrid.builder(
+                    gridDelegate:
+                        const SliverGridDelegateWithMaxCrossAxisExtent(
+                            maxCrossAxisExtent: 320,
+                            mainAxisExtent: 124,
+                            crossAxisSpacing: 10,
+                            mainAxisSpacing: 10),
+                    itemCount: groups[key]!.length,
+                    itemBuilder: (_, position) => MotionHover(
+                        lift: true, child: _card(groups[key]![position]))))
+          else if (groups[key]!.length <= 80)
+            SliverToBoxAdapter(
+                child: SizedBox(
+                    height: groups[key]!.length *
+                        (UiScope.of(context).compact ? 52.0 : 68.0),
+                    child: Stack(children: [
+                      for (var position = 0;
+                          position < groups[key]!.length;
+                          position++)
+                        AnimatedPositioned(
+                            key: ValueKey('node-${groups[key]![position]}'),
+                            duration: UiScope.duration(context, 280),
+                            curve: Curves.easeOutCubic,
+                            top: position *
                                 (UiScope.of(context).compact ? 52.0 : 68.0),
-                            child: Stack(children: [
-                              for (var position = 0;
-                                  position < items.length;
-                                  position++)
-                                AnimatedPositioned(
-                                    key: ValueKey('row-${items[position]}'),
-                                    duration: UiScope.duration(context, 320),
-                                    curve: Curves.easeOutCubic,
-                                    left: 0,
-                                    right: 0,
-                                    top: position *
-                                        (UiScope.of(context).compact
-                                            ? 52.0
-                                            : 68.0),
-                                    height:
-                                        UiScope.of(context).compact ? 52 : 68,
-                                    child: MotionEntrance(
-                                        order: position,
-                                        child: MotionHover(
-                                            child: _row(items[position]))))
-                            ]))
-                      else
-                        for (final i in items) _row(i)
-                    ]
-                  ]));
-        });
+                            left: 0,
+                            right: 0,
+                            height: UiScope.of(context).compact ? 52 : 68,
+                            child: MotionHover(
+                                child: _row(groups[key]![position])))
+                    ])))
+          else
+            SliverList.builder(
+                itemCount: groups[key]!.length,
+                itemBuilder: (_, position) => MotionHover(
+                    key: ValueKey(groups[key]![position]),
+                    child: _row(groups[key]![position])))
+      ]
+    ]);
   }
 
   Widget _row(int i) {
