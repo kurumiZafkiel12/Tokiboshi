@@ -7,6 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:tokiboshi/main_v007_audit.dart' as app;
 import 'package:tokiboshi/bridge/core_bridge.dart';
 import 'package:tokiboshi/services/store.dart';
+import 'package:tokiboshi/ui/preferences.dart';
 import 'package:tokiboshi/services/subscription_fetcher.dart';
 import 'package:tokiboshi/services/system_proxy.dart';
 import 'fake_bridge.dart';
@@ -62,7 +63,7 @@ void main(){
   m.data.systemProxy=true;
   final b=Bridge()..running=running;final proxy=Proxy();
   final key=GlobalKey();
-  await t.pumpWidget(MaterialApp(home:app.ShellPage(key:key,bridge:b,store:m,systemProxy:proxy,
+  await t.pumpWidget(MaterialApp(home:app.ShellPage(appearance:ValueNotifier(const UiPreferences(motion:"reduced")),key:key,bridge:b,store:m,systemProxy:proxy,
    fetcher:FakeFetcher({}),allocatePort:(port,reserved) async=>port)));
   await t.pumpAndSettle();
   app.auditPrepare(key.currentState!,running:b.running);

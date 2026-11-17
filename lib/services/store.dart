@@ -15,6 +15,7 @@ import 'dart:io';
 import 'dart:math';
 
 import '../bridge/core_bridge.dart';
+import '../ui/preferences.dart';
 
 /// Thrown when a save cannot be committed to main OR the backup (e.g.
 /// a Windows file lock). The newest data survives in the tmp file and
@@ -36,7 +37,8 @@ class Subscription {
     this.lastReport,
     this.profileJson,
     this.profileState,
-  });  final String id;
+  });
+  final String id;
   final String name;
   final String url;
 
@@ -69,10 +71,13 @@ class Subscription {
         profileState: profileState ?? this.profileState,
       );
 
-  Map<String, dynamic> toJson() =>
-      {
-        'id': id, 'name': name, 'url': url, 'updatedAt': updatedAt,
-        'lastReport': lastReport, 'profileJson': profileJson,
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'name': name,
+        'url': url,
+        'updatedAt': updatedAt,
+        'lastReport': lastReport,
+        'profileJson': profileJson,
         'profileState': profileState,
       };
 
@@ -104,6 +109,8 @@ class AppData {
     this.cleanExit = true,
     this.runningAtExit = false,
     this.resumeConnect = false,
+    this.ui = const UiPreferences(),
+    this.activeProfileId,
   }) : clashApiSecret = clashApiSecret ?? '';
 
   List<NodeInfo> nodes;
@@ -150,10 +157,14 @@ class AppData {
   /// Never set by the daily auto-connect path.
   bool resumeConnect;
 
-  NodeInfo? get selected =>
-      (selectedIndex >= 0 && selectedIndex < nodes.length)
-          ? nodes[selectedIndex]
-          : null;
+  UiPreferences ui;
+
+  /// null: legacy unique-source inference; empty: explicit built-in template.
+  String? activeProfileId;
+
+  NodeInfo? get selected => (selectedIndex >= 0 && selectedIndex < nodes.length)
+      ? nodes[selectedIndex]
+      : null;
 
   /// Deep-enough snapshot for the elevated-relaunch rollback: lists
   /// copied, scalars copied (CV007-03/04).
@@ -173,6 +184,8 @@ class AppData {
         cleanExit: cleanExit,
         runningAtExit: runningAtExit,
         resumeConnect: resumeConnect,
+        ui: ui,
+        activeProfileId: activeProfileId,
       );
 }
 
@@ -273,8 +286,7 @@ class Store {
       // Migration: data written before the runningAtExit flag existed
       // had autoConnect mean "always auto-start"; keep that behavior
       // instead of silently never auto-starting after an upgrade.
-      final migratedRunningAtExit =
-          (map['autoConnect'] as bool?) == true;
+      final migratedRunningAtExit = (map['autoConnect'] as bool?) == true;
       return AppData(
         nodes: nodes,
         subscriptions: subscriptions,
@@ -291,6 +303,10 @@ class Store {
         cleanExit: (map['cleanExit'] as bool?) ?? true,
         runningAtExit: runningAtExitRaw ?? migratedRunningAtExit,
         resumeConnect: (map['resumeConnect'] as bool?) ?? false,
+        ui: UiPreferences.fromJson(map['ui']),
+        activeProfileId: map['activeProfileId'] is String
+            ? map['activeProfileId'] as String
+            : null,
       );
     } catch (_) {
       return null;
@@ -332,6 +348,8 @@ class Store {
       'cleanExit': data.cleanExit,
       'runningAtExit': data.runningAtExit,
       'resumeConnect': data.resumeConnect,
+      'ui': data.ui.toJson(),
+      'activeProfileId': data.activeProfileId,
     };
     // Rotation: previous main BECOMES the backup (rename, not copy),
     // then tmp becomes main. An unhealthy main is quarantined as
@@ -453,8 +471,8 @@ String injectClashSecret(String configJson, String secret) {
   final config = jsonDecode(configJson) as Map<String, dynamic>;
   final experimental =
       (config['experimental'] as Map<String, dynamic>?) ?? <String, dynamic>{};
-  final clashApi =
-      (experimental['clash_api'] as Map<String, dynamic>?) ?? <String, dynamic>{};
+  final clashApi = (experimental['clash_api'] as Map<String, dynamic>?) ??
+      <String, dynamic>{};
   clashApi['secret'] = secret;
   experimental['clash_api'] = clashApi;
   config['experimental'] = experimental;

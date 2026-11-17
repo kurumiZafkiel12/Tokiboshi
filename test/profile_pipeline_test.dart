@@ -56,9 +56,9 @@ void main(){
   await t.enterText(fields.first,'root');await t.enterText(fields.last,'https://fixture.example/root');await t.tap(find.text('添加'));await t.pumpAndSettle();
   expect(store.data.subscriptions.single.profileJson,profile);expect(store.data.subscriptions.single.profileState,'parsed');
   store.data.selectedIndex=store.data.nodes.indexWhere((n)=>n.source==store.data.subscriptions.single.id);
-  await t.tap(find.text('仪表盘').first);await t.pumpAndSettle();await t.tap(find.text('启动'));await t.pumpAndSettle();
+  await t.tap(find.text('连接').first);await t.pumpAndSettle();await t.tap(find.text('启动代理'));await t.pumpAndSettle();
   expect(bridge.receivedProfile,profile);expect(bridge.receivedNodes,['fixture']);expect(bridge.running,true);
-  await t.tap(find.text('停止'));await t.pumpAndSettle();await t.tap(find.text('订阅').first);await t.pumpAndSettle();
+  await t.tap(find.text('停止代理'));await t.pumpAndSettle();await t.tap(find.text('订阅').first);await t.pumpAndSettle();
   fetcher.responses['https://fixture.example/root']='plain';await t.tap(find.byTooltip('更新'));await t.pumpAndSettle();
   expect(store.data.subscriptions.single.profileJson,isNull);expect(store.data.subscriptions.single.profileState,'nodes-only');
   await t.pumpWidget(const SizedBox());

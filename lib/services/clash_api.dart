@@ -95,7 +95,7 @@ class ClashApiClient {
       final v = await _request(
         'GET',
         '/proxies/${Uri.encodeComponent(name)}/delay'
-        '?url=${Uri.encodeComponent(url)}&timeout=$timeoutMs',
+            '?url=${Uri.encodeComponent(url)}&timeout=$timeoutMs',
         timeout: Duration(milliseconds: timeoutMs + 2000),
       );
       if (v is Map<String, dynamic>) return (v['delay'] as num?)?.toInt();
@@ -113,4 +113,18 @@ class ClashApiClient {
 
   Future<void> setMode(String mode) =>
       _request('PATCH', '/configs', body: {'mode': mode});
+  Future<Map<String, dynamic>> connections() async =>
+      (await _request('GET', '/connections')) as Map<String, dynamic>;
+
+  Future<List<Map<String, dynamic>>> rules() async {
+    final v = await _request('GET', '/rules');
+    return ((v as Map<String, dynamic>)['rules'] as List? ?? [])
+        .whereType<Map<String, dynamic>>()
+        .toList();
+  }
+
+  Future<void> closeConnections([String? id]) => _request('DELETE',
+      id == null ? '/connections' : '/connections/${Uri.encodeComponent(id)}');
+
+  void close() => _http.close(force: true);
 }

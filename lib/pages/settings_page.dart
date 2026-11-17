@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
 import '../app_version.dart';
+import '../ui/shell_widgets.dart';
+import '../ui/design.dart';
 
 /// Settings: local port, sing-box path, system proxy, about.
 class SettingsPage extends StatefulWidget {
@@ -46,7 +48,8 @@ class SettingsPage extends StatefulWidget {
 }
 
 class _SettingsPageState extends State<SettingsPage> {
-  late final _portController = TextEditingController(text: '${widget.mixedPort}');
+  late final _portController =
+      TextEditingController(text: '${widget.mixedPort}');
   late final _clashPortController =
       TextEditingController(text: '${widget.clashApiPort}');
   late final _pathController = TextEditingController(text: widget.singBoxPath);
@@ -86,8 +89,12 @@ class _SettingsPageState extends State<SettingsPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          const Text('设置', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w600)),
-          const SizedBox(height: 16),
+          const PageHeading('设置', '让 Tokiboshi 适应你的使用习惯。',
+              eyebrow: 'MAKE YOURSELF AT HOME.'),
+          const AppearanceSettings(),
+          const Text('连接与启动',
+              style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+          const SizedBox(height: 12),
           SwitchListTile(
             title: const Text('启动时恢复上次运行状态'),
             subtitle: const Text('仅当上次正常退出时内核在运行才自动连接；崩溃或手动退出后不会自启'),
@@ -133,7 +140,9 @@ class _SettingsPageState extends State<SettingsPage> {
                   ),
                   if (_error != null) ...[
                     const SizedBox(height: 8),
-                    Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
+                    Text(_error!,
+                        style: TextStyle(
+                            color: Theme.of(context).colorScheme.error)),
                   ],
                   const SizedBox(height: 12),
                   Align(
@@ -156,7 +165,8 @@ class _SettingsPageState extends State<SettingsPage> {
                   const Icon(Icons.memory, size: 20),
                   const SizedBox(width: 10),
                   Expanded(
-                    child: Text(widget.coreVersion ?? 'sing-box 内核未下载（首次启动时自动下载）'),
+                    child:
+                        Text(widget.coreVersion ?? 'sing-box 内核未下载（首次启动时自动下载）'),
                   ),
                   OutlinedButton(
                     onPressed: widget.onEnsureCore,
@@ -182,7 +192,8 @@ class _SettingsPageState extends State<SettingsPage> {
               children: [
                 const Padding(
                   padding: EdgeInsets.fromLTRB(16, 14, 16, 2),
-                  child: Text('分流规则', style: TextStyle(fontWeight: FontWeight.w600)),
+                  child: Text('分流规则',
+                      style: TextStyle(fontWeight: FontWeight.w600)),
                 ),
                 const Padding(
                   padding: EdgeInsets.fromLTRB(16, 0, 16, 4),
@@ -193,13 +204,15 @@ class _SettingsPageState extends State<SettingsPage> {
                 ),
                 SwitchListTile(
                   title: const Text('广告拦截'),
-                  subtitle: const Text('广告域名直接拒绝（geosite-category-ads-all 规则集）'),
+                  subtitle:
+                      const Text('广告域名直接拒绝（geosite-category-ads-all 规则集）'),
                   value: widget.blockAds,
                   onChanged: widget.onBlockAdsChanged,
                 ),
                 SwitchListTile(
                   title: const Text('国内直连'),
-                  subtitle: const Text('国内网站与 IP 直连（geosite-cn / geoip-cn 规则集），DNS 同步走本地解析'),
+                  subtitle: const Text(
+                      '国内网站与 IP 直连（geosite-cn / geoip-cn 规则集），DNS 同步走本地解析'),
                   value: widget.bypassCn,
                   onChanged: widget.onBypassCnChanged,
                 ),
@@ -213,12 +226,17 @@ class _SettingsPageState extends State<SettingsPage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text('关于', style: TextStyle(fontWeight: FontWeight.w600)),
+                  const Text('关于',
+                      style: TextStyle(fontWeight: FontWeight.w600)),
                   const SizedBox(height: 8),
-                  const Text('Tokiboshi v$kAppVersion · Flutter 壳 + Rust 中间层 + sing-box 内核'),
-                  const Text('面板为 zashboard（由 sing-box 托管于 127.0.0.1:9090/ui）；内核 sing-box 1.14.4 随安装包提供，缺失时自动下载'),
-                  const SelectableText('项目地址：https://github.com/kurumiZafkiel12/Tokiboshi'),
-                  const SelectableText('问题反馈：https://github.com/kurumiZafkiel12/Tokiboshi/issues'),
+                  const Text(
+                      'Tokiboshi v$kAppVersion · Flutter 壳 + Rust 中间层 + sing-box 内核'),
+                  const Text(
+                      '面板为 zashboard（由 sing-box 托管于 127.0.0.1:9090/ui）；内核 sing-box 1.14.4 随安装包提供，缺失时自动下载'),
+                  const SelectableText(
+                      '项目地址：https://github.com/kurumiZafkiel12/Tokiboshi'),
+                  const SelectableText(
+                      '问题反馈：https://github.com/kurumiZafkiel12/Tokiboshi/issues'),
                   Text('数据文件：${widget.dataFilePath}'),
                 ],
               ),

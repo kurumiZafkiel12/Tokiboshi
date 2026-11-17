@@ -1,0 +1,434 @@
+import 'package:flutter/material.dart';
+import '../bridge/core_bridge.dart';
+import '../services/store.dart';
+import 'design.dart';
+import 'preferences.dart';
+
+String sourceLabel(NodeInfo node, List<Subscription> subscriptions) {
+  final sources = subscriptions.where((s) => s.id == node.source);
+  final source = sources.isEmpty
+      ? (node.source.isEmpty ? '本地导入' : '未知来源')
+      : sources.first.name;
+  return node.group.isEmpty ? source : '$source / ${node.group}';
+}
+
+String regionLabel(NodeInfo node) {
+  final name = node.name.toUpperCase();
+  for (final pair in const [
+    ('日本', 'JP'),
+    ('东京', 'JP'),
+    ('大阪', 'JP'),
+    ('JAPAN', 'JP'),
+    ('🇯🇵', 'JP'),
+    ('香港', 'HK'),
+    ('🇭🇰', 'HK'),
+    ('新加坡', 'SG'),
+    ('SINGAPORE', 'SG'),
+    ('🇸🇬', 'SG'),
+    ('美国', 'US'),
+    ('🇺🇸', 'US'),
+    ('台湾', 'TW'),
+    ('🇹🇼', 'TW'),
+    ('韩国', 'KR'),
+    ('🇰🇷', 'KR'),
+    ('德国', 'DE'),
+    ('🇩🇪', 'DE'),
+    ('英国', 'GB'),
+    ('🇬🇧', 'GB')
+  ]) {
+    if (name.contains(pair.$1)) return pair.$2;
+  }
+  final match = RegExp(r'(^|[^A-Z])(JP|HK|SG|US|TW|KR|DE|GB|AU|CA)([^A-Z]|$)')
+      .firstMatch(name);
+  return match?.group(2) ?? (node.isPolicy ? '组' : '·');
+}
+
+class RegionMark extends StatelessWidget {
+  const RegionMark(this.node, {super.key});
+  final NodeInfo node;
+  @override
+  Widget build(BuildContext context) => Container(
+      width: 31,
+      height: 31,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.surfaceContainerHighest,
+          border: Border.all(color: Theme.of(context).dividerColor),
+          borderRadius: BorderRadius.circular(5)),
+      child: Text(regionLabel(node),
+          style: mono.copyWith(
+              color: Theme.of(context).colorScheme.primary, fontSize: 11)));
+}
+
+class LatencyText extends StatelessWidget {
+  const LatencyText(this.node, this.latency, {super.key});
+  final NodeInfo node;
+  final Map<NodeInfo, int?> latency;
+  @override
+  Widget build(BuildContext context) {
+    final measured = latency.containsKey(node);
+    final ms = latency[node];
+    return Text(
+        !measured
+            ? '未测速'
+            : ms == null
+                ? '超时'
+                : '$ms ms',
+        style: mono.copyWith(
+            color: !measured
+                ? Theme.of(context).colorScheme.onSurfaceVariant
+                : ms == null
+                    ? Theme.of(context).colorScheme.error
+                    : ms < 200
+                        ? good
+                        : gold));
+  }
+}
+
+Future<void> showNodeDetails(BuildContext context, NodeInfo node,
+        List<Subscription> subscriptions, Map<NodeInfo, int?> latency,
+        {VoidCallback? onSelect,
+        VoidCallback? onMeasure,
+        VoidCallback? onDelete}) =>
+    showGeneralDialog<void>(
+        context: context,
+        barrierDismissible: true,
+        barrierLabel: '关闭节点详情',
+        barrierColor: Colors.black54,
+        transitionDuration: UiScope.duration(context, 280),
+        transitionBuilder: (context, a, secondary, child) => SlideTransition(
+            position: Tween(begin: const Offset(1, 0), end: Offset.zero)
+                .animate(
+                    CurvedAnimation(parent: a, curve: Curves.easeOutCubic)),
+            child: child),
+        pageBuilder: (context, _, __) => Align(
+            alignment: Alignment.centerRight,
+            child: Material(
+                color: Theme.of(context).colorScheme.surface,
+                child: SizedBox(
+                    width: 430,
+                    child: SafeArea(
+                        child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                          Padding(
+                              padding:
+                                  const EdgeInsets.fromLTRB(24, 18, 12, 18),
+                              child: Row(children: [
+                                const Expanded(
+                                    child: Text('节点详情',
+                                        style: TextStyle(
+                                            fontSize: 17,
+                                            fontWeight: FontWeight.w600))),
+                                IconButton(
+                                    tooltip: '关闭详情',
+                                    onPressed: () => Navigator.pop(context),
+                                    icon: const Icon(Icons.close))
+                              ])),
+                          Divider(
+                              height: 1, color: Theme.of(context).dividerColor),
+                          Expanded(
+                              child: SingleChildScrollView(
+                                  padding: const EdgeInsets.all(24),
+                                  child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        RegionMark(node),
+                                        const SizedBox(height: 16),
+                                        Text(node.name,
+                                            style: const TextStyle(
+                                                fontSize: 23,
+                                                fontWeight: FontWeight.w600)),
+                                        const SizedBox(height: 10),
+                                        Tag(node.protocol.toUpperCase(),
+                                            color: Theme.of(context)
+                                                .colorScheme
+                                                .primary),
+                                        const SizedBox(height: 28),
+                                        for (final pair in [
+                                          (
+                                            '来源',
+                                            sourceLabel(node, subscriptions)
+                                          ),
+                                          (
+                                            '服务器',
+                                            node.server.isEmpty
+                                                ? '策略组'
+                                                : node.server
+                                          ),
+                                          (
+                                            '端口',
+                                            node.serverPort == 0
+                                                ? '—'
+                                                : '${node.serverPort}'
+                                          ),
+                                          (
+                                            '类型',
+                                            node.isPolicy ? '策略组' : '代理节点'
+                                          ),
+                                          (
+                                            '测速状态',
+                                            latency.containsKey(node)
+                                                ? latency[node] == null
+                                                    ? '超时'
+                                                    : '${latency[node]} ms'
+                                                : '未测速'
+                                          )
+                                        ]) ...[
+                                          Text(pair.$1,
+                                              style: Theme.of(context)
+                                                  .textTheme
+                                                  .bodySmall),
+                                          const SizedBox(height: 6),
+                                          SelectableText(pair.$2),
+                                          const SizedBox(height: 21)
+                                        ],
+                                        const Text('凭据默认隐藏。详情不展示密码、UUID 或完整配置。',
+                                            style: TextStyle(fontSize: 11)),
+                                      ]))),
+                          Padding(
+                              padding: const EdgeInsets.all(20),
+                              child: Wrap(spacing: 8, runSpacing: 8, children: [
+                                if (onSelect != null)
+                                  FilledButton(
+                                      onPressed: () {
+                                        Navigator.pop(context);
+                                        onSelect();
+                                      },
+                                      child: const Text('选择此节点')),
+                                if (onMeasure != null)
+                                  OutlinedButton(
+                                      onPressed: () {
+                                        Navigator.pop(context);
+                                        onMeasure();
+                                      },
+                                      child: const Text('测试延迟')),
+                                if (onDelete != null)
+                                  TextButton(
+                                      onPressed: () {
+                                        Navigator.pop(context);
+                                        onDelete();
+                                      },
+                                      child: Text('删除节点',
+                                          style: TextStyle(
+                                              color: Theme.of(context)
+                                                  .colorScheme
+                                                  .error))),
+                              ]))
+                        ]))))));
+
+class NodePicker extends StatefulWidget {
+  const NodePicker(
+      {super.key,
+      required this.nodes,
+      required this.subscriptions,
+      required this.selectedIndex,
+      required this.latency,
+      required this.onSelect,
+      required this.onManage,
+      required this.onMeasure,
+      this.busy = false,
+      this.requiredSource});
+  final List<NodeInfo> nodes;
+  final List<Subscription> subscriptions;
+  final int selectedIndex;
+  final Map<NodeInfo, int?> latency;
+  final ValueChanged<int> onSelect;
+  final VoidCallback onManage;
+  final Future<void> Function() onMeasure;
+  final bool busy;
+  final String? requiredSource;
+  @override
+  State<NodePicker> createState() => _NodePickerState();
+}
+
+class _NodePickerState extends State<NodePicker> {
+  String _query = '', _source = '';
+  bool _sort = false, _measuring = false;
+  final _search = TextEditingController();
+  @override
+  void dispose() {
+    _search.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final indices = [
+      for (var i = 0; i < widget.nodes.length; i++)
+        if ((widget.requiredSource == null ||
+                widget.nodes[i].source == widget.requiredSource) &&
+            (_source.isEmpty ||
+                (_source == '__local'
+                    ? widget.nodes[i].source.isEmpty
+                    : widget.nodes[i].source == _source)) &&
+            '${widget.nodes[i].name} ${regionLabel(widget.nodes[i])} ${widget.nodes[i].protocol} ${sourceLabel(widget.nodes[i], widget.subscriptions)}'
+                .toLowerCase()
+                .contains(_query))
+          i
+    ];
+    if (_sort)
+      indices.sort((a, b) => (widget.latency[widget.nodes[a]] ?? 0x7fffffff)
+          .compareTo(widget.latency[widget.nodes[b]] ?? 0x7fffffff));
+    return Dialog(
+        insetPadding: const EdgeInsets.all(24),
+        child: SizedBox(
+            width: 760,
+            height: 560,
+            child: Column(children: [
+              Padding(
+                  padding: const EdgeInsets.fromLTRB(22, 18, 12, 12),
+                  child: Row(children: [
+                    const Expanded(
+                        child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                          Text('选择出口节点',
+                              style: TextStyle(
+                                  fontSize: 19, fontWeight: FontWeight.w600)),
+                          SizedBox(height: 5),
+                          Text('运行时选择后立即切换；停止时保存选择',
+                              style: TextStyle(fontSize: 11))
+                        ])),
+                    IconButton(
+                        tooltip: '关闭节点选择',
+                        onPressed: () => Navigator.pop(context),
+                        icon: const Icon(Icons.close))
+                  ])),
+              Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 20),
+                  child: Row(children: [
+                    SizedBox(
+                        width: 150,
+                        child: DropdownButtonFormField<String>(
+                            key: ValueKey(_source),
+                            initialValue: _source,
+                            isExpanded: true,
+                            decoration: const InputDecoration(
+                                contentPadding: EdgeInsets.symmetric(
+                                    horizontal: 10, vertical: 10)),
+                            items: [
+                              const DropdownMenuItem(
+                                  value: '',
+                                  child: Text('全部来源',
+                                      style: TextStyle(fontSize: 12))),
+                              const DropdownMenuItem(
+                                  value: '__local',
+                                  child: Text('本地导入',
+                                      style: TextStyle(fontSize: 12))),
+                              for (final sub in widget.subscriptions)
+                                DropdownMenuItem(
+                                    value: sub.id,
+                                    child: Text(sub.name,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(fontSize: 12)))
+                            ],
+                            onChanged: (v) =>
+                                setState(() => _source = v ?? ''))),
+                    const SizedBox(width: 10),
+                    Expanded(
+                        child: TextField(
+                            controller: _search,
+                            autofocus: true,
+                            decoration: const InputDecoration(
+                                prefixIcon: Icon(Icons.search, size: 17),
+                                hintText: '搜索名称、地区、协议'),
+                            onChanged: (v) =>
+                                setState(() => _query = v.toLowerCase()))),
+                    IconButton(
+                        tooltip: '测速全部',
+                        onPressed: widget.busy || _measuring
+                            ? null
+                            : () async {
+                                setState(() => _measuring = true);
+                                try {
+                                  await widget.onMeasure();
+                                } finally {
+                                  if (mounted)
+                                    setState(() => _measuring = false);
+                                }
+                              },
+                        icon: const Icon(Icons.speed))
+                  ])),
+              Padding(
+                  padding: const EdgeInsets.fromLTRB(22, 14, 20, 8),
+                  child: Row(children: [
+                    Expanded(
+                        child: Text('节点 / 来源  ${indices.length}',
+                            style: Theme.of(context).textTheme.bodySmall)),
+                    TextButton(
+                        onPressed: () => setState(() => _sort = !_sort),
+                        child: Text(_sort ? '延迟 ↑' : '延迟 ↕'))
+                  ])),
+              const Divider(height: 1),
+              Expanded(
+                  child: indices.isEmpty
+                      ? EmptyView('没有匹配节点', '请调整筛选，或先导入订阅',
+                          action: TextButton(
+                              onPressed: () {
+                                _search.clear();
+                                setState(() {
+                                  _query = '';
+                                  _source = '';
+                                });
+                              },
+                              child: const Text('清除筛选')))
+                      : ListView.builder(
+                          itemCount: indices.length,
+                          itemBuilder: (context, row) {
+                            final i = indices[row], node = widget.nodes[i];
+                            return ListTile(
+                                dense: true,
+                                contentPadding: const EdgeInsets.symmetric(
+                                    horizontal: 22, vertical: 3),
+                                leading: RegionMark(node),
+                                title: Text(node.name,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(fontSize: 13)),
+                                subtitle: Text(
+                                    '${node.protocol.toUpperCase()} · ${sourceLabel(node, widget.subscriptions)}',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(fontSize: 10)),
+                                trailing: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      LatencyText(node, widget.latency),
+                                      const SizedBox(width: 16),
+                                      Icon(
+                                          i == widget.selectedIndex
+                                              ? Icons.check_circle
+                                              : Icons.circle_outlined,
+                                          size: 17,
+                                          color: i == widget.selectedIndex
+                                              ? Theme.of(context)
+                                                  .colorScheme
+                                                  .primary
+                                              : null)
+                                    ]),
+                                selected: i == widget.selectedIndex,
+                                onTap: widget.busy
+                                    ? null
+                                    : () {
+                                        Navigator.pop(context);
+                                        widget.onSelect(i);
+                                      });
+                          })),
+              const Divider(height: 1),
+              Padding(
+                  padding: const EdgeInsets.fromLTRB(22, 10, 22, 10),
+                  child: Row(children: [
+                    Text('${indices.length} 个节点与策略',
+                        style: Theme.of(context).textTheme.bodySmall),
+                    const Spacer(),
+                    TextButton(
+                        onPressed: () {
+                          Navigator.pop(context);
+                          widget.onManage();
+                        },
+                        child: const Text('完整节点管理 ↗'))
+                  ]))
+            ])));
+  }
+}
