@@ -23,9 +23,11 @@ Tokiboshi 不提供代理服务器或订阅服务，使用前需要导入自己�
 
 ## 下载与安装
 
+当前为 **0.0.9 修订版 r2（build 10）**：多方式导入、常规设置接线与更细腻的三档动效。完整配置不兼容时需明确选择仅节点，原配置不会被静默替换。
+
 | 平台 | 版本要求 | 下载 |
 | --- | --- | --- |
-| Windows | Windows 10/11，x64 | [![Setup x64](https://img.shields.io/badge/Setup-x64-3d8ba3?style=flat-square)](https://github.com/kurumiZafkiel12/Tokiboshi/releases/download/v0.0.9/Tokiboshi-Setup-0.0.9.exe) [![ZIP x64](https://img.shields.io/badge/ZIP-x64-3d8ba3?style=flat-square)](https://github.com/kurumiZafkiel12/Tokiboshi/releases/download/v0.0.9/Tokiboshi-windows.zip) |
+| Windows | Windows 10/11，x64 | [![Setup x64](https://img.shields.io/badge/Setup-x64-3d8ba3?style=flat-square)](https://github.com/kurumiZafkiel12/Tokiboshi/releases/download/v0.0.9-r2/Tokiboshi-Setup-0.0.9-r2.exe) [![ZIP x64](https://img.shields.io/badge/ZIP-x64-3d8ba3?style=flat-square)](https://github.com/kurumiZafkiel12/Tokiboshi/releases/download/v0.0.9-r2/Tokiboshi-windows.zip) |
 
 安装文件与 SHA256 校验清单（`SHA256SUMS.txt`）均在发布页。安装程序尚未做 Authenticode 签名。
 

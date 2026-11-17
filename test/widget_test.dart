@@ -4,6 +4,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tokiboshi/main.dart';
+import 'package:tokiboshi/ui/import_dialog.dart';
 import 'package:tokiboshi/bridge/core_bridge.dart';
 import 'package:tokiboshi/services/store.dart';
 import 'package:tokiboshi/services/subscription_fetcher.dart';
@@ -138,6 +139,8 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('导入'));
     await tester.pumpAndSettle();
+    await tester.tap(find.text('链接'));
+    await tester.pumpAndSettle();
     await tester.enterText(
       find.byType(TextField).last,
       'ss://aes-256-gcm:pw@127.0.0.1:8388#x',
@@ -153,13 +156,15 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('添加订阅'));
     await tester.pumpAndSettle();
+    await tester.tap(find.text('链接'));
+    await tester.pumpAndSettle();
     final dialogFields = find.descendant(
-      of: find.byType(AlertDialog),
+      of: find.byType(ImportDialog),
       matching: find.byType(TextField),
     );
     await tester.enterText(dialogFields.first, 'TestSub');
     await tester.enterText(dialogFields.last, 'https://sub.example.com/abc');
-    await tester.tap(find.text('添加'));
+    await tester.tap(find.text('导入').last);
     await tester.pumpAndSettle();
     expect(fetcher.requested, ['https://sub.example.com/abc']);
     expect(find.text('TestSub'), findsOneWidget);
@@ -207,6 +212,8 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('导入'));
     await tester.pumpAndSettle();
+    await tester.tap(find.text('链接'));
+    await tester.pumpAndSettle();
     await tester.enterText(
       find.byType(TextField).last,
       'https://sub.example.com/abc',
@@ -246,13 +253,15 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('添加订阅'));
     await tester.pumpAndSettle();
+    await tester.tap(find.text('链接'));
+    await tester.pumpAndSettle();
     final dialogFields = find.descendant(
-      of: find.byType(AlertDialog),
+      of: find.byType(ImportDialog),
       matching: find.byType(TextField),
     );
     await tester.enterText(dialogFields.first, 'HubSub');
     await tester.enterText(dialogFields.last, 'https://hub.example.com/sub');
-    await tester.tap(find.text('添加'));
+    await tester.tap(find.text('导入').last);
     await tester.pumpAndSettle();
     expect(
       fetcher.requested,

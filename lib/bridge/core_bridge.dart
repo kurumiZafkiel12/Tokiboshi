@@ -77,14 +77,19 @@ class ParseOutcome {
     this.skipped = const [],
     this.providers = const [],
     this.failedGroups = const [],
+
     /// T069: serialized ParsedProfile carried by the subscription
     /// (rules / rule-providers / DNS). Null = 仅节点订阅。Requires an
     /// FRB regen before the Rust side actually populates it.
     this.profileJson,
+    this.nodesOnly = false,
   });
 
   /// Serialized ParsedProfile (see rust/src/profile.rs).
   final String? profileJson;
+
+  /// Explicit node-only import, persisted separately from parser output.
+  final bool nodesOnly;
 
   final List<NodeInfo> nodes;
   final List<String> skipped;
@@ -124,7 +129,8 @@ class NodeSpec {
 
 /// Supervision status of the core process.
 class CoreStatus {
-  const CoreStatus({required this.running, this.restartCount = 0, this.lastExit});
+  const CoreStatus(
+      {required this.running, this.restartCount = 0, this.lastExit});
 
   final bool running;
   final int restartCount;
@@ -142,7 +148,9 @@ class EnsureState {
 }
 
 abstract class CoreBridge {
-  Future<String> convertRuleProvider({required String text, required String behavior, required String format});
+  Future<String> convertRuleProvider(
+      {required String text, required String behavior, required String format});
+
   /// Parse one share link into a node.
   Future<NodeInfo> parseShareLink(String link);
 

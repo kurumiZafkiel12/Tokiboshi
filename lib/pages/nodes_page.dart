@@ -5,6 +5,8 @@ import '../services/subscription_resolver.dart';
 import '../ui/design.dart';
 import '../ui/node_widgets.dart';
 import '../ui/preferences.dart';
+import '../ui/import_menu.dart';
+import '../ui/motion.dart';
 
 class NodesPage extends StatefulWidget {
   const NodesPage(
@@ -20,7 +22,8 @@ class NodesPage extends StatefulWidget {
       required this.onImport,
       required this.onMeasureAll,
       this.onCreateChain,
-      this.onMeasureNode});
+      this.onMeasureNode,
+      this.onImportMethod});
   final List<NodeInfo> nodes;
   final List<Subscription> subscriptions;
   final int selectedIndex;
@@ -30,6 +33,7 @@ class NodesPage extends StatefulWidget {
   final VoidCallback onImport, onMeasureAll;
   final VoidCallback? onCreateChain;
   final ValueChanged<NodeInfo>? onMeasureNode;
+  final ValueChanged<String>? onImportMethod;
   @override
   State<NodesPage> createState() => _NodesPageState();
 }
@@ -122,11 +126,12 @@ class _NodesPageState extends State<NodesPage> {
                     onPressed: widget.busy ? null : widget.onMeasureAll,
                     icon: const Icon(Icons.speed, size: 16),
                     label: const Text('测速全部')),
-                FilledButton.icon(
-                    onPressed:
-                        widget.busy || widget.running ? null : widget.onImport,
-                    icon: const Icon(Icons.add, size: 16),
-                    label: const Text('导入'))
+                ImportMenuButton(
+                    label: '导入',
+                    enabled: !widget.busy && !widget.running,
+                    onSelected: (method) => widget.onImportMethod == null
+                        ? widget.onImport()
+                        : widget.onImportMethod!(method))
               ]),
           SingleChildScrollView(
               scrollDirection: Axis.horizontal,
@@ -264,10 +269,41 @@ class _NodesPageState extends State<NodesPage> {
                                   crossAxisSpacing: 10,
                                   mainAxisSpacing: 10),
                           itemCount: items.length,
-                          itemBuilder: (context, row) => _card(items[row]))
+                          itemBuilder: (context, row) => row < 12
+                              ? MotionEntrance(
+                                  order: row,
+                                  child: MotionHover(
+                                      lift: true, child: _card(items[row])))
+                              : _card(items[row]))
                     else ...[
                       const Divider(height: 1),
-                      for (final i in items) _row(i)
+                      if (items.length <= 80)
+                        SizedBox(
+                            height: items.length *
+                                (UiScope.of(context).compact ? 52.0 : 68.0),
+                            child: Stack(children: [
+                              for (var position = 0;
+                                  position < items.length;
+                                  position++)
+                                AnimatedPositioned(
+                                    key: ValueKey('row-${items[position]}'),
+                                    duration: UiScope.duration(context, 320),
+                                    curve: Curves.easeOutCubic,
+                                    left: 0,
+                                    right: 0,
+                                    top: position *
+                                        (UiScope.of(context).compact
+                                            ? 52.0
+                                            : 68.0),
+                                    height:
+                                        UiScope.of(context).compact ? 52 : 68,
+                                    child: MotionEntrance(
+                                        order: position,
+                                        child: MotionHover(
+                                            child: _row(items[position]))))
+                            ]))
+                      else
+                        for (final i in items) _row(i)
                     ]
                   ]));
         });

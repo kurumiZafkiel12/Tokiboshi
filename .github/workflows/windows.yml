@@ -79,6 +79,20 @@ jobs:
       - name: Original-method elevation regression fixtures
         run: python tool/release008/prepare_elevation.py .
 
+      - name: Prepare local TLS and native desktop checks
+        shell: pwsh
+        run: |
+          $openssl = Get-ChildItem 'C:/Program Files/Git' -Filter openssl.exe -Recurse | Select-Object -First 1
+          if (-not $openssl) { throw 'OpenSSL fixture generator missing' }
+          $tls = Join-Path $env:RUNNER_TEMP 'tokiboshi-tls-fixture'
+          New-Item $tls -ItemType Directory -Force | Out-Null
+          & $openssl.FullName req -x509 -newkey rsa:2048 -nodes -keyout "$tls/key.pem" -out "$tls/cert.pem" -days 1 -subj '/CN=localhost' -addext 'subjectAltName=DNS:localhost,IP:127.0.0.1'
+          if ($LASTEXITCODE -ne 0) { throw 'TLS fixture generation failed' }
+          "TOKIBOSHI_TLS_TEST_DIR=$tls" >> $env:GITHUB_ENV
+          "TOKIBOSHI_NATIVE_CHECKS=1" >> $env:GITHUB_ENV
+          "TOKIBOSHI_UI_CAPTURE=$env:RUNNER_TEMP/tokiboshi-release-audit/ui" >> $env:GITHUB_ENV
+          "TOKIBOSHI_UI_FONT=C:/Windows/Fonts/msyh.ttc" >> $env:GITHUB_ENV
+
       - name: Flutter tests
         run: |
           $log = Join-Path $env:RUNNER_TEMP "flutter-test.log"
@@ -115,6 +129,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Native handoff failed' }
           python tool/t069_codegen/runtime_probe.py
           if ($LASTEXITCODE -ne 0) { throw 'Built DLL or route verification failed' }
+          & $env:DART_BIN run tool/reissue009/network_probe.dart
+          if ($LASTEXITCODE -ne 0) { throw 'LAN or proxy/controller authentication verification failed' }
 
       - name: Bundle verified core
         shell: pwsh
@@ -139,7 +155,7 @@ jobs:
           $ver = (Select-String -Path pubspec.yaml -Pattern '^version:\s*([0-9]+\.[0-9]+\.[0-9]+)').Matches[0].Groups[1].Value
           $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
           if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress }
-          & $iscc "/DAppVersion=$ver" installer\tokiboshi.iss
+          & $iscc "/DAppVersion=$ver" "/DOutputSuffix=-r2" installer\tokiboshi.iss
           if ($LASTEXITCODE -ne 0) { throw "ISCC failed with exit code $LASTEXITCODE" }
 
       - uses: actions/upload-artifact@v4

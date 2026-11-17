@@ -6,13 +6,16 @@ library;
 
 import 'dart:convert';
 import 'dart:io';
+import '../app_version.dart';
 
 abstract class SubscriptionFetcher {
   Future<String> fetch(String url, {String? userAgent});
 }
 
 class HttpSubscriptionFetcher implements SubscriptionFetcher {
-  const HttpSubscriptionFetcher();
+  const HttpSubscriptionFetcher({this.verifyTls = true, this.userAgent = ''});
+  final bool verifyTls;
+  final String userAgent;
 
   @override
   Future<String> fetch(String url, {String? userAgent}) async {
@@ -20,14 +23,24 @@ class HttpSubscriptionFetcher implements SubscriptionFetcher {
     if (uri.scheme != 'http' && uri.scheme != 'https') {
       throw const FormatException('订阅链接必须是 http/https');
     }
-    final client = HttpClient()..connectionTimeout = const Duration(seconds: 15);
+    final client = HttpClient()
+      ..connectionTimeout = const Duration(seconds: 15);
+    if (!verifyTls) client.badCertificateCallback = (_, __, ___) => true;
     try {
       final request = await client.getUrl(uri);
-      request.headers.set(HttpHeaders.userAgentHeader, userAgent ?? 'Clash.Meta Tokiboshi/0.5.3');
+      request.headers.set(
+          HttpHeaders.userAgentHeader,
+          userAgent ??
+              (this.userAgent.trim().isEmpty
+                  ? 'Clash.Meta Tokiboshi/$kAppVersion'
+                  : this.userAgent.trim()));
       request.headers.set(HttpHeaders.acceptHeader, '*/*');
-      final response = await request.close().timeout(const Duration(seconds: 30));
+      final response =
+          await request.close().timeout(const Duration(seconds: 30));
       if (response.statusCode < 200 || response.statusCode >= 300) {
-        final challenge = response.headers.value('cf-mitigated') == 'challenge' ? '（Cloudflare 验证）' : '';
+        final challenge = response.headers.value('cf-mitigated') == 'challenge'
+            ? '（Cloudflare 验证）'
+            : '';
         throw HttpException('订阅拉取失败：HTTP ${response.statusCode}$challenge');
       }
       final body = await response
