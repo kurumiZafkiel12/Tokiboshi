@@ -2099,18 +2099,21 @@ class _ShellPageState extends State<ShellPage>
                           ? WindowCaption(
                               brightness: scheme.brightness,
                               backgroundColor: scheme.surfaceContainerLow,
-                              title: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    if (ui.character) ...[
-                                      const Ribbon(size: 16),
-                                      const SizedBox(width: 10)
-                                    ],
-                                    const Text('Tokiboshi · 時の星',
-                                        style: TextStyle(fontSize: 11)),
-                                    const SizedBox(width: 10),
-                                    const Tag('v$kAppVersion')
-                                  ]))
+                              title: DefaultTextStyle.merge(
+                                  // WindowCaption resets DefaultTextStyle, including its font family.
+                                  style: Theme.of(context).textTheme.bodySmall!,
+                                  child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        if (ui.character) ...[
+                                          const Ribbon(size: 16),
+                                          const SizedBox(width: 10)
+                                        ],
+                                        const Text('Tokiboshi · 時の星',
+                                            style: TextStyle(fontSize: 11)),
+                                        const SizedBox(width: 10),
+                                        const Tag('v$kAppVersion')
+                                      ])))
                           : Padding(
                               padding:
                                   const EdgeInsets.symmetric(horizontal: 15),
