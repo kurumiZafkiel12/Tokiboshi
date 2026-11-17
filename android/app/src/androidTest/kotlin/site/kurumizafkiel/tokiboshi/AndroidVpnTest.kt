@@ -34,11 +34,33 @@ class AndroidVpnTest {
         fail("$reason; phase=${VpnState.phase}; error=${VpnState.error}; logs=${VpnState.logs().takeLast(12)}")
     }
     private fun click(label:String){
-        fun find()=device.findObject(By.text(label)) ?: device.findObject(By.desc(label)) ?: device.findObject(By.descContains(label))
+        fun find():androidx.test.uiautomator.UiObject2? {
+            // Flutter navigation descriptions include a tab suffix; broad contains
+            // also matches the disabled "导入节点或订阅" button for "节点".
+            val candidates=(device.findObjects(By.text(label).pkg(context.packageName).enabled(true))+
+                device.findObjects(By.desc(label).pkg(context.packageName).enabled(true))+
+                device.findObjects(By.descStartsWith(label).pkg(context.packageName).enabled(true)))
+            val actionable=candidates.mapNotNull { candidate ->
+                var current:androidx.test.uiautomator.UiObject2?=candidate
+                while(current!=null && !current.isClickable)current=current.parent
+                current?.takeIf{it.isEnabled && !it.visibleBounds.isEmpty}
+            }
+            return if(label in listOf("连接","节点","订阅","设置")) actionable.maxByOrNull{it.visibleBounds.centerY()}
+                else actionable.firstOrNull()
+        }
         var view=find()
+        val deadline=System.currentTimeMillis()+8000
+        while(view==null && System.currentTimeMillis()<deadline){Thread.sleep(200);view=find()}
         if(view==null){for(i in 0..4){device.swipe(device.displayWidth/2,device.displayHeight*3/4,device.displayWidth/2,device.displayHeight/3,25);Thread.sleep(300);view=find();if(view!=null)break}}
         if(view==null){for(i in 0..5){device.swipe(device.displayWidth/2,device.displayHeight/3,device.displayWidth/2,device.displayHeight*3/4,25);Thread.sleep(300);view=find();if(view!=null)break}}
-        (view ?: error("未找到界面操作：$label")).click();device.waitForIdle(3000)
+        if(view==null){
+            val evidence=File(context.getExternalFilesDir(null),"failure").apply{mkdirs()}
+            device.dumpWindowHierarchy(File(evidence,"ui.xml"))
+            device.takeScreenshot(File(evidence,"ui.png"))
+            error("未找到可点击的界面操作：$label")
+        }
+        view.click();device.waitForIdle(3000)
+        Thread.sleep(250)
     }
     private fun http(path:String,authorized:Boolean=true):Pair<Int,String>{
         val conn=URL("http://127.0.0.1:19090$path").openConnection() as HttpURLConnection
