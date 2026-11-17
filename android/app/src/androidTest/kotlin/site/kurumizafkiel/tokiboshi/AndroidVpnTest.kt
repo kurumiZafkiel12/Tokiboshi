@@ -9,6 +9,7 @@ import androidx.test.uiautomator.By
 import androidx.test.uiautomator.UiDevice
 import androidx.test.uiautomator.Until
 import org.junit.Assert.*
+import org.junit.After
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.json.JSONObject
@@ -25,6 +26,13 @@ class AndroidVpnTest {
     private val instrumentation=InstrumentationRegistry.getInstrumentation()
     private val context=instrumentation.targetContext
     private val device=UiDevice.getInstance(instrumentation)
+    @After fun captureDiagnostics(){
+        val directory=File(context.getExternalFilesDir(null),"diagnostics").apply{mkdirs()}
+        File(directory,"vpn-state.json").writeText(JSONObject()
+            .put("phase",VpnState.phase).put("error",VpnState.error)
+            .put("logs",JSONArray(VpnState.logs())).toString(2))
+        runCatching{device.dumpWindowHierarchy(File(directory,"ui.xml"))}
+    }
     private fun shell(command:String):ByteArray=instrumentation.uiAutomation.executeShellCommand(command).use { descriptor ->
         android.os.ParcelFileDescriptor.AutoCloseInputStream(descriptor).use{it.readBytes()}
     }
@@ -125,8 +133,11 @@ class AndroidVpnTest {
             await("运行中切换节点"){runCatching{JSONObject(http("/proxies/proxy").second).getString("now")=="Android Fixture B"}.getOrDefault(false)}
             assertTrue(request().contains("TOKIBOSHI_PROXY_B"));evidence.put("liveNodeSwitch",true)
             click("全局");await("全局模式"){runCatching{JSONObject(http("/configs").second).getString("mode").equals("global",true)}.getOrDefault(false)}
-            assertTrue(request("10.0.2.2",18081).contains("TOKIBOSHI_PROXY_B"))
+            assertTrue("全局模式的非局域网目标必须走所选代理",request().contains("TOKIBOSHI_PROXY_B"))
+            // The no-profile template intentionally routes private IPs before mode rules.
+            assertTrue("全局模式保留局域网直连",request("10.0.2.2",18081).contains("TOKIBOSHI_DIRECT"))
             click("直连");await("直连模式"){runCatching{JSONObject(http("/configs").second).getString("mode").equals("direct",true)}.getOrDefault(false)}
+            assertFalse("直连模式不得把非局域网目标交给代理",request().contains("TOKIBOSHI_PROXY_"))
             assertTrue(request("10.0.2.2",18081).contains("TOKIBOSHI_DIRECT"));evidence.put("globalDirectModes",true)
             click("规则");await("规则模式"){runCatching{JSONObject(http("/configs").second).getString("mode").equals("rule",true)}.getOrDefault(false)}
             device.pressHome();Thread.sleep(1000)
