@@ -63,11 +63,8 @@ class AndroidVpnTest {
         }
     }
     private fun request(target:String="203.0.113.10",port:Int=80):String {
-        val request="GET /android-fixture HTTP/1.1
-\nHost: fixture.example
-\nConnection: close
-\n
-\n"
+        val crlf=13.toChar().toString()+10.toChar()
+        val request=listOf("GET /android-fixture HTTP/1.1","Host: fixture.example","Connection: close","","").joinToString(crlf)
         return exchange("toybox timeout 12 toybox nc -w 8 -q 2 $target $port",request.toByteArray()).toString(Charsets.UTF_8)
     }
     private fun fixtureData(){
