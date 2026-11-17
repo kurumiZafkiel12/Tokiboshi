@@ -3,6 +3,7 @@ import argparse,hashlib,json,os,pathlib,subprocess,tarfile,tempfile
 parser=argparse.ArgumentParser()
 parser.add_argument('--backup',required=True,type=pathlib.Path)
 parser.add_argument('--private-key',required=True,type=pathlib.Path)
+parser.add_argument('--recipient-cert',type=pathlib.Path,default=pathlib.Path(__file__).resolve().with_name('signing-recovery-codex-public.pem'))
 parser.add_argument('--output-dir',required=True,type=pathlib.Path)
 args=parser.parse_args()
 output=args.output_dir.resolve();output.mkdir(parents=True,exist_ok=True);output.chmod(0o700)
@@ -10,7 +11,7 @@ for name in ['tokiboshi-android.jks','signing.json','key.properties']:
  if (output/name).exists():raise SystemExit('Recovery output already contains signing material; use a new private directory')
 with tempfile.TemporaryDirectory(dir=output) as temp:
  directory=pathlib.Path(temp);archive=directory/'decrypted.tar'
- result=subprocess.run(['openssl','cms','-decrypt','-binary','-inform','DER','-in',str(args.backup.resolve()),'-inkey',str(args.private_key.resolve()),'-out',str(archive)],capture_output=True)
+ result=subprocess.run(['openssl','cms','-decrypt','-binary','-inform','DER','-in',str(args.backup.resolve()),'-inkey',str(args.private_key.resolve()),'-recip',str(args.recipient_cert.resolve()),'-out',str(archive)],capture_output=True)
  if result.returncode:raise SystemExit('Signing recovery decryption failed')
  with tarfile.open(archive) as tar:
   members=tar.getmembers();assert sorted(m.name for m in members)==['signing.json','tokiboshi-android.jks']
