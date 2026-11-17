@@ -23,11 +23,12 @@ Tokiboshi 不提供代理服务器或订阅服务，使用前需要导入自己�
 
 ## 下载与安装
 
-当前为 **0.0.9 修订版 r2（build 10）**：多方式导入、常规设置接线与更细腻的三档动效。完整配置不兼容时需明确选择仅节点，原配置不会被静默替换。
+Windows 当前为 **0.0.9 修订版 r2（build 10）**：多方式导入、常规设置接线与更细腻的三档动效。完整配置不兼容时需明确选择仅节点，原配置不会被静默替换。
 
 | 平台 | 版本要求 | 下载 |
 | --- | --- | --- |
 | Windows | Windows 10/11，x64 | [![Setup x64](https://img.shields.io/badge/Setup-x64-3d8ba3?style=flat-square)](https://github.com/kurumiZafkiel12/Tokiboshi/releases/download/v0.0.9-r2/Tokiboshi-Setup-0.0.9-r2.exe) [![ZIP x64](https://img.shields.io/badge/ZIP-x64-3d8ba3?style=flat-square)](https://github.com/kurumiZafkiel12/Tokiboshi/releases/download/v0.0.9-r2/Tokiboshi-windows.zip) |
+| Android | Android 7.0+（API24），三种架构 | [![APK arm64-v8a](https://img.shields.io/badge/APK-arm64--v8a-3DDC84?style=flat-square&logo=android&logoColor=white&labelColor=555555)](https://github.com/kurumiZafkiel12/Tokiboshi/releases/download/v0.0.9-android-r1/Tokiboshi-0.0.9-android-arm64-v8a.apk)<br>[![APK armeabi-v7a](https://img.shields.io/badge/APK-armeabi--v7a-3DDC84?style=flat-square&logo=android&logoColor=white&labelColor=555555)](https://github.com/kurumiZafkiel12/Tokiboshi/releases/download/v0.0.9-android-r1/Tokiboshi-0.0.9-android-armeabi-v7a.apk)<br>[![APK x86_64](https://img.shields.io/badge/APK-x86_64-3DDC84?style=flat-square&logo=android&logoColor=white&labelColor=555555)](https://github.com/kurumiZafkiel12/Tokiboshi/releases/download/v0.0.9-android-r1/Tokiboshi-0.0.9-android-x86_64.apk) |
 
 安装文件与 SHA256 校验清单（`SHA256SUMS.txt`）均在发布页。安装程序尚未做 Authenticode 签名。
 
@@ -36,6 +37,8 @@ Tokiboshi 不提供代理服务器或订阅服务，使用前需要导入自己�
 - 虚拟网卡（TUN）需要以管理员身份运行 Tokiboshi；普通权限下会明确提示，不会静默失败。
 - 节点与设置保存在 `%APPDATA%\Tokiboshi\data.json`，升级覆盖安装不影响数据。
 - 当前版本及历史变化见[发布说明](https://github.com/kurumiZafkiel12/Tokiboshi/releases)。
+
+Android 对应同版功能，使用系统 VPN 和前台服务，应用 build 11；一般手机选择 arm64-v8a，32 位设备选择 armeabi-v7a，x86_64 用于对应设备/模拟器。[Android 构建与验证说明](docs/android.md)。
 
 ## 开发
 

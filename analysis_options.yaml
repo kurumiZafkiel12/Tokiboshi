@@ -5,6 +5,7 @@ analyzer:
     - rust_builder/cargokit/**
     - build/**
     - windows/**
+    - android/**
 
 linter:
   rules:

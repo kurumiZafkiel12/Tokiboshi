@@ -446,16 +446,28 @@ class _ImportDialogState extends State<ImportDialog> {
                                   isExpanded: true,
                                   decoration: const InputDecoration(
                                       labelText: '导入规则方式'),
-                                  items: const [
+                                  items: [
                                     DropdownMenuItem(
                                         value: ImportRouting.smart,
-                                        child: Text('智能：兼容时使用完整配置，不兼容时询问')),
+                                        child: Text(
+                                            MediaQuery.sizeOf(context).width <
+                                                    600
+                                                ? '智能（不兼容时询问）'
+                                                : '智能：兼容时使用完整配置，不兼容时询问')),
                                     DropdownMenuItem(
                                         value: ImportRouting.nodesOnly,
-                                        child: Text('仅导入节点（不使用来源的规则 / DNS）')),
+                                        child: Text(
+                                            MediaQuery.sizeOf(context).width <
+                                                    600
+                                                ? '仅节点（不使用规则 / DNS）'
+                                                : '仅导入节点（不使用来源的规则 / DNS）')),
                                     DropdownMenuItem(
                                         value: ImportRouting.full,
-                                        child: Text('完整配置（不兼容时保留原配置并报告）'))
+                                        child: Text(
+                                            MediaQuery.sizeOf(context).width <
+                                                    600
+                                                ? '完整配置（不兼容时拒绝）'
+                                                : '完整配置（不兼容时保留原配置并报告）'))
                                   ],
                                   onChanged: _working
                                       ? null

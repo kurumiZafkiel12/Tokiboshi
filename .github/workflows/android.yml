@@ -1,0 +1,182 @@
+name: android
+on:
+  push:
+    branches: [main, 'feat/android-*']
+  pull_request:
+  workflow_dispatch:
+concurrency:
+  group: android-${{ github.event.pull_request.head.ref || github.ref_name }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+jobs:
+  libbox:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.5'
+          cache: false
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+      - name: Android NDK and platform
+        run: sdkmanager 'ndk;28.2.13676358' 'platforms;android-36' 'build-tools;36.0.0'
+      - uses: actions/cache@v4
+        id: core-cache
+        with:
+          path: android/app/libs/libbox.aar
+          key: libbox-1.14.4-api24-ndk28.2-${{ hashFiles('tool/android/build_libbox.sh') }}
+      - name: Build pinned upstream libbox for three ABIs
+        if: steps.core-cache.outputs.cache-hit != 'true'
+        run: tool/android/build_libbox.sh
+      - name: Record native core provenance
+        run: |
+          printf 'sing-box 1.14.4 c005f35300ce76427dc285481ec5695f5b179cd2\nGo 1.25.5 / gomobile 0.1.12 / NDK 28.2 / API24\n' > libbox-source-proof.txt
+          sha256sum android/app/libs/libbox.aar >> libbox-source-proof.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Tokiboshi-libbox
+          path: |
+            android/app/libs/libbox.aar
+            libbox-source-proof.txt
+  build:
+    needs: libbox
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      CARGO_BUILD_JOBS: '2'
+      CARGO_TERM_COLOR: never
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.50.0'
+          channel: stable
+          cache: true
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          target: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+      - name: Android build tools and UI test font
+        run: |
+          sdkmanager 'ndk;28.2.13676358' 'platforms;android-36' 'build-tools;36.0.0'
+          sudo apt-get update -qq
+          sudo apt-get install -y fonts-noto-cjk
+      - uses: actions/download-artifact@v4
+        with:
+          name: Tokiboshi-libbox
+          path: build/downloaded-libbox
+      - name: Place verified core archive
+        run: |
+          mkdir -p android/app/libs
+          cp build/downloaded-libbox/android/app/libs/libbox.aar android/app/libs/libbox.aar
+          cp build/downloaded-libbox/libbox-source-proof.txt build/libbox-source-proof.txt
+          sha256sum --check <(tail -1 build/libbox-source-proof.txt)
+      - name: Frozen dependencies and analysis
+        run: |
+          flutter pub get --enforce-lockfile
+          flutter analyze --no-fatal-infos
+      - name: Prove stop-cleanup regression fails on the prior bridge
+        run: |
+          git fetch --no-tags origin 617cd084ef8d8d8575ccd5e5ba6f324c225d532a
+          python3 - <<'PY'
+          import os,pathlib,subprocess
+          source=pathlib.Path('lib/mobile/android_bridge.dart')
+          fixed=source.read_bytes()
+          audit=pathlib.Path(os.environ['RUNNER_TEMP'])/'android-audit'
+          audit.mkdir(parents=True,exist_ok=True)
+          try:
+              source.write_bytes(subprocess.check_output(['git','show','617cd084ef8d8d8575ccd5e5ba6f324c225d532a:lib/mobile/android_bridge.dart']))
+              result=subprocess.run(['flutter','test','--no-pub','test/android_mobile_test.dart','--plain-name','Android stop waits for service cleanup after terminal phase'],capture_output=True,text=True)
+              text=result.stdout+result.stderr
+              (audit/'stop-cleanup-red.log').write_text(text)
+              assert result.returncode != 0 and 'Expected: <3>' in text and 'Actual: <1>' in text,text
+              print('Regression detected the prior early-stop return (1 poll, expected 3).')
+          finally:
+              source.write_bytes(fixed)
+          PY
+      - name: Flutter regression and phone layouts
+        env:
+          TOKIBOSHI_UI_FONT: /usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc
+          TOKIBOSHI_ANDROID_UI_CAPTURE: ${{ runner.temp }}/android-audit/widget-ui
+        run: |
+          mkdir -p "$RUNNER_TEMP/tokiboshi-tls" "$RUNNER_TEMP/android-audit"
+          openssl req -x509 -newkey rsa:2048 -nodes -keyout "$RUNNER_TEMP/tokiboshi-tls/key.pem" -out "$RUNNER_TEMP/tokiboshi-tls/cert.pem" -days 1 -subj '/CN=localhost' -addext 'subjectAltName=DNS:localhost,IP:127.0.0.1'
+          export TOKIBOSHI_TLS_TEST_DIR="$RUNNER_TEMP/tokiboshi-tls"
+          set -o pipefail
+          flutter test --no-pub 2>&1 | tee "$RUNNER_TEMP/android-audit/flutter-tests.log"
+      - name: Build emulator APK with real Rust library
+        run: flutter build apk --debug --no-pub --target-platform android-x64 --build-number 11
+      - name: Enable emulator acceleration
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Real system VPN, Flutter connection, switching, modes, background, DNS and stop
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_2
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -memory 2048
+          script: bash tool/android/emulator_test.sh
+      - name: Verify independent-UID VPN evidence
+        run: |
+          python3 - <<'PY'
+          import json,os,pathlib
+          root=pathlib.Path(os.environ['RUNNER_TEMP'])/'android-audit'
+          result=json.loads(next(root.rglob('android-vpn-results.json')).read_text())
+          for key in ['flutterRustVpnIpv4','vpnIpv6','liveNodeSwitch','globalDirectModes','backgroundForegroundService','cleanStop','repeatConnect','udpDnsHijack','systemRevokeCleanup','systemDestroyCleanup','passed']:
+              assert result.get(key)==True,key
+          assert result['coreVersion']=='1.14.4'
+          events=[json.loads(line) for line in (root/'fixture-events.jsonl').read_text().splitlines()]
+          assert any(e.get('proxy')=='TOKIBOSHI_PROXY_A' and e.get('target')=='203.0.113.10' for e in events)
+          assert any(e.get('proxy')=='TOKIBOSHI_PROXY_B' for e in events)
+          assert any(e['kind']=='dns' for e in events)
+          print('Real system TUN requests verified from independent shell UID.')
+          PY
+      - name: Prepare release signing and encrypted owner recovery backup
+        env:
+          TOKIBOSHI_ANDROID_KEYSTORE_BASE64: ${{ secrets.TOKIBOSHI_ANDROID_KEYSTORE_BASE64 }}
+          TOKIBOSHI_ANDROID_STORE_PASSWORD: ${{ secrets.TOKIBOSHI_ANDROID_STORE_PASSWORD }}
+          TOKIBOSHI_ANDROID_KEY_PASSWORD: ${{ secrets.TOKIBOSHI_ANDROID_KEY_PASSWORD }}
+          TOKIBOSHI_ANDROID_KEY_ALIAS: ${{ secrets.TOKIBOSHI_ANDROID_KEY_ALIAS }}
+        run: python3 tool/android/prepare_signing.py
+      - name: Build three signed release APKs
+        run: flutter build apk --release --split-per-abi --no-pub --build-name 0.0.9 --build-number 11
+      - name: Verify packages, ABI libraries, signature and 16 KiB alignment
+        run: python3 tool/android/verify_apks.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Tokiboshi-Android
+          path: build/android-packages/
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Tokiboshi-Android-audit
+          path: |
+            ${{ runner.temp }}/android-audit/
+            build/app/outputs/androidTest-results/
+            build/app/reports/androidTests/
+            build/libbox-source-proof.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Tokiboshi-Android-encrypted-signing-backup
+          path: build/android-signing-public/
