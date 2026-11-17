@@ -36,7 +36,7 @@ flutter build apk --release --split-per-abi --build-name 0.0.9 --build-number 11
 python3 tool/android/verify_apks.py
 ```
 
-发布Android独立tag v0.0.9-android-r1，应用仍对应0.0.9 r2功能，build11。Windows v0.0.9-r2包/tag不改变，其下载页可追加指向Android发行的三APK按钮，源提交分别记录。
+Android三APK与Windows同挂在v0.0.9-r2发布下（2026-11-18起，原独立tag v0.0.9-android-r1发布已按用户要求删除），应用仍对应0.0.9 r2功能，build11。
 
 ## 许可证
 
