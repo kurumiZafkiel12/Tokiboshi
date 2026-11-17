@@ -72,6 +72,15 @@ class AndroidVpnTest {
         view.click();device.waitForIdle(3000)
         Thread.sleep(250)
     }
+    private fun awaitConnectedUi(){
+        await("Flutter 界面确认 VPN 已连接且可停止"){
+            (device.hasObject(By.text("VPN 已连接").pkg(context.packageName)) ||
+                device.hasObject(By.desc("VPN 已连接").pkg(context.packageName))) &&
+                (device.hasObject(By.text("停止 VPN").pkg(context.packageName).enabled(true)) ||
+                device.hasObject(By.desc("停止 VPN").pkg(context.packageName).enabled(true)))
+        }
+        device.waitForIdle(3000)
+    }
     private fun http(path:String,authorized:Boolean=true):Pair<Int,String>{
         val conn=URL("http://127.0.0.1:19090$path").openConnection() as HttpURLConnection
         conn.connectTimeout=5000;conn.readTimeout=5000
@@ -149,6 +158,7 @@ class AndroidVpnTest {
             Thread.sleep(2500)
             click("启动 VPN")
             await("Flutter → Rust 配置 → Android VPN 启动"){VpnState.phase=="running"}
+            awaitConnectedUi()
             assertEquals(401,http("/version",false).first)
             assertEquals(200,http("/version").first)
             assertTrue(request().contains("TOKIBOSHI_PROXY_A"))
@@ -172,6 +182,7 @@ class AndroidVpnTest {
             click("停止 VPN");await("停止并关闭 VPN"){VpnState.phase=="stopped"&&TokiboshiVpnService.instance==null}
             evidence.put("cleanStop",true)
             click("启动 VPN");await("再次连接且不遗留端口或缓存锁"){VpnState.phase=="running"};assertTrue(request().contains("TOKIBOSHI_PROXY_B"))
+            awaitConnectedUi()
             val images=File(context.getExternalFilesDir(null),"screenshots").apply{mkdirs()};device.takeScreenshot(File(images,"android-connected.png"))
             click("节点");device.takeScreenshot(File(images,"android-nodes.png"));click("设置");device.takeScreenshot(File(images,"android-settings.png"));click("连接")
             click("停止 VPN");await("二次停止"){VpnState.phase=="stopped"&&TokiboshiVpnService.instance==null};evidence.put("repeatConnect",true)
