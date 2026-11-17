@@ -775,12 +775,9 @@ class _ShellPageState extends State<ShellPage>
     final saved = await _persist();
     if (saved) return true;
     if (!mounted) return false;
-    setState(() {
-      _data.nodes = before.nodes;
-      _data.subscriptions = before.subscriptions;
-      _data.selectedIndex = before.selectedIndex;
-      _data.activeProfileId = before.activeProfileId;
-    });
+    // Restore the entire snapshot: this transaction also protects client policies
+    // and backup restoration, not only node/source imports.
+    setState(() => _data = before);
     await _persist();
     _setMessage('导入保存失败，已恢复原节点与来源');
     return false;

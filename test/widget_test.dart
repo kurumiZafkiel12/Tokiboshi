@@ -24,11 +24,11 @@ class MemoryStore extends Store {
   Directory get dir => Directory.systemTemp;
 
   @override
-  Future<AppData> load() async => data;
+  Future<AppData> load() async => data.copyWith();
 
   @override
   Future<void> save(AppData value) async {
-    data = value;
+    data = value.copyWith();
   }
 
   @override

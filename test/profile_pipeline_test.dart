@@ -1,3 +1,4 @@
+import 'package:tokiboshi/pages/nodes_page.dart';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -148,8 +149,11 @@ void main() {
     await t.pumpAndSettle();
     expect(store.data.subscriptions.single.profileJson, profile);
     expect(store.data.subscriptions.single.profileState, 'parsed');
-    store.data.selectedIndex = store.data.nodes
-        .indexWhere((n) => n.source == store.data.subscriptions.single.id);
+    await t.tap(find.text('节点').first);
+    await t.pumpAndSettle();
+    t.widget<NodesPage>(find.byType(NodesPage)).onSelect(store.data.nodes
+        .indexWhere((n) => n.source == store.data.subscriptions.single.id));
+    await t.pumpAndSettle();
     await t.tap(find.text('连接').first);
     await t.pumpAndSettle();
     await t.tap(find.text('启动代理'));

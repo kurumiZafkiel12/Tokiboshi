@@ -5,6 +5,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:tokiboshi/main.dart';
 import 'package:tokiboshi/bridge/core_bridge.dart';
 import 'package:tokiboshi/pages/nodes_page.dart';
+import 'package:tokiboshi/pages/settings_page.dart';
+import 'package:tokiboshi/services/client_preferences.dart';
 import 'package:tokiboshi/services/store.dart';
 import 'package:tokiboshi/services/subscription_fetcher.dart';
 import 'package:tokiboshi/services/system_proxy.dart';
@@ -211,6 +213,39 @@ void main() {
     expect(store.data.selectedIndex, -1);
     await t.pumpWidget(const SizedBox());
   });
+  testWidgets('failed client policy save restores the entire settings snapshot',
+      (t) async {
+    desktop(t);
+    final store = _FailingStore();
+    store.data.autoConnect = false;
+    store.data.desktop = store.data.desktop.copyWith(autoCheckUpdates: false);
+    const original = ClientPreferences(rules: [
+      RoutingRule(
+          kind: 'domain_suffix', value: 'example.test', target: 'reject')
+    ]);
+    store.data.client = original;
+    await t.pumpWidget(TokiboshiApp(
+        bridge: FakeBridge(),
+        store: store,
+        systemProxy: NoopSystemProxy(),
+        allocatePort: (p, r) async => p));
+    await t.pumpAndSettle();
+    await t.tap(find.text('设置').first);
+    await t.pumpAndSettle();
+    store.fail = true;
+    final callback =
+        t.widget<SettingsPage>(find.byType(SettingsPage)).onClientSave!;
+    await expectLater(
+        callback(const ClientPreferences(
+            dnsEnabled: true, dnsEndpoint: 'udp://127.0.0.1:5353')),
+        throwsA(isA<FileSystemException>()));
+    await t.pumpAndSettle();
+    final settings = t.widget<SettingsPage>(find.byType(SettingsPage));
+    expect(settings.client.rules.single.target, 'reject');
+    expect(settings.client.dnsEnabled, false);
+    expect(store.data.client.rules.single.target, 'reject');
+    await t.pumpWidget(const SizedBox());
+  });
   for (final diskFailure in [false, true]) {
     testWidgets(
         'live selection rolls back on ${diskFailure ? 'disk' : 'controller'} failure',
@@ -303,6 +338,6 @@ class _FailingStore extends MemoryStore {
   @override
   Future<void> save(AppData data) async {
     if (fail) throw StateError("synthetic disk failure");
-    await super.save(data);
+    await super.save(data.copyWith());
   }
 }
