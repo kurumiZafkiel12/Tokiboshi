@@ -121,7 +121,7 @@ class _DashboardPageState extends State<DashboardPage> {
                         const SizedBox(height: 12),
                         Row(children: [
                           Expanded(
-                              child: Text('上方查看信息，下方选择连接',
+                              child: Text('查看当前出口、系统接管与实时流量',
                                   style:
                                       Theme.of(context).textTheme.bodySmall)),
                           if (_editing)
@@ -141,12 +141,14 @@ class _DashboardPageState extends State<DashboardPage> {
                               child: Text(_editing ? '完成调整' : '调整组件'))
                         ]),
                         const SizedBox(height: 12),
+                        _controls(context),
+                        const SizedBox(height: 16),
                         LayoutBuilder(builder: (context, grid) {
                           final width =
                               narrow ? grid.maxWidth : (grid.maxWidth - 14) / 2;
                           final columns = narrow ? 1 : 2;
                           return SizedBox(
-                              height: narrow ? 818 : 402,
+                              height: narrow ? 918 : 458,
                               child: Stack(children: [
                                 for (final key in ui.order)
                                   AnimatedPositioned(
@@ -157,9 +159,9 @@ class _DashboardPageState extends State<DashboardPage> {
                                         columns *
                                         (width + 14),
                                     top: (ui.order.indexOf(key) ~/ columns) *
-                                        204.0,
+                                        234.0,
                                     width: width,
-                                    height: 194,
+                                    height: 222,
                                     child: MotionEntrance(
                                         order: ui.order.indexOf(key),
                                         child: MotionHover(
@@ -175,8 +177,6 @@ class _DashboardPageState extends State<DashboardPage> {
                               child: Text('拖动组件，或用箭头调整。状态组件固定在左上。',
                                   style:
                                       Theme.of(context).textTheme.bodySmall)),
-                        const SizedBox(height: 12),
-                        _controls(context),
                       ]));
             }));
   }
@@ -255,9 +255,9 @@ class _DashboardPageState extends State<DashboardPage> {
         ? '—'
         : '${duration.inHours.toString().padLeft(2, '0')}:${(duration.inMinutes % 60).toString().padLeft(2, '0')}:${(duration.inSeconds % 60).toString().padLeft(2, '0')}';
     return SizedBox(
-        height: 190,
+        height: 220,
         child: ClipRRect(
-            borderRadius: BorderRadius.circular(7),
+            borderRadius: BorderRadius.circular(12),
             child: Stack(fit: StackFit.expand, children: [
               Panel(accent: widget.running, child: const SizedBox()),
               Positioned.fill(child: FlowLines(active: widget.running)),
@@ -299,7 +299,7 @@ class _DashboardPageState extends State<DashboardPage> {
                                 : failed
                                     ? '连接失败'
                                     : widget.running
-                                        ? '已连接'
+                                        ? '内核已运行'
                                         : '未连接',
                             style: const TextStyle(
                                 fontSize: 27,
@@ -316,7 +316,7 @@ class _DashboardPageState extends State<DashboardPage> {
                                     : widget.selected == null
                                         ? '导入订阅，选择你的第一个出口节点。'
                                         : widget.running
-                                            ? 'sing-box 正在处理连接。'
+                                            ? '${widget.tun ? 'TUN 已建立' : widget.systemProxy ? '系统代理已启用' : '手动代理'} · 出口连通性以测试结果为准'
                                             : '节点已选好，可以启动。',
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
@@ -328,13 +328,22 @@ class _DashboardPageState extends State<DashboardPage> {
                               child: StatusDot(
                                   widget.selectedMeasured
                                       ? widget.selectedLatency == null
-                                          ? '连通性测试超时'
-                                          : '连通性 ${widget.selectedLatency} ms'
-                                      : '连通性未测试',
-                                  color: widget.selectedMeasured &&
-                                          widget.selectedLatency == null
-                                      ? danger
-                                      : good)),
+                                          ? (widget.running
+                                              ? '连通性测试超时'
+                                              : 'TCP 端口探测失败')
+                                          : '${widget.running ? '连通性' : 'TCP 端口'} ${widget.selectedLatency} ms'
+                                      : (widget.running
+                                          ? '连通性未测试'
+                                          : '未测试 · 连接后可测出口'),
+                                  color: !widget.selectedMeasured
+                                      ? Theme.of(context)
+                                          .colorScheme
+                                          .onSurfaceVariant
+                                      : widget.selectedLatency == null
+                                          ? danger
+                                          : widget.running
+                                              ? good
+                                              : gold)),
                           Text(uptime,
                               style: mono.copyWith(
                                   color: Theme.of(context)
@@ -390,7 +399,7 @@ class _DashboardPageState extends State<DashboardPage> {
     }
 
     return SizedBox(
-        height: 190,
+        height: 220,
         child: Panel(
             child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -431,7 +440,7 @@ class _DashboardPageState extends State<DashboardPage> {
         .where((s) => s.id == widget.activeProfileId)
         .firstOrNull;
     return SizedBox(
-        height: 190,
+        height: 220,
         child: Panel(
             child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -527,7 +536,7 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   Widget _runtime(BuildContext context) => SizedBox(
-      height: 190,
+      height: 220,
       child: Panel(
           child: Column(children: [
         _title('运行详情', _link('日志 ↗', widget.onLogs)),

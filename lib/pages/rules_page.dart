@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import '../services/clash_api.dart';
 import '../services/store.dart';
+import '../services/client_preferences.dart';
 import '../ui/design.dart';
 
 class RulesPage extends StatefulWidget {
@@ -18,11 +19,15 @@ class RulesPage extends StatefulWidget {
       required this.blockAds,
       required this.bypassCn,
       this.dataDir,
-      this.activeProfileId});
+      this.activeProfileId,
+      this.customRules = const [],
+      this.onEdit});
   final List<Subscription> subscriptions;
   final bool running, busy, blockAds, bypassCn;
   final ClashApiClient api;
   final VoidCallback onApply, onSources;
+  final List<RoutingRule> customRules;
+  final VoidCallback? onEdit;
   final String? dataDir;
   final String? activeProfileId;
   @override
@@ -153,6 +158,16 @@ class _RulesPageState extends State<RulesPage> {
       }
       rows.add(['FINAL', '其余流量', 'proxy', '内置模板']);
     }
+    if (!live)
+      rows.insertAll(0, [
+        for (final rule in widget.customRules.where((r) => r.enabled))
+          [
+            RoutingRule.kinds[rule.kind] ?? rule.kind,
+            rule.value,
+            rule.target,
+            '应用自定义 · 待应用'
+          ]
+      ]);
     final unsupported =
         (profile['unsupported'] as List? ?? []).map((e) => '$e').toList();
     return SingleChildScrollView(
@@ -162,6 +177,11 @@ class _RulesPageState extends State<RulesPage> {
           PageHeading('分流规则', '按配置顺序匹配，展示来源与目标。',
               eyebrow: 'KNOW WHERE YOUR TRAFFIC GOES.',
               actions: [
+                if (widget.onEdit != null)
+                  OutlinedButton.icon(
+                      onPressed: widget.busy ? null : widget.onEdit,
+                      icon: const Icon(Icons.tune, size: 16),
+                      label: const Text('自定义规则')),
                 OutlinedButton.icon(
                     onPressed: widget.onSources,
                     icon: const Icon(Icons.inventory_2_outlined, size: 16),
@@ -180,8 +200,8 @@ class _RulesPageState extends State<RulesPage> {
                             : profiles.firstOrNull?.name ?? '内置分流模板',
                         profiles.isEmpty ? '仅节点订阅使用应用模板' : '订阅携带规则与 DNS',
                         c),
-                    _meta('本地规则集', _ready == null ? '尚未读取' : '$_ready / 3 可用',
-                        '应用内置规则集文件；订阅 inline 集另计', c),
+                    _meta('本地规则集', _ready == null ? '尚未读取' : '$_ready / 3 已缓存',
+                        '文件已落盘；是否生效以下方运行规则为准', c),
                     _meta(
                         '应用状态',
                         live

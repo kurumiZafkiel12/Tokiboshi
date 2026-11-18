@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../app_version.dart';
+import '../services/client_preferences.dart';
+import '../ui/client_settings.dart';
 import '../ui/shell_widgets.dart';
 import '../ui/design.dart';
 import '../ui/general_settings.dart';
@@ -34,8 +37,17 @@ class SettingsPage extends StatefulWidget {
     this.updateStatus,
     this.checkingUpdate = false,
     this.onCopyControllerSecret,
+    this.client = const ClientPreferences(),
+    this.onClientSave,
+    this.onBackup,
+    this.onRestore,
+    this.initialSection = 0,
   });
 
+  final int initialSection;
+  final ClientPreferences client;
+  final Future<void> Function(ClientPreferences)? onClientSave;
+  final VoidCallback? onBackup, onRestore;
   final int mixedPort;
   final int clashApiPort;
   final String singBoxPath;
@@ -111,173 +123,213 @@ class _SettingsPageState extends State<SettingsPage> {
     widget.onSave(port, clashPort, _pathController.text.trim());
   }
 
-  @override
-  Widget build(BuildContext context) {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(20),
+  Widget section(Widget child) =>
+      Padding(padding: const EdgeInsets.only(bottom: 16), child: child);
+  Widget scroll(String key, List<Widget> children) => SingleChildScrollView(
+      key: PageStorageKey(key),
+      padding: const EdgeInsets.only(top: 20, bottom: 20),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          const PageHeading('设置', '让 Tokiboshi 适应你的使用习惯。',
-              eyebrow: 'MAKE YOURSELF AT HOME.'),
-          const AppearanceSettings(),
-          const Text('连接与启动',
-              style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
-          const SizedBox(height: 12),
-          GeneralSettings(
-              value: widget.desktop,
-              onChanged: widget.onDesktopChanged ?? (_) {},
-              busy: widget.settingsBusy,
-              autoConnect: widget.autoConnect,
-              onAutoConnectChanged: widget.onAutoConnectChanged,
-              onCheckUpdate: widget.onCheckUpdate ?? () {},
-              onOpenUpdate: widget.onOpenUpdate,
-              updateStatus: widget.updateStatus,
-              checkingUpdate: widget.checkingUpdate,
-              onCopyControllerSecret: widget.onCopyControllerSecret ?? () {}),
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  TextField(
-                    controller: _portController,
-                    enabled: !widget.running,
-                    keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(
-                      labelText: '本地端口（mixed，HTTP/SOCKS 共用）',
-                      border: OutlineInputBorder(),
-                      isDense: true,
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: _clashPortController,
-                    enabled: !widget.running,
-                    keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(
-                      labelText: 'Clash API 端口（面板与控制通道，默认 9090）',
-                      border: OutlineInputBorder(),
-                      isDense: true,
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: _pathController,
-                    enabled: !widget.running,
-                    decoration: const InputDecoration(
-                      labelText: 'sing-box 路径（留空 = 用托管内核，自动下载）',
-                      border: OutlineInputBorder(),
-                      isDense: true,
-                    ),
-                  ),
-                  if (_error != null) ...[
-                    const SizedBox(height: 8),
-                    Text(_error!,
-                        style: TextStyle(
-                            color: Theme.of(context).colorScheme.error)),
-                  ],
-                  const SizedBox(height: 12),
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: FilledButton(
-                      onPressed: widget.running ? null : _save,
-                      child: const Text('保存设置'),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 12),
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Row(
-                children: [
-                  const Icon(Icons.memory, size: 20),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child:
-                        Text(widget.coreVersion ?? 'sing-box 内核未下载（首次启动时自动下载）'),
-                  ),
-                  OutlinedButton(
-                    onPressed: widget.onEnsureCore,
-                    child: const Text('下载/更新内核'),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 12),
-          Card(
-            child: SwitchListTile(
-              title: const Text('系统代理'),
-              subtitle: const Text('启动时写入系统代理（127.0.0.1:本地端口），停止时关闭'),
-              value: widget.systemProxy,
-              onChanged: widget.running ? null : widget.onSystemProxyChanged,
-            ),
-          ),
-          const SizedBox(height: 12),
-          Card(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                const Padding(
-                  padding: EdgeInsets.fromLTRB(16, 14, 16, 2),
-                  child: Text('分流规则',
-                      style: TextStyle(fontWeight: FontWeight.w600)),
-                ),
-                const Padding(
-                  padding: EdgeInsets.fromLTRB(16, 0, 16, 4),
-                  child: Text(
-                    '固定规则：私有/局域网地址直连、其余流量走代理（规则模式下）。下面两项可开关，改动后重启内核生效。',
-                    style: TextStyle(fontSize: 12),
-                  ),
-                ),
-                SwitchListTile(
-                  title: const Text('广告拦截'),
-                  subtitle:
-                      const Text('广告域名直接拒绝（geosite-category-ads-all 规则集）'),
-                  value: widget.blockAds,
-                  onChanged: widget.onBlockAdsChanged,
-                ),
-                SwitchListTile(
-                  title: const Text('国内直连'),
-                  subtitle: const Text(
-                      '国内网站与 IP 直连（geosite-cn / geoip-cn 规则集），DNS 同步走本地解析'),
-                  value: widget.bypassCn,
-                  onChanged: widget.onBypassCnChanged,
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 12),
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text('关于',
-                      style: TextStyle(fontWeight: FontWeight.w600)),
-                  const SizedBox(height: 8),
-                  const Text(
-                      'Tokiboshi · 時の星 v$kAppVersion · 修订 2（build $kAppBuild） · Flutter + Rust + sing-box'),
-                  const Text(
-                      '面板为 zashboard（由 sing-box 托管于 127.0.0.1:9090/ui）；内核 sing-box 1.14.4 随安装包提供，缺失时自动下载'),
-                  const SelectableText(
-                      '项目地址：https://github.com/kurumiZafkiel12/Tokiboshi'),
-                  const SelectableText(
-                      '问题反馈：https://github.com/kurumiZafkiel12/Tokiboshi/issues'),
-                  Text('数据文件：${widget.dataFilePath}'),
-                ],
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
+          crossAxisAlignment: CrossAxisAlignment.stretch, children: children));
+
+  @override
+  Widget build(BuildContext context) => DefaultTabController(
+      key: ValueKey(widget.initialSection),
+      initialIndex: widget.initialSection,
+      length: 4,
+      child: Padding(
+          padding: const EdgeInsets.fromLTRB(22, 20, 22, 0),
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            const PageHeading('设置', '连接、分流与界面偏好，在此集中管理。',
+                eyebrow: 'PREFERENCES / LOCAL WORKSPACE'),
+            const TabBar(
+                isScrollable: true,
+                tabAlignment: TabAlignment.start,
+                tabs: [
+                  Tab(text: '常规与连接'),
+                  Tab(text: '外观动效'),
+                  Tab(text: '分流与 DNS'),
+                  Tab(text: '数据与诊断')
+                ]),
+            Expanded(
+                child: TabBarView(children: [
+              scroll('settings-general', [
+                GeneralSettings(
+                    value: widget.desktop,
+                    onChanged: widget.onDesktopChanged ?? (_) {},
+                    busy: widget.settingsBusy,
+                    autoConnect: widget.autoConnect,
+                    onAutoConnectChanged: widget.onAutoConnectChanged,
+                    onCheckUpdate: widget.onCheckUpdate ?? () {},
+                    onOpenUpdate: widget.onOpenUpdate,
+                    updateStatus: widget.updateStatus,
+                    checkingUpdate: widget.checkingUpdate,
+                    onCopyControllerSecret:
+                        widget.onCopyControllerSecret ?? () {}),
+                const SizedBox(height: 20),
+                Panel(
+                    child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                      const Text('本地监听与内核',
+                          style: TextStyle(
+                              fontSize: 17, fontWeight: FontWeight.w600)),
+                      const SizedBox(height: 16),
+                      TextField(
+                          controller: _portController,
+                          enabled: !widget.running && !widget.settingsBusy,
+                          keyboardType: TextInputType.number,
+                          decoration: const InputDecoration(
+                              labelText: '本地端口（mixed，HTTP/SOCKS 共用）')),
+                      const SizedBox(height: 14),
+                      TextField(
+                          controller: _clashPortController,
+                          enabled: !widget.running && !widget.settingsBusy,
+                          keyboardType: TextInputType.number,
+                          decoration: const InputDecoration(
+                              labelText: 'Clash API 控制器端口')),
+                      const SizedBox(height: 14),
+                      TextField(
+                          controller: _pathController,
+                          enabled: !widget.running && !widget.settingsBusy,
+                          decoration: const InputDecoration(
+                              labelText: 'sing-box 路径（留空使用托管内核）')),
+                      if (_error != null)
+                        Padding(
+                            padding: const EdgeInsets.only(top: 12),
+                            child: Text(_error!,
+                                style: TextStyle(
+                                    color:
+                                        Theme.of(context).colorScheme.error))),
+                      const SizedBox(height: 16),
+                      Align(
+                          alignment: Alignment.centerRight,
+                          child: FilledButton(
+                              onPressed: widget.running || widget.settingsBusy
+                                  ? null
+                                  : _save,
+                              child: const Text('保存设置')))
+                    ])),
+              ]),
+              scroll('settings-appearance', [const AppearanceSettings()]),
+              scroll('settings-routing', [
+                if (widget.onClientSave != null)
+                  ClientSettings(
+                      key: ValueKey(widget.client),
+                      value: widget.client,
+                      onSave: widget.onClientSave!,
+                      busy: widget.settingsBusy),
+                const SizedBox(height: 20),
+                Panel(
+                    child: Column(children: [
+                  const ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: Text('内置规则模板'),
+                      subtitle: Text('仅在使用内置模板时添加以下规则；完整配置保留订阅自身规则。')),
+                  SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('广告拦截'),
+                      subtitle: const Text('广告域名规则集就绪后应用。'),
+                      value: widget.blockAds,
+                      onChanged: widget.settingsBusy
+                          ? null
+                          : widget.onBlockAdsChanged),
+                  SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('国内直连'),
+                      subtitle: const Text('国内域名与 IP 规则集就绪后应用。'),
+                      value: widget.bypassCn,
+                      onChanged: widget.settingsBusy
+                          ? null
+                          : widget.onBypassCnChanged),
+                ]))
+              ]),
+              scroll('settings-data', [
+                section(Panel(
+                    child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                      const Text('备份与恢复',
+                          style: TextStyle(
+                              fontSize: 18, fontWeight: FontWeight.w600)),
+                      const SizedBox(height: 12),
+                      const Text(
+                          '备份节点、订阅、完整配置、分流和界面偏好。不包含内核与缓存；文件含订阅和节点凭据，请妥善保管。'),
+                      const SizedBox(height: 16),
+                      Wrap(spacing: 12, runSpacing: 8, children: [
+                        OutlinedButton.icon(
+                            onPressed:
+                                widget.settingsBusy ? null : widget.onBackup,
+                            icon: const Icon(Icons.download_outlined, size: 17),
+                            label: const Text('导出本地备份')),
+                        OutlinedButton.icon(
+                            onPressed: widget.running || widget.settingsBusy
+                                ? null
+                                : widget.onRestore,
+                            icon: const Icon(Icons.settings_backup_restore,
+                                size: 17),
+                            label: const Text('从备份恢复'))
+                      ]),
+                      if (widget.running)
+                        const Padding(
+                            padding: EdgeInsets.only(top: 10),
+                            child: Text('请停止代理后恢复配置。'))
+                    ]))),
+                section(Panel(
+                    child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                      const Text('内核与诊断',
+                          style: TextStyle(
+                              fontSize: 18, fontWeight: FontWeight.w600)),
+                      const SizedBox(height: 12),
+                      Text(widget.coreVersion ?? '内核尚未就绪'),
+                      const SizedBox(height: 10),
+                      Wrap(spacing: 12, runSpacing: 8, children: [
+                        OutlinedButton.icon(
+                            onPressed: widget.settingsBusy || widget.running
+                                ? null
+                                : widget.onEnsureCore,
+                            icon: const Icon(Icons.system_update_alt, size: 17),
+                            label: const Text('检查内核资源')),
+                        OutlinedButton.icon(
+                            onPressed: () async {
+                              await Clipboard.setData(ClipboardData(
+                                  text:
+                                      'Tokiboshi $kAppVersion (build $kAppBuild)\n内核：${widget.coreVersion ?? '未就绪'}\n状态：${widget.running ? '运行中' : '已停止'}\nMixed：${widget.mixedPort} / Controller：${widget.clashApiPort}'));
+                              if (context.mounted)
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(
+                                        content: Text('诊断概况已复制，不含订阅或节点凭据')));
+                            },
+                            icon: const Icon(Icons.copy_outlined, size: 17),
+                            label: const Text('复制诊断概况'))
+                      ]),
+                      const SizedBox(height: 16),
+                      Text('数据位置：${widget.dataFilePath}',
+                          style: Theme.of(context).textTheme.bodySmall)
+                    ]))),
+                section(const Panel(
+                    child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                      Text('Tokiboshi · 時の星',
+                          style: TextStyle(
+                              fontSize: 19, fontWeight: FontWeight.w600)),
+                      SizedBox(height: 8),
+                      Text('v$kAppVersion · build $kAppBuild · Windows'),
+                      SizedBox(height: 12),
+                      SelectableText(
+                          '项目：https://github.com/kurumiZafkiel12/Tokiboshi'),
+                      SizedBox(height: 6),
+                      SelectableText(
+                          '反馈：https://github.com/kurumiZafkiel12/Tokiboshi/issues'),
+                      SizedBox(height: 14),
+                      Text(
+                          '应用快捷键：Ctrl K 查找节点 · Ctrl I 导入 · Ctrl , 设置\n所有快捷键仅在应用窗口内生效。',
+                          style: TextStyle(fontSize: 12))
+                    ])))
+              ])
+            ]))
+          ])));
 }

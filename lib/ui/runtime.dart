@@ -97,7 +97,9 @@ class RuntimeMonitor extends ChangeNotifier {
   }
 
   Future<void> closeConnections([String? id]) async {
-    await _api?.closeConnections(id);
+    final api = _api;
+    if (api == null) throw StateError('控制器未连接，无法关闭请求');
+    await api.closeConnections(id);
     await sample();
   }
 

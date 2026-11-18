@@ -1,6 +1,11 @@
 import 'package:flutter/material.dart';
 
 import 'dart:async';
+import 'package:file_selector/file_selector.dart';
+import 'services/client_preferences.dart';
+import 'services/config_backup.dart';
+import 'services/node_selection.dart';
+import 'ui/subscription_editor.dart';
 import 'dart:io';
 import 'package:flutter/services.dart';
 import 'ui/preferences.dart';
@@ -311,6 +316,7 @@ class _ShellPageState extends State<ShellPage>
   bool _busy = false;
   bool _measuring = false;
   int _page = 0;
+  int _settingsSection = 0;
   bool _navCollapsed = false;
   String? _message;
   String? _coreVersion;
@@ -318,6 +324,9 @@ class _ShellPageState extends State<ShellPage>
   String? _lastExit;
   String? _clashMode;
   Timer? _statusTimer;
+  Timer? _subscriptionTimer;
+  bool _scheduledBusy = false;
+  final Map<String, DateTime> _lastSourceAttempt = {};
   final Map<NodeInfo, int?> _latency = {};
 
   DateTime? _coreDownSince;
@@ -352,6 +361,7 @@ class _ShellPageState extends State<ShellPage>
   @override
   void dispose() {
     _statusTimer?.cancel();
+    _subscriptionTimer?.cancel();
     widget.appearance.removeListener(_appearanceChanged);
     _demandTimer?.cancel();
     _monitor.dispose();
@@ -366,6 +376,8 @@ class _ShellPageState extends State<ShellPage>
   }
 
   Future<void> _load() async {
+    _subscriptionTimer ??= Timer.periodic(
+        const Duration(seconds: 30), (_) => unawaited(_scheduledUpdates()));
     final data = await widget.store.load();
     final running = await widget.bridge.coreRunning();
     if (!mounted) return;
@@ -472,6 +484,7 @@ class _ShellPageState extends State<ShellPage>
         final downFor = DateTime.now().difference(_coreDownSince!);
         if (_userStopped || downFor > const Duration(seconds: 8)) {
           _running = false;
+          _latency.clear();
           _clashMode = null;
           _coreDownSince = null;
           changed = true;
@@ -599,7 +612,8 @@ class _ShellPageState extends State<ShellPage>
   Future<ParseOutcome> _fetchParseExpand(String url,
       {String? content,
       bool nodesOnly = false,
-      ImportRouting routing = ImportRouting.smart}) async {
+      ImportRouting routing = ImportRouting.smart,
+      bool interactive = true}) async {
     final fetcher = widget.fetcher is HttpSubscriptionFetcher
         ? HttpSubscriptionFetcher(
             verifyTls: _data.desktop.verifyTls,
@@ -619,7 +633,7 @@ class _ShellPageState extends State<ShellPage>
         throw const FormatException('没有识别到可用节点，请检查内容和来源诊断');
       return outcome;
     } on ProfileCompatibilityException catch (e) {
-      if (routing == ImportRouting.full) rethrow;
+      if (routing == ImportRouting.full || !interactive) rethrow;
       if (!e.nodesOnlyOutcome.nodes.any((n) => !n.isPolicy)) rethrow;
       if (!mounted) rethrow;
       final accepted = await showDialog<bool>(
@@ -761,12 +775,9 @@ class _ShellPageState extends State<ShellPage>
     final saved = await _persist();
     if (saved) return true;
     if (!mounted) return false;
-    setState(() {
-      _data.nodes = before.nodes;
-      _data.subscriptions = before.subscriptions;
-      _data.selectedIndex = before.selectedIndex;
-      _data.activeProfileId = before.activeProfileId;
-    });
+    // Restore the entire snapshot: this transaction also protects client policies
+    // and backup restoration, not only node/source imports.
+    setState(() => _data = before);
     await _persist();
     _setMessage('导入保存失败，已恢复原节点与来源');
     return false;
@@ -850,7 +861,9 @@ class _ShellPageState extends State<ShellPage>
   }
 
   Future<void> _updateSubscription(Subscription sub,
-      {bool retryFull = false}) async {
+      {bool retryFull = false, bool automatic = false}) async {
+    if (_busy || _profileChanging || _settingsBusy || _running) return;
+    _lastSourceAttempt[sub.id] = DateTime.now();
     final before = _data.copyWith();
     setState(() {
       _busy = true;
@@ -870,7 +883,8 @@ class _ShellPageState extends State<ShellPage>
       final outcome = await _fetchParseExpand(sub.url,
           content: content,
           nodesOnly: !retryFull && sub.nodesOnly,
-          routing: retryFull ? ImportRouting.full : ImportRouting.smart);
+          routing: retryFull ? ImportRouting.full : ImportRouting.smart,
+          interactive: !automatic);
       String? previousActive;
       try {
         previousActive = activeProfile(_data)?.id;
@@ -905,6 +919,9 @@ class _ShellPageState extends State<ShellPage>
                   nodesOnly: outcome.nodesOnly,
                   localPath: s.localPath,
                   inlineContent: s.inlineContent,
+                  refreshMinutes: s.refreshMinutes,
+                  lastError: null,
+                  lastAttemptAt: DateTime.now().toIso8601String(),
                   profileJson: outcome.profileJson,
                   profileState:
                       outcome.profileJson == null ? 'nodes-only' : 'parsed',
@@ -917,21 +934,33 @@ class _ShellPageState extends State<ShellPage>
         if (selected != null && !selectedFromSub) {
           _data.selectedIndex = _data.nodes.indexOf(selected);
         } else if (selectedFromSub) {
-          final idx = _data.nodes.indexWhere(
-            (n) => n.source == sub.id && n.name == selected.name,
-          );
-          _data.selectedIndex = idx >= 0 ? idx : (_data.nodes.isEmpty ? -1 : 0);
+          final idx = restoredNodeIndex(selected,
+              before.nodes.where((n) => n.source == sub.id).toList(), fresh);
+          _data.selectedIndex = idx < 0 ? -1 : _data.nodes.indexOf(fresh[idx]);
         }
         _message = _compose('正在保存订阅「${sub.name}」…');
       });
       if (!await _persistImport(before)) return;
       _setMessage(
-          '订阅「${sub.name}」已更新：${fresh.where((n) => !n.isPolicy).length} 个节点${_skippedNote(outcome.skipped)}');
+          '订阅「${sub.name}」已更新：${fresh.where((n) => !n.isPolicy).length} 个节点${_skippedNote(outcome.skipped)}${selectedFromSub && _data.selectedIndex < 0 ? '；原出口已变化或存在歧义，请重新选择节点' : ''}');
     } on ImportCancelled {
       _importCancelling = true;
       _setMessage('已取消更新，原配置保留');
     } catch (e) {
-      _setMessage('订阅更新失败：${redactDiagnostics('$e')}');
+      final failure = redactDiagnostics('$e');
+      if (mounted) {
+        setState(() => _data.subscriptions = [
+              for (final source in before.subscriptions)
+                if (source.id == sub.id)
+                  source.copyWith(
+                      lastError: failure,
+                      lastAttemptAt: DateTime.now().toIso8601String())
+                else
+                  source
+            ]);
+        await _persistImport(before);
+      }
+      _setMessage('订阅更新失败，保留上次有效配置：$failure');
     } finally {
       if (mounted)
         setState(() {
@@ -943,6 +972,8 @@ class _ShellPageState extends State<ShellPage>
   }
 
   Future<void> _deleteSubscription(Subscription sub) async {
+    if (_busy || _running || _profileChanging || _settingsBusy) return;
+    final before = _data.copyWith();
     final selected = _data.selected;
     setState(() {
       _data.subscriptions = [
@@ -958,7 +989,7 @@ class _ShellPageState extends State<ShellPage>
           : _data.nodes.indexOf(selected);
       _message = _compose('订阅「${sub.name}」已删除');
     });
-    await _persist();
+    await _persistImport(before);
   }
 
   // ---- nodes ----
@@ -971,12 +1002,15 @@ class _ShellPageState extends State<ShellPage>
   }
 
   Future<void> _selectNode(int index) async {
-    if (_profileChanging) {
-      _setMessage('配置选择正在保存，请稍候');
-      return;
-    }
+    if (_busy ||
+        _profileChanging ||
+        _settingsBusy ||
+        index < 0 ||
+        index >= _data.nodes.length) return;
+    final before = _data.copyWith();
+    final node = _data.nodes[index];
     try {
-      if (!profileNodes(_data).contains(_data.nodes[index])) {
+      if (!profileNodes(_data).contains(node)) {
         _setMessage('该节点不属于当前完整配置，请先在工作台切换配置');
         return;
       }
@@ -984,26 +1018,60 @@ class _ShellPageState extends State<ShellPage>
       _setMessage(e.message);
       return;
     }
-
-    setState(() => _data.selectedIndex = index);
-    await _persist();
-    // While the core runs, switch the selector live through the
-    // Clash API (node tags are assigned from names). If the live
-    // switch fails, the choice still applies on the next start via
-    // the generated config's selector default.
-    if (_running && index >= 0 && index < _data.nodes.length) {
-      final node = _data.nodes[index];
+    String? previousTag;
+    bool attempted = false;
+    final live = _running;
+    setState(() => _settingsBusy = true);
+    Future<void> rollbackLive() async {
+      if (!live || !attempted || previousTag == null) return;
+      attempted = false;
       try {
-        await _clash.select('proxy', _nodeTag(node));
-        _setMessage('已切换到 ${node.name}');
+        await _clash.select('proxy', previousTag);
       } catch (_) {
-        _setMessage('已选中 ${node.name}（重启内核后生效）');
+        await widget.bridge.stopCore();
+        await widget.systemProxy.apply(false, _data.mixedPort);
+        if (mounted) setState(() => _running = false);
+        throw StateError('无法回滚出口，已停止代理，请重新连接');
       }
     }
-    _refreshTray();
+
+    try {
+      if (live) {
+        previousTag = await _clash.selectedOf('proxy');
+        if (previousTag == null) throw const FormatException('无法确认当前出口');
+        attempted = true;
+        await _clash.select('proxy', _nodeTag(node));
+      }
+      if (!mounted) return;
+      setState(() => _data.selectedIndex = index);
+      if (!await _persistImport(before)) {
+        await rollbackLive();
+        return;
+      }
+      _setMessage(live ? '已切换到 ${node.name}' : '已选择 ${node.name}');
+      _refreshTray();
+    } catch (e) {
+      if (mounted) setState(() => _data = before);
+      try {
+        await rollbackLive();
+      } catch (rollbackError) {
+        _setMessage('切换失败：${redactDiagnostics('$rollbackError')}');
+        return;
+      }
+      _setMessage('切换失败，原出口保留：${redactDiagnostics('$e')}');
+    } finally {
+      if (mounted) setState(() => _settingsBusy = false);
+    }
   }
 
   Future<void> _deleteNode(int index) async {
+    if (_busy ||
+        _running ||
+        _profileChanging ||
+        _settingsBusy ||
+        index < 0 ||
+        index >= _data.nodes.length) return;
+    final before = _data.copyWith();
     setState(() {
       _data.nodes = [..._data.nodes]..removeAt(index);
       if (_data.selectedIndex == index) {
@@ -1012,7 +1080,7 @@ class _ShellPageState extends State<ShellPage>
         _data.selectedIndex -= 1;
       }
     });
-    await _persist();
+    await _persistImport(before);
   }
 
   static const _udpProtocols = {'hysteria', 'hysteria2', 'tuic'};
@@ -1034,7 +1102,8 @@ class _ShellPageState extends State<ShellPage>
     }
     _measuring = true;
     final ms = _running
-        ? await _clash.delay(_nodeTag(node))
+        ? await _clash.delay(_nodeTag(node),
+            url: _data.client.testUrl, timeoutMs: _data.client.testTimeoutMs)
         : await tcpLatency(node.server, node.serverPort);
     _measuring = false;
     if (mounted) setState(() => _latency[node] = ms);
@@ -1052,7 +1121,8 @@ class _ShellPageState extends State<ShellPage>
         continue;
       }
       final ms = _running
-          ? await _clash.delay(_nodeTag(node))
+          ? await _clash.delay(_nodeTag(node),
+              url: _data.client.testUrl, timeoutMs: _data.client.testTimeoutMs)
           : await tcpLatency(node.server, node.serverPort);
       if (!mounted) {
         _measuring = false;
@@ -1289,6 +1359,7 @@ class _ShellPageState extends State<ShellPage>
         await widget.systemProxy.apply(false, _data.mixedPort);
         setState(() {
           _running = false;
+          _latency.clear();
           _clashMode = null;
           _message = '已停止';
         });
@@ -1362,12 +1433,10 @@ class _ShellPageState extends State<ShellPage>
       final selected = _data.selected;
       final profile = activeProfile(_data);
       final configNodes = profileNodes(_data);
-      if (profile != null && selected == null) {
+      if (selected == null) {
         throw const FormatException('请先选择激活配置中的出口节点');
       }
-      if (profile != null &&
-          selected != null &&
-          selected.source != profile.id) {
+      if (profile != null && selected.source != profile.id) {
         throw const FormatException('当前节点不属于规则订阅，请选择该订阅的节点或策略组');
       }
       final config = await widget.bridge.buildConfig(
@@ -1380,15 +1449,17 @@ class _ShellPageState extends State<ShellPage>
         blockAds: _data.blockAds,
         bypassCn: _data.bypassCn,
         dataDir: _dataDir,
-        selectedName: selected == null
-            ? null
-            : assignNodeTags(
-                configNodes.map((n) => n.name))[configNodes.indexOf(selected)],
+        selectedName: assignNodeTags(
+            configNodes.map((n) => n.name))[configNodes.indexOf(selected)],
         profileJson: profile?.profileJson ?? '',
       );
       final configFile = await widget.store.writeRuntimeConfig(
-          applyNetworkSettings(
-              injectClashSecret(config, _data.clashApiSecret), _data.desktop));
+          applyClientPreferences(
+              applyNetworkSettings(
+                  injectClashSecret(config, _data.clashApiSecret),
+                  _data.desktop),
+              _data.client,
+              hasProfile: profile != null));
       _checkConnectCancelled();
       // Rule-set downloads run in the background after app start; if
       // they have not landed yet this config carries no 分流 rules.
@@ -1417,6 +1488,7 @@ class _ShellPageState extends State<ShellPage>
       }
       setState(() {
         _running = true;
+        _latency.clear();
         _restartCount = 0;
         _lastExit = null;
         _message = _compose(
@@ -1856,6 +1928,9 @@ class _ShellPageState extends State<ShellPage>
           onUpdate: _updateSubscription,
           onDelete: _deleteSubscription,
           onUpdateAll: _updateAllSubscriptions,
+          onEdit: _editSubscription,
+          activeProfileId: _effectiveProfileId,
+          onActivate: _activateProfile,
         );
       case 4:
         page = LogsPage(
@@ -1871,6 +1946,12 @@ class _ShellPageState extends State<ShellPage>
             });
       case 6:
         page = RulesPage(
+            activeProfileId: _effectiveProfileId,
+            customRules: _data.client.rules,
+            onEdit: () => setState(() {
+                  _settingsSection = 2;
+                  _page = 5;
+                }),
             subscriptions: _data.subscriptions,
             running: _running,
             busy: _busy || _profileChanging || _settingsBusy,
@@ -1884,9 +1965,14 @@ class _ShellPageState extends State<ShellPage>
         page = ConnectionsPage(monitor: _monitor, running: _running);
       case 5:
         page = SettingsPage(
+          initialSection: _settingsSection,
           mixedPort: _data.mixedPort,
           clashApiPort: _data.clashApiPort,
           singBoxPath: _data.singBoxPath,
+          client: _data.client,
+          onClientSave: _saveClientPreferences,
+          onBackup: _exportBackup,
+          onRestore: _restoreBackup,
           systemProxy: _data.systemProxy,
           autoConnect: _data.autoConnect,
           onAutoConnectChanged: (value) {
@@ -1975,10 +2061,25 @@ class _ShellPageState extends State<ShellPage>
     return Shortcuts(
         shortcuts: {
           LogicalKeySet(LogicalKeyboardKey.control, LogicalKeyboardKey.keyK):
-              const _FindNodeIntent()
+              const _FindNodeIntent(),
+          LogicalKeySet(LogicalKeyboardKey.control, LogicalKeyboardKey.keyI):
+              const _ImportIntent(),
+          LogicalKeySet(LogicalKeyboardKey.control, LogicalKeyboardKey.comma):
+              const _SettingsIntent()
         },
         child: Actions(
             actions: {
+              _ImportIntent: CallbackAction<_ImportIntent>(onInvoke: (_) {
+                _importDialog();
+                return null;
+              }),
+              _SettingsIntent: CallbackAction<_SettingsIntent>(onInvoke: (_) {
+                setState(() {
+                  _settingsSection = 0;
+                  _page = 5;
+                });
+                return null;
+              }),
               _FindNodeIntent: CallbackAction<_FindNodeIntent>(onInvoke: (_) {
                 _showNodePicker();
                 return null;
@@ -1998,18 +2099,21 @@ class _ShellPageState extends State<ShellPage>
                           ? WindowCaption(
                               brightness: scheme.brightness,
                               backgroundColor: scheme.surfaceContainerLow,
-                              title: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    if (ui.character) ...[
-                                      const Ribbon(size: 16),
-                                      const SizedBox(width: 10)
-                                    ],
-                                    const Text('Tokiboshi · 時の星',
-                                        style: TextStyle(fontSize: 11)),
-                                    const SizedBox(width: 10),
-                                    const Tag('v$kAppVersion · r2')
-                                  ]))
+                              title: DefaultTextStyle.merge(
+                                  // WindowCaption resets DefaultTextStyle, including its font family.
+                                  style: Theme.of(context).textTheme.bodySmall!,
+                                  child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        if (ui.character) ...[
+                                          const Ribbon(size: 16),
+                                          const SizedBox(width: 10)
+                                        ],
+                                        const Text('Tokiboshi · 時の星',
+                                            style: TextStyle(fontSize: 11)),
+                                        const SizedBox(width: 10),
+                                        const Tag('v$kAppVersion')
+                                      ])))
                           : Padding(
                               padding:
                                   const EdgeInsets.symmetric(horizontal: 15),
@@ -2021,7 +2125,7 @@ class _ShellPageState extends State<ShellPage>
                                 const Text('Tokiboshi · 時の星',
                                     style: TextStyle(fontSize: 11)),
                                 const SizedBox(width: 10),
-                                const Tag('v$kAppVersion · r2'),
+                                const Tag('v$kAppVersion'),
                                 const Spacer(),
                                 Text('WINDOWS CLIENT',
                                     style: mono.copyWith(
@@ -2035,7 +2139,7 @@ class _ShellPageState extends State<ShellPage>
                     return Row(children: [
                       AnimatedContainer(
                           duration: UiScope.duration(context),
-                          width: collapsed ? 66 : 172,
+                          width: collapsed ? 68 : 220,
                           decoration: BoxDecoration(
                               color: scheme.surfaceContainerLow,
                               border: Border(
@@ -2334,33 +2438,11 @@ class _ShellPageState extends State<ShellPage>
                                 onProbe: () {
                                   if (selected != null) _measureNode(selected);
                                 },
-                                onRestart: _restartCore),
+                                onRestart: _restartCore,
+                                monitor: _monitor),
                           ]))
                     ]);
                   })),
-                  Container(
-                      height: 27,
-                      padding: const EdgeInsets.symmetric(horizontal: 14),
-                      decoration: BoxDecoration(
-                          color: scheme.surfaceContainerLow,
-                          border:
-                              Border(top: BorderSide(color: scheme.outline))),
-                      child: Row(children: [
-                        StatusDot(_running ? '内核运行中' : '内核已停止',
-                            color: _running ? good : scheme.onSurfaceVariant),
-                        const SizedBox(width: 16),
-                        Text(
-                            'MIXED  ${_data.mixedPort}    ${_clashMode?.toUpperCase() ?? '—'}',
-                            style: mono.copyWith(
-                                fontSize: 9, color: scheme.onSurfaceVariant)),
-                        const Spacer(),
-                        if (_saveFailed)
-                          const StatusDot('配置保存失败', color: danger)
-                        else
-                          Text('本地工作空间',
-                              style: mono.copyWith(
-                                  fontSize: 9, color: scheme.onSurfaceVariant)),
-                      ])),
                 ])))));
   }
 
@@ -2485,6 +2567,147 @@ class _ShellPageState extends State<ShellPage>
             onMeasure: _measureAll));
   }
 
+  Future<void> _scheduledUpdates() async {
+    if (!_loaded ||
+        !mounted ||
+        _scheduledBusy ||
+        _busy ||
+        _running ||
+        _settingsBusy ||
+        _profileChanging ||
+        _quitting) return;
+    _scheduledBusy = true;
+    try {
+      for (final source in List.of(_data.subscriptions)) {
+        if (!mounted || _running || _busy || _settingsBusy || _profileChanging)
+          break;
+        if (source.refreshMinutes <= 0) continue;
+        final last = _lastSourceAttempt[source.id] ??
+            DateTime.tryParse(source.lastAttemptAt ?? '') ??
+            DateTime.tryParse(source.updatedAt ?? '');
+        if (last != null &&
+            DateTime.now().difference(last).inMinutes < source.refreshMinutes)
+          continue;
+        await _updateSubscription(source, automatic: true);
+      }
+    } finally {
+      _scheduledBusy = false;
+    }
+  }
+
+  Future<void> _editSubscription(Subscription source) async {
+    if (_busy || _running || _settingsBusy || _profileChanging) return;
+    setState(() => _profileChanging = true);
+    try {
+      await editSubscription(context, source, onSave: (next) async {
+        if (!mounted) throw StateError('窗口已关闭');
+        final before = _data.copyWith();
+        setState(() => _data.subscriptions = [
+              for (final sub in _data.subscriptions)
+                if (sub.id == next.id) next else sub
+            ]);
+        if (!await _persistImport(before))
+          throw const FileSystemException('保存失败，原配置保留，请重试');
+        _lastSourceAttempt[next.id] = DateTime.now();
+        _setMessage('订阅设置已保存，节点保留；更新后读取新来源');
+      });
+    } finally {
+      if (mounted) setState(() => _profileChanging = false);
+    }
+  }
+
+  Future<void> _saveClientPreferences(ClientPreferences value) async {
+    if (_busy || _profileChanging || _settingsBusy)
+      throw StateError('其他操作正在进行，请稍后保存');
+    value.validate();
+    final before = _data.copyWith();
+    setState(() {
+      _settingsBusy = true;
+      _data.client = value;
+    });
+    try {
+      if (!await _persistImport(before))
+        throw const FileSystemException('设置保存失败，原配置保留');
+      _setMessage('分流、DNS 与测速设置已保存；分流和 DNS 在下次启动时应用');
+    } finally {
+      if (mounted) setState(() => _settingsBusy = false);
+    }
+  }
+
+  Future<void> _exportBackup() async {
+    if (_busy || _profileChanging || _settingsBusy) return;
+    setState(() => _settingsBusy = true);
+    File? temporary;
+    try {
+      final location = await getSaveLocation(
+          suggestedName:
+              'Tokiboshi-backup-${DateTime.now().toIso8601String().split('T').first}.json',
+          acceptedTypeGroups: [
+            const XTypeGroup(label: 'Tokiboshi 备份', extensions: ['json'])
+          ]);
+      if (location == null || !mounted) return;
+      final destination = File(location.path);
+      final path = destination.absolute.path.toLowerCase();
+      if ([
+        widget.store.file.absolute.path.toLowerCase(),
+        '${widget.store.file.absolute.path}.bak'.toLowerCase(),
+        '${widget.store.file.absolute.path}.tmp'.toLowerCase()
+      ].contains(path)) throw const FormatException('请另选备份文件，不能覆盖应用数据文件');
+      temporary = File(
+          '${destination.path}.tokiboshi-export-${DateTime.now().microsecondsSinceEpoch}');
+      await temporary.writeAsString(encodeBackup(_data), flush: true);
+      await temporary.rename(destination.path);
+      temporary = null;
+      _setMessage('本地备份已导出。文件包含订阅和节点凭据，请妥善保管。');
+    } catch (e) {
+      _setMessage('备份导出失败：${redactDiagnostics('$e')}');
+    } finally {
+      if (temporary != null && await temporary.exists())
+        await temporary.delete();
+      if (mounted) setState(() => _settingsBusy = false);
+    }
+  }
+
+  Future<void> _restoreBackup() async {
+    if (_running || _busy || _profileChanging || _settingsBusy) return;
+    setState(() => _settingsBusy = true);
+    try {
+      final file = await openFile(acceptedTypeGroups: [
+        const XTypeGroup(label: 'Tokiboshi 备份', extensions: ['json'])
+      ]);
+      if (file == null || !mounted) return;
+      if (await file.length() > backupMaxBytes)
+        throw const FormatException('备份文件超过 64MiB');
+      final restored = decodeBackup(await file.readAsString(), _data);
+      final yes = await showDialog<bool>(
+          context: context,
+          builder: (c) => AlertDialog(
+                  title: const Text('恢复本地备份？'),
+                  content: Text(
+                      '将恢复 ${restored.nodes.where((n) => !n.isPolicy).length} 个节点、${restored.subscriptions.length} 个来源与界面/分流设置。\n\n恢复后保持停止；本机内核路径、控制器密钥和开机注册保留。'),
+                  actions: [
+                    TextButton(
+                        onPressed: () => Navigator.pop(c, false),
+                        child: const Text('取消')),
+                    FilledButton(
+                        onPressed: () => Navigator.pop(c, true),
+                        child: const Text('确认恢复'))
+                  ]));
+      if (yes != true || !mounted) return;
+      final before = _data.copyWith();
+      setState(() => _data = restored);
+      if (await _persistImport(before)) {
+        widget.appearance.value = restored.ui;
+        _configureDemand();
+        _setMessage('备份已恢复，代理保持停止，请选择节点后连接');
+      }
+    } catch (e) {
+      _setMessage('恢复失败，原配置保留：${redactDiagnostics('$e')}');
+    } finally {
+      if (mounted) setState(() => _settingsBusy = false);
+    }
+  }
+
   Future<void> _updateAllSubscriptions() async {
     if (_busy || _running || _updatingAll) return;
     _updatingAll = true;
@@ -2509,17 +2732,16 @@ class _ShellPageState extends State<ShellPage>
             child: AnimatedContainer(
                 duration: UiScope.duration(context),
                 decoration: BoxDecoration(
-                    color: selected
-                        ? scheme.primary.withValues(alpha: .09)
-                        : Colors.transparent,
+                    color: selected ? wine : Colors.transparent,
                     borderRadius: BorderRadius.circular(6),
                     border: Border.all(
-                        color: selected
-                            ? scheme.primary.withValues(alpha: .35)
-                            : Colors.transparent)),
+                        color: selected ? wine : Colors.transparent)),
                 child: InkWell(
                     borderRadius: BorderRadius.circular(6),
-                    onTap: () => setState(() => _page = index),
+                    onTap: () => setState(() {
+                          _page = index;
+                          if (index == 5) _settingsSection = 0;
+                        }),
                     child: Padding(
                         padding: EdgeInsets.symmetric(
                             horizontal: collapsed ? 9 : 12, vertical: 11),
@@ -2531,22 +2753,24 @@ class _ShellPageState extends State<ShellPage>
                               Icon(icon,
                                   size: 17,
                                   color: selected
-                                      ? scheme.primary
+                                      ? Colors.white
                                       : scheme.onSurfaceVariant),
                               if (!collapsed) ...[
                                 const SizedBox(width: 11),
                                 Expanded(
                                     child: Text(label,
                                         style: TextStyle(
-                                            fontSize: 12,
+                                            fontSize: 14,
                                             color: selected
-                                                ? scheme.primary
+                                                ? Colors.white
                                                 : scheme.onSurfaceVariant))),
                                 if (count != null)
                                   Text('$count',
                                       style: mono.copyWith(
-                                          fontSize: 9,
-                                          color: scheme.onSurfaceVariant))
+                                          fontSize: 11,
+                                          color: selected
+                                              ? Colors.white
+                                              : scheme.onSurfaceVariant))
                               ]
                             ]))))));
   }
@@ -2558,4 +2782,12 @@ class _FindNodeIntent extends Intent {
 
 class _ConnectCancelled implements Exception {
   const _ConnectCancelled();
+}
+
+class _ImportIntent extends Intent {
+  const _ImportIntent();
+}
+
+class _SettingsIntent extends Intent {
+  const _SettingsIntent();
 }

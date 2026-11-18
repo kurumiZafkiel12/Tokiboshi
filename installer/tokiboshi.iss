@@ -15,6 +15,7 @@
 AppId={{8F3B1C2E-7A4D-4E5F-9B6A-2D1C0E5F7A9B}
 AppName=Tokiboshi
 AppVersion={#AppVersion}
+VersionInfoVersion={#AppVersion}
 AppPublisher=kurumi
 AppPublisherURL=https://github.com/kurumiZafkiel12/Tokiboshi
 AppSupportURL=https://github.com/kurumiZafkiel12/Tokiboshi

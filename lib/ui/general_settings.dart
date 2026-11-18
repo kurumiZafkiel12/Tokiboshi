@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../app_version.dart';
 import '../services/desktop_settings.dart';
 import 'design.dart';
 
@@ -64,7 +65,7 @@ class GeneralSettings extends StatelessWidget {
                         maxLength: 512,
                         decoration: const InputDecoration(
                             labelText: '留空使用 Tokiboshi 默认值',
-                            hintText: 'Clash.Meta Tokiboshi/0.0.9'))),
+                            hintText: 'Clash.Meta Tokiboshi/$kAppVersion'))),
                 actions: [
                   TextButton(
                       onPressed: () => Navigator.pop(context),
@@ -256,7 +257,7 @@ class GeneralSettings extends StatelessWidget {
                   context,
                   'User-Agent',
                   value.userAgent.isEmpty
-                      ? '默认 · Clash.Meta Tokiboshi/0.0.9'
+                      ? '默认 · Clash.Meta Tokiboshi/$kAppVersion'
                       : value.userAgent,
                   OutlinedButton(
                       onPressed: busy ? null : () => _ua(context),

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../ui/design.dart';
 import '../ui/runtime.dart';
+import '../ui/diagnostics.dart';
 
 class ConnectionsPage extends StatefulWidget {
   const ConnectionsPage(
@@ -12,7 +13,9 @@ class ConnectionsPage extends StatefulWidget {
 }
 
 class _ConnectionsPageState extends State<ConnectionsPage> {
-  String _query = '';
+  String _query = '', _network = '', _sort = 'download';
+  bool _paused = false;
+  List<Map<String, dynamic>> _snapshot = [];
   String? _error;
   bool _closing = false;
   Future<void> _close([String? id]) async {
@@ -49,12 +52,18 @@ class _ConnectionsPageState extends State<ConnectionsPage> {
       listenable: widget.monitor,
       builder: (context, _) {
         final monitor = widget.monitor;
-        final rows = monitor.connections.where((r) {
+        final base = _paused ? _snapshot : monitor.connections;
+        final rows = base.where((r) {
           final m = r['metadata'] as Map? ?? {};
-          return '${m['host']} ${m['destinationIP']} ${m['processPath']} ${r['rule']}'
+          if (_network.isNotEmpty &&
+              '${m['network']}'.toLowerCase() != _network) return false;
+          return '${m['host']} ${m['destinationIP']} ${m['destinationPort']} ${m['processPath']} ${r['rule']} ${r['rulePayload']} ${r['chains']}'
               .toLowerCase()
               .contains(_query);
         }).toList();
+        rows.sort((a, b) => _sort == 'start'
+            ? '${b['start'] ?? ''}'.compareTo('${a['start'] ?? ''}')
+            : ((b[_sort] as num?) ?? 0).compareTo((a[_sort] as num?) ?? 0));
         return Padding(
             padding: const EdgeInsets.all(22),
             child: Column(
@@ -90,6 +99,52 @@ class _ConnectionsPageState extends State<ConnectionsPage> {
                             : null,
                         child: const Text('关闭全部'))
                   ]),
+                  const SizedBox(height: 12),
+                  Wrap(
+                      spacing: 8,
+                      runSpacing: 6,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        for (final entry
+                            in {'': '全部协议', 'tcp': 'TCP', 'udp': 'UDP'}.entries)
+                          ChoiceChip(
+                              label: Text(entry.value),
+                              selected: _network == entry.key,
+                              onSelected: (_) =>
+                                  setState(() => _network = entry.key)),
+                        FilterChip(
+                            label: Text(_paused ? '列表已暂停' : '暂停列表'),
+                            selected: _paused,
+                            onSelected: (value) => setState(() {
+                                  _paused = value;
+                                  if (value)
+                                    _snapshot = List.of(monitor.connections);
+                                })),
+                        PopupMenuButton<String>(
+                            tooltip: '连接排序',
+                            onSelected: (value) =>
+                                setState(() => _sort = value),
+                            itemBuilder: (_) => const [
+                                  PopupMenuItem(
+                                      value: 'download',
+                                      child: Text('下载流量从高到低')),
+                                  PopupMenuItem(
+                                      value: 'upload', child: Text('上传流量从高到低')),
+                                  PopupMenuItem(
+                                      value: 'start', child: Text('最近建立优先'))
+                                ],
+                            child: const Padding(
+                                padding: EdgeInsets.all(8),
+                                child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(Icons.sort, size: 17),
+                                      SizedBox(width: 6),
+                                      Text('排序')
+                                    ]))),
+                        Text('显示 ${rows.length} / ${base.length}',
+                            style: Theme.of(context).textTheme.bodySmall)
+                      ]),
                   const SizedBox(height: 14),
                   if (_error != null)
                     Padding(
@@ -103,7 +158,7 @@ class _ConnectionsPageState extends State<ConnectionsPage> {
                           child: !widget.running
                               ? const EmptyView('当前没有活动连接', '启动代理后，这里会显示真实请求。',
                                   icon: Icons.monitor_heart_outlined)
-                              : !monitor.available
+                              : !monitor.available && !_paused
                                   ? EmptyView(
                                       '控制器暂不可达', monitor.error ?? '正在等待请求数据')
                                   : rows.isEmpty
@@ -138,6 +193,39 @@ class _ConnectionsPageState extends State<ConnectionsPage> {
                                                   ])))))
                 ]));
       });
+  void _details(Map<String, dynamic> row) {
+    final meta = row['metadata'] as Map? ?? {};
+    final values = {
+      '目标':
+          '${meta['host'] ?? meta['destinationIP'] ?? '未知'}:${meta['destinationPort'] ?? ''}',
+      '协议': '${meta['network'] ?? '—'} / ${meta['type'] ?? '—'}',
+      '来源': '${meta['sourceIP'] ?? '—'}:${meta['sourcePort'] ?? ''}',
+      '进程': '${meta['processPath'] ?? meta['process'] ?? '未提供'}',
+      '规则': '${row['rule'] ?? '—'} / ${row['rulePayload'] ?? ''}',
+      '出口链路': (row['chains'] as List? ?? []).join(' → '),
+      '建立时间': '${row['start'] ?? '—'}',
+      '下载 / 上传':
+          '${bytesLabel(row['download'] as num? ?? 0)} / ${bytesLabel(row['upload'] as num? ?? 0)}'
+    };
+    showDialog<void>(
+        context: context,
+        builder: (c) => AlertDialog(
+                title: const Text('连接详情'),
+                content: SizedBox(
+                    width: 600,
+                    child: SingleChildScrollView(
+                        child: SelectableText(
+                            values.entries
+                                .map((e) =>
+                                    '${e.key}\n${redactDiagnostics(e.value)}')
+                                .join('\n\n')))),
+                actions: [
+                  TextButton(
+                      onPressed: () => Navigator.pop(c),
+                      child: const Text('关闭'))
+                ]));
+  }
+
   DataRow _row(BuildContext context, Map<String, dynamic> r) {
     final meta = r['metadata'] as Map? ?? {};
     final host = '${meta['host'] ?? ''}'.isNotEmpty
@@ -145,18 +233,20 @@ class _ConnectionsPageState extends State<ConnectionsPage> {
         : '${meta['destinationIP'] ?? '未知目标'}';
     final chains = (r['chains'] as List? ?? []).join(' → ');
     return DataRow(cells: [
-      DataCell(SizedBox(
-          width: 210,
-          child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('$host:${meta['destinationPort'] ?? ''}',
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontSize: 12)),
-                Text('${meta['network'] ?? '—'} · ${meta['type'] ?? '—'}',
-                    style: Theme.of(context).textTheme.bodySmall)
-              ]))),
+      DataCell(
+          SizedBox(
+              width: 210,
+              child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('$host:${meta['destinationPort'] ?? ''}',
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontSize: 12)),
+                    Text('${meta['network'] ?? '—'} · ${meta['type'] ?? '—'}',
+                        style: Theme.of(context).textTheme.bodySmall)
+                  ])),
+          onTap: () => _details(r)),
       DataCell(SizedBox(
           width: 150,
           child: Text('${r['rule'] ?? '—'}\n${r['rulePayload'] ?? ''}',
