@@ -31,7 +31,7 @@ Windows 当前为 **0.1.0（build 12）**：更新桌面布局与动效，增加
 | 平台 | 版本要求 | 下载 |
 | --- | --- | --- |
 | Windows | Windows 10/11，x64 | [![Setup x64](https://img.shields.io/badge/Setup-x64-3d8ba3?style=flat-square)](https://github.com/kurumiZafkiel12/Tokiboshi/releases/download/v0.1.0/Tokiboshi-Setup-0.1.0.exe) [![ZIP x64](https://img.shields.io/badge/ZIP-x64-3d8ba3?style=flat-square)](https://github.com/kurumiZafkiel12/Tokiboshi/releases/download/v0.1.0/Tokiboshi-windows.zip) |
-| Android | Android 7.0+（API24），三种架构 | [![APK arm64-v8a](https://img.shields.io/badge/APK-arm64--v8a-3DDC84?style=flat-square&logo=android&logoColor=white&labelColor=555555)](https://github.com/kurumiZafkiel12/Tokiboshi/releases/download/v0.0.9-r2/Tokiboshi-0.0.9-android-arm64-v8a.apk)<br>[![APK armeabi-v7a](https://img.shields.io/badge/APK-armeabi--v7a-3DDC84?style=flat-square&logo=android&logoColor=white&labelColor=555555)](https://github.com/kurumiZafkiel12/Tokiboshi/releases/download/v0.0.9-r2/Tokiboshi-0.0.9-android-armeabi-v7a.apk)<br>[![APK x86_64](https://img.shields.io/badge/APK-x86_64-3DDC84?style=flat-square&logo=android&logoColor=white&labelColor=555555)](https://github.com/kurumiZafkiel12/Tokiboshi/releases/download/v0.0.9-r2/Tokiboshi-0.0.9-android-x86_64.apk) |
+| Android | Android 7.0+（API24），三种架构 | [![APK arm64-v8a](https://img.shields.io/badge/APK-arm64--v8a-3DDC84?style=flat-square&logo=android&logoColor=white&labelColor=555555)](https://github.com/kurumiZafkiel12/Tokiboshi/releases/download/v0.1.0/Tokiboshi-0.1.0-android-arm64-v8a.apk)<br>[![APK armeabi-v7a](https://img.shields.io/badge/APK-armeabi--v7a-3DDC84?style=flat-square&logo=android&logoColor=white&labelColor=555555)](https://github.com/kurumiZafkiel12/Tokiboshi/releases/download/v0.1.0/Tokiboshi-0.1.0-android-armeabi-v7a.apk)<br>[![APK x86_64](https://img.shields.io/badge/APK-x86_64-3DDC84?style=flat-square&logo=android&logoColor=white&labelColor=555555)](https://github.com/kurumiZafkiel12/Tokiboshi/releases/download/v0.1.0/Tokiboshi-0.1.0-android-x86_64.apk) |
 
 安装文件与 SHA256 校验清单（`SHA256SUMS.txt`）均在发布页。安装程序尚未做 Authenticode 签名。
 
@@ -41,7 +41,7 @@ Windows 当前为 **0.1.0（build 12）**：更新桌面布局与动效，增加
 - 节点与设置保存在 `%APPDATA%\Tokiboshi\data.json`，升级覆盖安装不影响数据。
 - 当前版本及历史变化见[发布说明](https://github.com/kurumiZafkiel12/Tokiboshi/releases)。
 
-Android 当前维持 **0.0.9（build 11）**，下载位于 0.0.9-r2 发布页，使用系统 VPN 和前台服务；一般手机选择 arm64-v8a，32 位设备选择 armeabi-v7a，x86_64 用于对应设备/模拟器。[Android 构建与验证说明](docs/android.md)。
+Android 当前为 **0.1.0（build 12）**，下载位于 0.1.0 发布页，使用系统 VPN 和前台服务；一般手机选择 arm64-v8a，32 位设备选择 armeabi-v7a，x86_64 用于对应设备/模拟器。[Android 构建与验证说明](docs/android.md)。
 
 ## 开发
 
