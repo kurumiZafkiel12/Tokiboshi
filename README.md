@@ -6,6 +6,8 @@
 简洁的 Windows sing-box 客户端：Flutter 界面 + Rust 中间层 + sing-box 内核。独立项目，与 Hotaru 无直接关联。
 
 [**下载安装**](https://github.com/kurumiZafkiel12/Tokiboshi/releases/latest) · [更新记录](https://github.com/kurumiZafkiel12/Tokiboshi/releases) · [问题反馈](https://github.com/kurumiZafkiel12/Tokiboshi/issues)
+
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 </div>
 
 ## 功能
