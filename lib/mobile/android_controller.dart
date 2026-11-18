@@ -286,6 +286,14 @@ class AndroidController extends ChangeNotifier {
         if (next.activeProfileId == source.id) next.activeProfileId = '';
         await commit(next);
       });
+  Future<void> editSource(Subscription edited) => operation(() async {
+        if (running) throw const FormatException('请停止 VPN 后编辑');
+        final copy = data.copyWith();
+        copy.subscriptions = [
+          for (final s in copy.subscriptions) s.id == edited.id ? edited : s
+        ];
+        await commit(copy);
+      });
   Future<ParseOutcome> _resolve({
     required String url,
     String? content,
