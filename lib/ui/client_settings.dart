@@ -7,10 +7,11 @@ class ClientSettings extends StatefulWidget {
       {super.key,
       required this.value,
       required this.onSave,
-      this.busy = false});
+      this.busy = false,
+      this.mobile = false});
   final ClientPreferences value;
   final Future<void> Function(ClientPreferences) onSave;
-  final bool busy;
+  final bool busy, mobile;
   @override
   State<ClientSettings> createState() => _ClientSettingsState();
 }
@@ -66,10 +67,12 @@ class _ClientSettingsState extends State<ClientSettings> {
   Widget build(BuildContext context) {
     final locked = widget.busy || saving;
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-      const SizedBox(height: 24),
-      const Text('分流、DNS 与测速',
-          style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
-      const SizedBox(height: 12),
+      if (!widget.mobile) ...[
+        const SizedBox(height: 24),
+        const Text('分流、DNS 与测速',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
+        const SizedBox(height: 12),
+      ],
       Panel(
           child:
               Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
@@ -161,9 +164,12 @@ class _ClientSettingsState extends State<ClientSettings> {
         TextField(
             controller: timeout,
             keyboardType: TextInputType.number,
-            decoration: const InputDecoration(
+            decoration: InputDecoration(
                 labelText: '测速超时（毫秒）',
-                helperText: '1000–30000；内核未启动时的 TCP 端口探测不等同代理连通性。')),
+                helperMaxLines: 2,
+                helperText: widget.mobile
+                    ? '1000–30000，连接 VPN 后可测速。'
+                    : '1000–30000；TCP 端口探测不等同代理连通性。')),
         if (message != null)
           Padding(
               padding: const EdgeInsets.only(top: 14), child: Text(message!)),

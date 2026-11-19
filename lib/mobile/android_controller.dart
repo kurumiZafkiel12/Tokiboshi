@@ -4,6 +4,8 @@ import 'package:flutter/foundation.dart';
 
 import '../bridge/core_bridge.dart';
 import '../services/store.dart';
+import '../services/client_preferences.dart';
+import '../services/node_selection.dart';
 import '../services/active_profile.dart';
 import '../services/clash_api.dart';
 import '../services/local_ports.dart';
@@ -40,7 +42,9 @@ class AndroidController extends ChangeNotifier {
       _refreshing = false;
   String? message;
   String mode = 'rule';
-  Timer? _timer;
+  Timer? _timer, _sourceTimer;
+  bool foreground = true;
+  final _attempts = <String, DateTime>{};
   ClashApiClient get api =>
       ClashApiClient(port: data.clashApiPort, secret: data.clashApiSecret);
   void emit() {
@@ -62,6 +66,12 @@ class AndroidController extends ChangeNotifier {
     if (poll)
       _timer = Timer.periodic(const Duration(seconds: 2), (_) => refresh());
     if (!running && data.autoConnect && data.selected != null) await toggle();
+    if (poll && !_disposed) {
+      _sourceTimer = Timer.periodic(
+        const Duration(seconds: 30),
+        (_) => refreshDueSources(),
+      );
+    }
   }
 
   Future<void> refresh() async {
@@ -111,8 +121,14 @@ class AndroidController extends ChangeNotifier {
     }
   }
 
-  Future<void> operation(Future<void> Function() action) async {
-    if (busy || _disposed) return;
+  Future<void> operation(
+    Future<void> Function() action, {
+    bool propagate = false,
+  }) async {
+    if (busy || _disposed) {
+      if (propagate) throw StateError('请等当前操作完成再保存');
+      return;
+    }
     busy = true;
     cancelling = false;
     emit();
@@ -122,6 +138,7 @@ class AndroidController extends ChangeNotifier {
       report('已取消导入，原配置保留');
     } catch (e) {
       report('操作失败：${redactDiagnostics('$e')}');
+      if (propagate) rethrow;
     } finally {
       busy = false;
       importing = false;
@@ -177,7 +194,11 @@ class AndroidController extends ChangeNotifier {
           profileJson: profile?.profileJson ?? '',
         );
         final file = await store.writeRuntimeConfig(
-          injectClashSecret(config, data.clashApiSecret),
+          applyClientPreferences(
+            injectClashSecret(config, data.clashApiSecret),
+            data.client,
+            hasProfile: profile != null,
+          ),
         );
         await bridge.startCore(
           singBoxPath: 'libbox://1.14.4',
@@ -262,6 +283,8 @@ class AndroidController extends ChangeNotifier {
         try {
           delays[index] = await client.delay(
             assignNodeTags(nodes.map((n) => n.name))[nodes.indexOf(node)],
+            url: data.client.testUrl,
+            timeoutMs: data.client.testTimeoutMs,
           );
         } finally {
           client.close();
@@ -286,6 +309,47 @@ class AndroidController extends ChangeNotifier {
         if (next.activeProfileId == source.id) next.activeProfileId = '';
         await commit(next);
       });
+  Future<void> editSource(Subscription original, Subscription edited) =>
+      operation(() async {
+        if (running) throw const FormatException('请停止 VPN 后编辑');
+        if (!data.subscriptions.contains(original))
+          throw StateError('来源已更新，请重新打开编辑');
+        final copy = data.copyWith();
+        copy.subscriptions = [
+          for (final s in copy.subscriptions) s.id == edited.id ? edited : s,
+        ];
+        await commit(copy);
+        _attempts[edited.id] = DateTime.now();
+      }, propagate: true);
+
+  Future<void> saveClient(ClientPreferences value) => operation(() async {
+        value.validate();
+        final next = data.copyWith()..client = value;
+        await commit(next);
+      }, propagate: true);
+
+  Future<void> restoreData(AppData restored) => operation(() async {
+        if (running) throw StateError('请先停止 VPN 再恢复');
+        await commit(restored..autoConnect = false);
+        _attempts.clear();
+        delays.clear();
+        report('备份已恢复，VPN 保持断开');
+      }, propagate: true);
+
+  Future<void> refreshDueSources() async {
+    if (!foreground || _disposed || running || busy) return;
+    final now = DateTime.now();
+    for (final source in data.subscriptions) {
+      if (!source.isRemote || source.refreshMinutes <= 0) continue;
+      final last = _attempts[source.id] ??
+          DateTime.tryParse(source.lastAttemptAt ?? source.updatedAt ?? '');
+      if (last != null &&
+          now.difference(last).inMinutes < source.refreshMinutes) continue;
+      await updateSource(source, (error) async => throw error);
+      return;
+    }
+  }
+
   Future<ParseOutcome> _resolve({
     required String url,
     String? content,
@@ -402,74 +466,99 @@ class AndroidController extends ChangeNotifier {
   ) =>
       operation(() async {
         if (running) throw const FormatException('请先停止 VPN 再更新');
+        if (!data.subscriptions.contains(source)) return;
+        final attempt = DateTime.now();
+        _attempts[source.id] = attempt;
         importing = true;
         report('正在更新 ${source.name}…');
-        final outcome = await _resolve(
-          url: source.url,
-          content: source.inlineContent,
-          routing:
-              source.nodesOnly ? ImportRouting.nodesOnly : ImportRouting.smart,
-          consent: consent,
-        );
-        if (cancelling || _disposed) throw const ImportCancelled();
-        if (!outcome.nodes.any((n) => !n.isPolicy))
-          throw const FormatException('新来源不含可用节点，已保留旧数据');
-        final fresh =
-            outcome.nodes.map((n) => n.withSource(source.id)).toList();
-        final previous =
-            data.nodes.where((n) => n.source == source.id).toList();
-        final retained = retainFailedSourceNodes(
-          previous,
-          fresh,
-          outcome.failedGroups,
-        );
-        final next = data.copyWith();
-        next.nodes = [
-          ...next.nodes.where((n) => n.source != source.id),
-          ...resolvePolicyGroups([...fresh, ...retained]),
-        ];
-        next.subscriptions = next.subscriptions
-            .map(
-              (s) => s.id == source.id
-                  ? Subscription(
-                      id: s.id,
-                      name: s.name,
-                      url: s.url,
-                      inlineContent: s.inlineContent,
-                      nodesOnly: outcome.nodesOnly,
-                      profileJson: outcome.profileJson,
-                      profileState:
-                          outcome.profileJson == null ? 'nodes-only' : 'parsed',
-                      lastReport: redactDiagnostics(outcome.skipped.join('\n')),
-                      updatedAt: DateTime.now().toIso8601String(),
-                    )
-                  : s,
-            )
-            .toList();
-        if (next.activeProfileId == source.id && outcome.profileJson == null)
-          next.activeProfileId = '';
-        final selected = data.selected;
-        next.selectedIndex = selected == null
-            ? -1
-            : next.nodes.indexWhere(
-                (n) =>
-                    n.source == selected.source &&
-                    n.name == selected.name &&
-                    n.group == selected.group,
-              );
-        if (next.selectedIndex < 0) {
-          final candidates = profileNodes(next);
-          if (candidates.isNotEmpty)
-            next.selectedIndex = next.nodes.indexOf(
-              candidates.firstWhere(
-                (n) => !n.isPolicy,
-                orElse: () => candidates.first,
-              ),
-            );
+        try {
+          final outcome = await _resolve(
+            url: source.url,
+            content: source.inlineContent,
+            routing: source.nodesOnly
+                ? ImportRouting.nodesOnly
+                : ImportRouting.smart,
+            consent: consent,
+          );
+          if (cancelling || _disposed) throw const ImportCancelled();
+          if (!outcome.nodes.any((n) => !n.isPolicy))
+            throw const FormatException('新来源不含可用节点，已保留旧数据');
+          final fresh =
+              outcome.nodes.map((n) => n.withSource(source.id)).toList();
+          final previous =
+              data.nodes.where((n) => n.source == source.id).toList();
+          final retained = retainFailedSourceNodes(
+            previous,
+            fresh,
+            outcome.failedGroups,
+          );
+          final next = data.copyWith();
+          final replacement = resolvePolicyGroups([...fresh, ...retained]);
+          next.nodes = [
+            ...next.nodes.where((n) => n.source != source.id),
+            ...replacement,
+          ];
+          next.subscriptions = next.subscriptions
+              .map(
+                (s) => s.id == source.id
+                    ? Subscription(
+                        id: s.id,
+                        name: s.name,
+                        url: s.url,
+                        inlineContent: s.inlineContent,
+                        localPath: s.localPath,
+                        refreshMinutes: s.refreshMinutes,
+                        lastAttemptAt: attempt.toIso8601String(),
+                        nodesOnly: outcome.nodesOnly,
+                        profileJson: outcome.profileJson,
+                        profileState: outcome.profileJson == null
+                            ? 'nodes-only'
+                            : 'parsed',
+                        lastReport:
+                            redactDiagnostics(outcome.skipped.join('\n')),
+                        updatedAt: DateTime.now().toIso8601String(),
+                      )
+                    : s,
+              )
+              .toList();
+          if (next.activeProfileId == source.id && outcome.profileJson == null)
+            next.activeProfileId = '';
+          final selected = data.selected;
+          next.selectedIndex =
+              selected == null ? -1 : next.nodes.indexOf(selected);
+          if (selected != null && selected.source == source.id) {
+            final index = restoredNodeIndex(selected, previous, replacement);
+            next.selectedIndex =
+                index < 0 ? -1 : next.nodes.indexOf(replacement[index]);
+          }
+          if (next.selected != null &&
+              !profileNodes(next).contains(next.selected))
+            next.selectedIndex = -1;
+          _committing = true;
+          await commit(next);
+          delays.clear();
+          report(
+            selected != null && next.selectedIndex < 0
+                ? '来源已更新，原出口无法唯一匹配，请重新选择'
+                : '来源更新已保存',
+          );
+        } on ImportCancelled {
+          rethrow;
+        } catch (error) {
+          final next = data.copyWith();
+          next.subscriptions = [
+            for (final s in data.subscriptions)
+              if (s.id == source.id)
+                s.copyWith(
+                  lastAttemptAt: attempt.toIso8601String(),
+                  lastError: redactDiagnostics('$error'),
+                )
+              else
+                s,
+          ];
+          await commit(next);
+          rethrow;
         }
-        _committing = true;
-        await commit(next);
-        report('来源更新已保存');
       });
   Future<void> appearance(UiPreferences value) => operation(() async {
         final next = data.copyWith();
@@ -500,6 +589,7 @@ class AndroidController extends ChangeNotifier {
   void dispose() {
     _disposed = true;
     _timer?.cancel();
+    _sourceTimer?.cancel();
     monitor.dispose();
     super.dispose();
   }

@@ -13,10 +13,9 @@ if restore:
  if not os.environ.get('TOKIBOSHI_ANDROID_STORE_PASSWORD'):raise SystemExit('Existing key requires its password')
  key.write_bytes(base64.b64decode(restore,validate=True))
 else:
- # Never silently rotate the signing identity of an already published Android build.
- check=subprocess.run(['gh','api','repos/kurumiZafkiel12/Tokiboshi/releases/tags/v0.0.9-android-r1'],stdout=subprocess.PIPE,stderr=subprocess.PIPE)
- if check.returncode!=0 and b'HTTP 404' not in check.stderr:raise SystemExit('Unable to verify prior Android signing identity')
- if check.returncode==0:raise SystemExit('Android release exists: restore the existing signing key; refusing automatic rotation')
+ # CI may build a candidate with a temporary identity. It cannot be used for release.
+ if os.environ.get('TOKIBOSHI_ANDROID_CANDIDATE_SIGNING') != '1':
+  raise SystemExit('Restore the official Android signing key before building release packages')
  environment=dict(os.environ,TOKIBOSHI_SIGN_STORE=password,TOKIBOSHI_SIGN_KEY=key_password)
  result=subprocess.run(['keytool','-genkeypair','-keystore',str(key),'-storetype','JKS','-alias',alias,'-keyalg','RSA','-keysize','3072','-validity','10000','-dname','CN=Tokiboshi Android,O=Tokiboshi','-storepass:env','TOKIBOSHI_SIGN_STORE','-keypass:env','TOKIBOSHI_SIGN_KEY'],env=environment,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
  if result.returncode:raise SystemExit('Release signing key generation failed')
@@ -29,7 +28,12 @@ subprocess.run(['keytool','-exportcert','-keystore',str(key),'-alias',alias,'-st
 subject=subprocess.run(['openssl','x509','-inform','DER','-in',str(certificate),'-noout','-subject'],capture_output=True,text=True,check=True).stdout
 if 'Android Debug' in subject:raise SystemExit('Refusing a debug signing identity')
 fingerprint=hashlib.sha256(certificate.read_bytes()).hexdigest()
-(public/'signing-fingerprint.json').write_text(json.dumps({'certificateSha256':fingerprint,'algorithm':'restored existing key' if restore else 'RSA3072/SHA256','releaseKey':True,'restoredExistingKey':bool(restore)},indent=2)+'\n')
+expected='c91d88b4284c40e97e2e270677c0ba083c40789a8f8bc85bbb3c70d02b49c726'
+if restore and fingerprint != expected:raise SystemExit('Restored Android signer does not match the published signing identity')
+(public/'signing-fingerprint.json').write_text(json.dumps({'certificateSha256':fingerprint,'releaseKey':bool(restore),'restoredExistingKey':bool(restore)},indent=2)+'\n')
+if not restore:
+ print('Temporary candidate signer, do not publish:',fingerprint)
+ raise SystemExit(0)
 with tempfile.TemporaryDirectory(dir=private) as temp:
  directory=pathlib.Path(temp)
  (directory/'signing.json').write_text(json.dumps({'storePassword':password,'keyPassword':key_password,'keyAlias':alias,'certificateSha256':fingerprint}))

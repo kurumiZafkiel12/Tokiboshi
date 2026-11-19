@@ -14,6 +14,7 @@ import io.nekohasekai.libbox.Libbox
 import java.io.File
 
 class MainActivity : FlutterActivity() {
+    private var pendingBackup: Pair<File, MethodChannel.Result>? = null
     private var pendingPermission: MethodChannel.Result? = null
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -56,6 +57,25 @@ class MainActivity : FlutterActivity() {
                                 };result.success(bytes)
                             }
                         }
+                        "exportBackup" -> {
+                            check(pendingBackup == null) { "已有备份导出正在进行" }
+                            val path = call.argument<String>("path") ?: error("缺少备份路径")
+                            val file = File(path).canonicalFile
+                            require(file.path.startsWith(filesDir.canonicalPath + File.separator) &&
+                                file.isFile && file.length() <= 64L * 1024 * 1024) { "无效的备份文件" }
+                            val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+                                addCategory(Intent.CATEGORY_OPENABLE)
+                                type = "application/json"
+                                putExtra(Intent.EXTRA_TITLE, "Tokiboshi-backup.json")
+                            }
+                            pendingBackup = file to result
+                            try {
+                                startActivityForResult(intent, 9003)
+                            } catch (error: Exception) {
+                                pendingBackup = null
+                                throw error
+                            }
+                        }
                         "openUrl" -> { val url=call.argument<String>("url") ?: error("缺少链接"); require(url.startsWith("https://")); startActivity(Intent(Intent.ACTION_VIEW,android.net.Uri.parse(url)));result.success(null) }
                         else -> result.notImplemented()
                     }
@@ -65,7 +85,29 @@ class MainActivity : FlutterActivity() {
     @Deprecated("Android activity result compatibility")
     override fun onActivityResult(requestCode:Int,resultCode:Int,data:Intent?) {
         super.onActivityResult(requestCode,resultCode,data)
+        if (requestCode == 9003) {
+            val (file, result) = pendingBackup ?: return
+            pendingBackup = null
+            val uri = data?.data
+            if (resultCode != Activity.RESULT_OK || uri == null) {
+                result.success(false)
+                return
+            }
+            Thread {
+                try {
+                    val output = contentResolver.openOutputStream(uri, "wt")
+                        ?: error("无法写入所选文件")
+                    output.use { target -> file.inputStream().use { it.copyTo(target) } }
+                    runOnUiThread { result.success(true) }
+                } catch (error: Exception) {
+                    runOnUiThread { result.error("backup", "无法写入所选文件", null) }
+                }
+            }.start()
+        }
         if(requestCode==9001) { pendingPermission?.success(resultCode==Activity.RESULT_OK);pendingPermission=null }
     }
-    override fun onDestroy() { pendingPermission?.error("cancelled","授权窗口已关闭",null);pendingPermission=null;super.onDestroy() }
+    override fun onDestroy() {
+        pendingBackup?.second?.success(false)
+        pendingBackup = null
+        pendingPermission?.error("cancelled","授权窗口已关闭",null);pendingPermission=null;super.onDestroy() }
 }

@@ -1,4 +1,4 @@
-# Android 0.0.9 r2
+# Android 0.1.0
 
 Android 7.0/API24及以上，arm64-v8a、armeabi-v7a、x86_64。
 使用系统VPN授权和前台通知，不需要root。手机布局共用订阅展开、Rust解析/配置、来源隔离、真实控制器、三档动效与导入窗；不使用Windows注册表、托盘或UAC。
@@ -12,7 +12,7 @@ flutter pub get --enforce-lockfile
 tool/android/build_libbox.sh
 flutter analyze --no-fatal-infos
 flutter test --no-pub
-flutter build apk --debug --target-platform android-x64 --build-number 11
+flutter build apk --debug --target-platform android-x64 --build-number 14
 ```
 
 Android SDK需platforms;android-36、build-tools;36.0.0、ndk;28.2.13676358。libbox.aar为生成文件，不入库。默认选择当前物理网络，保护出站socket、防止VPN回环，IPv4/IPv6 TUN与DNS劫持由VpnService建立。
@@ -21,7 +21,7 @@ Android SDK需platforms;android-36、build-tools;36.0.0、ndk;28.2.13676358。li
 
 android工作流构建内核，再在API35/x86_64模拟器通过Flutter界面真实连接/切换，独立shell UID测试IPv4/IPv6、规则/全局/直连、后台连接、重复启停与UDP DNS；不用应用自身被排除的UID请求充当TUN证据。测试仅使用host回环上的合成SOCKS/HTTP/DNS服务，无真实订阅/凭据。UI支持窄屏/横屏，输入框出现时保留可用连接入口。
 
-三ABI release验证器要求每包仅含目标ABI，并包含Flutter AOT/引擎、Rust及libbox库，校验versionName0.0.9、versionCode1011/2011/4011、同一正式签名、ZIP CRC及64位ELF/ZIP16KiB对齐。CI没有通过之前，不把能编译解释为VPN可用；模拟器不替代所有手机/OEM后台策略验收。
+三ABI release验证器要求每包仅含目标ABI，并包含Flutter AOT/引擎、Rust及libbox库，校验versionName0.1.0、versionCode1014/2014/4014、同一正式签名、ZIP CRC及64位ELF/ZIP16KiB对齐。CI没有通过之前，不把能编译解释为VPN可用；模拟器不替代所有手机/OEM后台策略验收。
 
 ## 发布签名与恢复
 
@@ -32,11 +32,11 @@ android工作流构建内核，再在API35/x86_64模拟器通过Flutter界面真
 配置android/key.properties后构建：
 
 ```bash
-flutter build apk --release --split-per-abi --build-name 0.0.9 --build-number 11
+flutter build apk --release --split-per-abi --build-name 0.1.0 --build-number 14
 python3 tool/android/verify_apks.py
 ```
 
-Android三APK与Windows同挂在v0.0.9-r2发布下（2026-11-18起，原独立tag v0.0.9-android-r1发布已按用户要求删除），应用仍对应0.0.9 r2功能，build11。
+Android三APK与Windows同挂在v0.1.0发布下，build14，与0.0.9（build11）为同一正式签名，可直接覆盖升级。0.0.9的APK仍保留在v0.0.9-r2发布下。
 
 ## 许可证
 

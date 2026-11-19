@@ -43,7 +43,7 @@ Windows 当前为 **0.1.0（build 12）**：更新桌面布局与动效，增加
 - 节点与设置保存在 `%APPDATA%\Tokiboshi\data.json`，升级覆盖安装不影响数据。
 - 当前版本及历史变化见[发布说明](https://github.com/kurumiZafkiel12/Tokiboshi/releases)。
 
-Android 当前为 **0.1.0（build 12）**，下载位于 0.1.0 发布页，使用系统 VPN 和前台服务；一般手机选择 arm64-v8a，32 位设备选择 armeabi-v7a，x86_64 用于对应设备/模拟器。[Android 构建与验证说明](docs/android.md)。
+Android 当前为 **0.1.0（build 14）**，下载位于 0.1.0 发布页，使用系统 VPN 和前台服务；一般手机选择 arm64-v8a，32 位设备选择 armeabi-v7a，x86_64 用于对应设备/模拟器。[Android 构建与验证说明](docs/android.md)。
 
 ## 开发
 
