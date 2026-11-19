@@ -23,6 +23,28 @@ class MainActivity : FlutterActivity() {
                 try {
                     when (call.method) {
                         "directories" -> result.success(mapOf("files" to filesDir.path, "cache" to cacheDir.path))
+                        "vpnApps" -> {
+                            val launcher = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+                            val apps = packageManager.queryIntentActivities(launcher, 0)
+                                .filter { it.activityInfo.packageName != packageName }
+                                .distinctBy { it.activityInfo.packageName }
+                                .map { mapOf("id" to it.activityInfo.packageName,
+                                    "name" to it.loadLabel(packageManager).toString()) }
+                            result.success(apps)
+                        }
+                        "vpnSettings" -> {
+                            startActivity(Intent(android.provider.Settings.ACTION_VPN_SETTINGS))
+                            result.success(null)
+                        }
+                        "notificationSettings" -> {
+                            val settings = if (Build.VERSION.SDK_INT >= 26)
+                                Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                                    .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, packageName)
+                            else Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                android.net.Uri.fromParts("package", packageName, null))
+                            startActivity(settings)
+                            result.success(null)
+                        }
                         "version" -> result.success(Libbox.version())
                         "prepare" -> {
                             if (pendingPermission != null) { result.error("busy", "VPN 授权正在进行", null); return@setMethodCallHandler }
@@ -39,6 +61,9 @@ class MainActivity : FlutterActivity() {
                             require(file.path.startsWith(filesDir.canonicalPath + File.separator) && file.isFile) { "无效的私有配置文件" }
                             if (Build.VERSION.SDK_INT >= 33) requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 9002)
                             val intent = Intent(this, TokiboshiVpnService::class.java).putExtra("configPath",file.path)
+                            val excluded = call.argument<List<String>>("excludedApps").orEmpty()
+                            require(excluded.size <= 512) { "排除应用过多" }
+                            intent.putStringArrayListExtra("excludedApps", ArrayList(excluded))
                             if (Build.VERSION.SDK_INT >= 26) startForegroundService(intent) else startService(intent)
                             result.success(null)
                         }
