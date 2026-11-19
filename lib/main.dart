@@ -162,7 +162,7 @@ Future<void> main(List<String> args) async {
   try {
     await windowManager.ensureInitialized();
     if (Platform.isWindows) {
-      await windowManager.setTitle('Tokiboshi · 時の星');
+      await windowManager.setTitle(kAppName);
       await windowManager.setMinimumSize(const Size(800, 600));
       await windowManager.setTitleBarStyle(TitleBarStyle.hidden,
           windowButtonVisibility: false);
@@ -231,7 +231,7 @@ class _TokiboshiAppState extends State<TokiboshiApp> {
           onChanged: (v) => _appearance.value = v,
           child: MaterialApp(
               debugShowCheckedModeBanner: false,
-              title: 'Tokiboshi',
+              title: kAppName,
               themeAnimationDuration: _reduceMotion
                   ? Duration.zero
                   : Duration(
@@ -1162,7 +1162,7 @@ class _ShellPageState extends State<ShellPage>
       await trayManager.setIcon(
         iconFile.existsSync() ? iconFile.path : 'assets/icon.ico',
       );
-      await trayManager.setToolTip('Tokiboshi');
+      await trayManager.setToolTip(kAppName);
       _trayReady = true;
       _hideForSilentStartup();
       await _refreshTray();
@@ -1211,7 +1211,7 @@ class _ShellPageState extends State<ShellPage>
         MenuItem(key: 'sysproxy', label: '系统代理', checked: _data.systemProxy),
         MenuItem.separator(),
         MenuItem(key: 'show', label: '显示主窗口'),
-        MenuItem(key: 'quit', label: '退出 Tokiboshi'),
+        MenuItem(key: 'quit', label: '退出 $kAppName'),
       ];
       await trayManager.setContextMenu(Menu(items: items));
     } catch (_) {}
@@ -2109,7 +2109,7 @@ class _ShellPageState extends State<ShellPage>
                                           const Ribbon(size: 16),
                                           const SizedBox(width: 10)
                                         ],
-                                        const Text('Tokiboshi · 時の星',
+                                        const Text(kInAppName,
                                             style: TextStyle(fontSize: 11)),
                                         const SizedBox(width: 10),
                                         const Tag('v$kAppVersion')
@@ -2122,7 +2122,7 @@ class _ShellPageState extends State<ShellPage>
                                   const Ribbon(size: 16),
                                   const SizedBox(width: 10)
                                 ],
-                                const Text('Tokiboshi · 時の星',
+                                const Text(kInAppName,
                                     style: TextStyle(fontSize: 11)),
                                 const SizedBox(width: 10),
                                 const Tag('v$kAppVersion'),
@@ -2166,7 +2166,7 @@ class _ShellPageState extends State<ShellPage>
                                   if (!collapsed) ...[
                                     const SizedBox(width: 8),
                                     const Expanded(
-                                        child: Text('Tokiboshi',
+                                        child: Text(kInAppName,
                                             style: TextStyle(
                                                 fontSize: 19,
                                                 fontWeight: FontWeight.w700,

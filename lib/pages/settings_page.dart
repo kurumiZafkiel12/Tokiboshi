@@ -313,7 +313,7 @@ class _SettingsPageState extends State<SettingsPage> {
                     child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                      Text('Tokiboshi · 時の星',
+                      Text(kInAppName,
                           style: TextStyle(
                               fontSize: 19, fontWeight: FontWeight.w600)),
                       SizedBox(height: 8),

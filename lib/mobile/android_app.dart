@@ -116,7 +116,7 @@ class _AndroidAppState extends State<AndroidApp> with WidgetsBindingObserver {
       onChanged: controller.appearance,
       child: MaterialApp(
         debugShowCheckedModeBanner: false,
-        title: 'Tokiboshi · 時の星',
+        title: kAppName,
         theme: base.copyWith(
           materialTapTargetSize: MaterialTapTargetSize.padded,
           visualDensity: VisualDensity.standard,
@@ -300,7 +300,7 @@ class _AndroidShellState extends State<AndroidShell> {
               const SizedBox(width: 10),
               const Expanded(
                 child: Text(
-                  'Tokiboshi · 時の星',
+                  kInAppName,
                   style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600),
                   overflow: TextOverflow.ellipsis,
                 ),
@@ -1143,7 +1143,7 @@ class _AndroidShellState extends State<AndroidShell> {
                 const Divider(),
                 const ListTile(
                   contentPadding: EdgeInsets.zero,
-                  title: Text('Tokiboshi · 時の星'),
+                  title: Text(kInAppName),
                   subtitle: Text(
                     'Android $kAppVersion · build $kAndroidBuild\nsing-box / libbox 1.14.4',
                   ),
@@ -1163,7 +1163,7 @@ class _AndroidShellState extends State<AndroidShell> {
                   trailing: const Icon(Icons.description_outlined),
                   onTap: () => showLicensePage(
                     context: context,
-                    applicationName: 'Tokiboshi · 時の星',
+                    applicationName: kInAppName,
                     applicationVersion: '$kAppVersion · Android',
                   ),
                 ),
