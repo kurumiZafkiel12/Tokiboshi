@@ -6,7 +6,7 @@ const String kInAppName = '時の星';
 /// package_info dependency is warranted.
 const String kAppVersion = '0.1.5';
 const int kAppBuild = 22;
-const int kAndroidBuild = 14;
+const int kAndroidBuild = 22;
 const String kReleaseTag = 'v0.1.5';
 
-const String kAndroidAppVersion = '0.1.0';
+const String kAndroidAppVersion = '0.1.5';
