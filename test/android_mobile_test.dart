@@ -105,6 +105,21 @@ void main() {
         throwsA(isA<FileSystemException>()));
     expect(c.data.subscriptions.single, same(source));
   });
+  test('Android VPN settings persist in store and keep the selected values',
+      () async {
+    final store = MemoryStore();
+    final controller =
+        AndroidController(bridge: FakeBridge(), store: store, data: store.data);
+    addTearDown(controller.dispose);
+    await controller.saveVpnSettings(
+        mtu: 1400, excludedApps: ['fixture.app', 'fixture.app']);
+    final restored =
+        Store.decodeData(jsonEncode(Store.encodeData(store.data)))!;
+    expect(restored.androidMtu, 1400);
+    expect(restored.androidExcludedApps, ['fixture.app']);
+    expect(Store.decodeData('{}')?.androidMtu, 1500);
+  });
+
   test('Android declined VPN consent never starts a service', () async {
     final calls = <String>[];
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
@@ -125,11 +140,13 @@ void main() {
   test('Android start waits for native running state and failure cleans up',
       () async {
     var failing = false;
+    Object? startArgs;
     final calls = <String>[];
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(androidVpnChannel, (call) async {
       calls.add(call.method);
       if (call.method == 'prepare') return true;
+      if (call.method == 'start') startArgs = call.arguments;
       if (call.method == 'status')
         return {
           'phase': failing ? 'error' : 'running',
@@ -143,7 +160,10 @@ void main() {
         .setMockMethodCallHandler(androidVpnChannel, null));
     final bridge = AndroidCoreBridge();
     await bridge.startCore(
-        singBoxPath: 'unused', configPath: 'private/config.json');
+        singBoxPath: 'unused',
+        configPath: 'private/config.json',
+        excludedApps: ['fixture.app']);
+    expect(startArgs, containsPair('excludedApps', ['fixture.app']));
     expect(calls.contains('status'), true);
     failing = true;
     await expectLater(

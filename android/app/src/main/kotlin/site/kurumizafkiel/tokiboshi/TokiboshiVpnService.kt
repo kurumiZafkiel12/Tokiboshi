@@ -29,6 +29,7 @@ class TokiboshiVpnService : VpnService(), PlatformInterface, CommandServerHandle
     @Volatile private var latestStartId=0
     private var server:CommandServer?=null
     private var logClient:CommandClient?=null
+    @Volatile private var excludedApps: List<String> = emptyList()
     private var tunnel:ParcelFileDescriptor?=null
     private val connectivity by lazy { getSystemService(ConnectivityManager::class.java) }
     @Volatile private var listener:InterfaceUpdateListener?=null
@@ -48,11 +49,13 @@ class TokiboshiVpnService : VpnService(), PlatformInterface, CommandServerHandle
         VpnState.phase="starting";VpnState.error=null
         showNotification("正在连接…")
         val path=intent?.getStringExtra("configPath")
+        val exclusions = intent?.getStringArrayListExtra("excludedApps").orEmpty().distinct()
         worker.execute {
             try {
                 require(path!=null) {"缺少配置文件"}
                 closeCore()
                 if(token!=generation.get())return@execute
+                excludedApps = exclusions
                 val directory=filesDir.absolutePath
                 Libbox.setup(SetupOptions().apply {
                     basePath=directory;workingPath=directory;tempPath=cacheDir.absolutePath
@@ -150,6 +153,14 @@ class TokiboshiVpnService : VpnService(), PlatformInterface, CommandServerHandle
         }
         // Own subscription/control traffic must never recurse through the tunnel.
         b.addDisallowedApplication(packageName)
+        for (app in excludedApps) {
+            if (app == packageName) continue
+            try {
+                b.addDisallowedApplication(app)
+            } catch (_: android.content.pm.PackageManager.NameNotFoundException) {
+                VpnState.log("已跳过不可用的排除应用：$app")
+            }
+        }
         val descriptor=b.establish() ?: error("系统拒绝创建 VPN 网卡")
         tunnel=descriptor;return descriptor.fd
     }

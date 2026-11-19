@@ -28,6 +28,7 @@ import '../ui/diagnostics.dart';
 import 'android_bridge.dart';
 import 'android_controller.dart';
 import 'android_import_io.dart';
+import 'android_vpn_settings.dart';
 
 class AndroidApp extends StatefulWidget {
   const AndroidApp({
@@ -1055,11 +1056,15 @@ class _AndroidShellState extends State<AndroidShell> {
                   onTap: c.busy ? null : editAgent,
                 ),
                 const Divider(),
-                const ListTile(
+                ListTile(
                   contentPadding: EdgeInsets.zero,
-                  leading: Icon(Icons.shield_outlined),
-                  title: Text('Android VPN 模式'),
-                  subtitle: Text('通过系统 VPN 接管流量；不需要 root。应用退到后台后，由前台服务继续运行。'),
+                  leading: const Icon(Icons.shield_outlined),
+                  title: const Text('Android VPN 设置'),
+                  subtitle: const Text('应用排除、网卡 MTU、系统 VPN 与通知'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                          builder: (_) => AndroidVpnSettings(controller: c))),
                 ),
               ],
             ),

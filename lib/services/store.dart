@@ -160,6 +160,8 @@ class AppData {
     this.ruleSetPending = const {},
     this.ruleSetAutoUpdate = false,
     this.templateRouting = const {},
+    this.androidMtu = 1500,
+    this.androidExcludedApps = const [],
   }) : clashApiSecret = clashApiSecret ?? '';
 
   List<NodeInfo> nodes;
@@ -218,6 +220,8 @@ class AppData {
   /// value：缺失 = 启用+默认出站；'off' = 关闭；'reject' / 'direct' /
   /// 'proxy' / 节点名 = 启用+指定出站。
   Map<String, String> templateRouting;
+  int androidMtu;
+  List<String> androidExcludedApps;
 
   /// null: legacy unique-source inference; empty: explicit built-in template.
   String? activeProfileId;
@@ -253,6 +257,8 @@ class AppData {
         ruleSetPending: Set.of(ruleSetPending),
         ruleSetAutoUpdate: ruleSetAutoUpdate,
         templateRouting: Map.of(templateRouting),
+        androidMtu: androidMtu,
+        androidExcludedApps: List.of(androidExcludedApps),
         activeProfileId: activeProfileId,
       );
 }
@@ -399,6 +405,16 @@ class Store {
             ? (map['ruleSetPending'] as List).whereType<String>().toSet()
             : {}),
         ruleSetAutoUpdate: map['ruleSetAutoUpdate'] == true,
+        androidMtu: map['androidMtu'] is int &&
+                [1280, 1400, 1500].contains(map['androidMtu'])
+            ? map['androidMtu'] as int
+            : 1500,
+        androidExcludedApps: (map['androidExcludedApps'] is List
+            ? (map['androidExcludedApps'] as List)
+                .whereType<String>()
+                .take(512)
+                .toList()
+            : const []),
         activeProfileId: map['activeProfileId'] is String
             ? map['activeProfileId'] as String
             : null,
@@ -450,6 +466,8 @@ class Store {
         'ruleSetLastUpdate': data.ruleSetLastUpdate,
         'ruleSetPending': data.ruleSetPending.toList(),
         'ruleSetAutoUpdate': data.ruleSetAutoUpdate,
+        'androidMtu': data.androidMtu,
+        'androidExcludedApps': data.androidExcludedApps,
         'activeProfileId': data.activeProfileId,
       };
 

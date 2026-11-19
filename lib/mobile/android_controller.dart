@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:convert';
+import 'android_bridge.dart';
 
 import 'package:flutter/foundation.dart';
 
@@ -193,17 +195,29 @@ class AndroidController extends ChangeNotifier {
           )[nodes.indexOf(selected)],
           profileJson: profile?.profileJson ?? '',
         );
-        final file = await store.writeRuntimeConfig(
-          applyClientPreferences(
-            injectClashSecret(config, data.clashApiSecret),
-            data.client,
-            hasProfile: profile != null,
-          ),
+        var runtimeConfig = applyClientPreferences(
+          injectClashSecret(config, data.clashApiSecret),
+          data.client,
+          hasProfile: profile != null,
         );
-        await bridge.startCore(
-          singBoxPath: 'libbox://1.14.4',
-          configPath: file.path,
-        );
+        final android = bridge;
+        if (android is AndroidCoreBridge && data.androidMtu != 1500) {
+          final json = jsonDecode(runtimeConfig) as Map<String, dynamic>;
+          final tun =
+              (json['inbounds'] as List).firstWhere((i) => i['type'] == 'tun');
+          tun['mtu'] = data.androidMtu;
+          runtimeConfig = jsonEncode(json);
+        }
+        final file = await store.writeRuntimeConfig(runtimeConfig);
+        if (android is AndroidCoreBridge) {
+          await android.startCore(
+              singBoxPath: 'libbox://1.14.4',
+              configPath: file.path,
+              excludedApps: data.androidExcludedApps);
+        } else {
+          await bridge.startCore(
+              singBoxPath: 'libbox://1.14.4', configPath: file.path);
+        }
         running = await bridge.coreRunning();
         if (!running) throw const FormatException('VPN 服务未就绪');
         monitor.configure(
@@ -541,6 +555,22 @@ class AndroidController extends ChangeNotifier {
         next.ui = value;
         await commit(next);
       });
+  Future<void> saveVpnSettings({int? mtu, List<String>? excludedApps}) =>
+      operation(() async {
+        final next = data.copyWith();
+        if (mtu != null) {
+          if (![1280, 1400, 1500].contains(mtu))
+            throw const FormatException('不支持的 MTU');
+          next.androidMtu = mtu;
+        }
+        if (excludedApps != null) {
+          if (excludedApps.length > 512) throw const FormatException('排除应用过多');
+          next.androidExcludedApps = excludedApps.toSet().toList();
+        }
+        await commit(next);
+        report(running ? 'VPN 设置已保存，下次连接生效' : 'VPN 设置已保存');
+      }, propagate: true);
+
   Future<void> saveOptions({
     bool? autoConnect,
     bool? verifyTls,
