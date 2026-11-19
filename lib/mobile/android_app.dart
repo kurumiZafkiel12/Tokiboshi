@@ -14,6 +14,7 @@ import '../ui/preferences.dart';
 import '../ui/motion.dart';
 import '../ui/traffic_chart.dart';
 import '../ui/import_dialog.dart';
+import '../ui/subscription_editor.dart';
 import '../ui/diagnostics.dart';
 import 'android_bridge.dart';
 import 'android_controller.dart';
@@ -372,7 +373,7 @@ class _AndroidShellState extends State<AndroidShell> {
                     const Text('sing-box 1.14.4 · Android VPN',
                         style: TextStyle(fontSize: 12))
                 ])),
-            if (!compact) const Tag('$kAppVersion r2')
+            if (!compact) const Tag(kAppVersion)
           ]),
           const SizedBox(height: 12),
           Row(children: [
@@ -703,6 +704,11 @@ class _AndroidShellState extends State<AndroidShell> {
                             TextButton(
                                 onPressed: c.busy || c.running
                                     ? null
+                                    : () => editSub(s),
+                                child: const Text('编辑')),
+                            TextButton(
+                                onPressed: c.busy || c.running
+                                    ? null
                                     : () async {
                                         if (await confirm(
                                             '删除来源「${s.name}」及其节点？'))
@@ -789,7 +795,7 @@ class _AndroidShellState extends State<AndroidShell> {
                   title: const Text('订阅 User-Agent'),
                   subtitle: Text(
                       c.data.desktop.userAgent.isEmpty
-                          ? '默认 Clash.Meta Tokiboshi/0.0.9'
+                          ? '默认 Clash.Meta Tokiboshi/$kAppVersion'
                           : c.data.desktop.userAgent,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis),
@@ -826,7 +832,7 @@ class _AndroidShellState extends State<AndroidShell> {
                   contentPadding: EdgeInsets.zero,
                   title: Text('Tokiboshi · 時の星'),
                   subtitle: Text(
-                      'Android 0.0.9 r2 · build 11\nsing-box / libbox 1.14.4')),
+                      'Android $kAppVersion · build $kAppBuild\nsing-box / libbox 1.14.4')),
               ListTile(
                   contentPadding: EdgeInsets.zero,
                   title: const Text('项目与下载'),
@@ -842,7 +848,7 @@ class _AndroidShellState extends State<AndroidShell> {
                   onTap: () => showLicensePage(
                       context: context,
                       applicationName: 'Tokiboshi · 時の星',
-                      applicationVersion: '0.0.9 r2 · Android')),
+                      applicationVersion: '$kAppVersion · Android')),
               const Padding(
                   padding: EdgeInsets.symmetric(vertical: 8),
                   child: Text(
@@ -867,6 +873,11 @@ class _AndroidShellState extends State<AndroidShell> {
                 Text(subtitle, textAlign: TextAlign.center),
                 if (action != null) ...[const SizedBox(height: 18), action]
               ])));
+  Future<void> editSub(Subscription s) async {
+    await editSubscription(context, s,
+        onSave: (next) => c.editSource(next));
+  }
+
   Future<void> editAgent() async {
     final text = TextEditingController(text: c.data.desktop.userAgent);
     final value = await showDialog<String>(
