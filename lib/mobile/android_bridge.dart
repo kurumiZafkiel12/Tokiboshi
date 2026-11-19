@@ -19,10 +19,12 @@ class AndroidCoreBridge extends RustCoreBridge {
   Future<void> startCore({
     required String singBoxPath,
     required String configPath,
+    List<String> excludedApps = const [],
   }) async {
     final accepted = await channel.invokeMethod<bool>('prepare');
     if (accepted != true) throw const FormatException('已取消 VPN 授权，未建立连接');
-    await channel.invokeMethod<void>('start', {'configPath': configPath});
+    await channel.invokeMethod<void>(
+        'start', {'configPath': configPath, 'excludedApps': excludedApps});
     try {
       for (var i = 0; i < 200; i++) {
         await Future<void>.delayed(const Duration(milliseconds: 150));

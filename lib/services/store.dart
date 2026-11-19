@@ -154,6 +154,8 @@ class AppData {
     this.activeProfileId,
     this.desktop = const DesktopSettings(),
     this.client = const ClientPreferences(),
+    this.androidMtu = 1500,
+    this.androidExcludedApps = const [],
   }) : clashApiSecret = clashApiSecret ?? '';
 
   List<NodeInfo> nodes;
@@ -203,6 +205,8 @@ class AppData {
   UiPreferences ui;
   DesktopSettings desktop;
   ClientPreferences client;
+  int androidMtu;
+  List<String> androidExcludedApps;
 
   /// null: legacy unique-source inference; empty: explicit built-in template.
   String? activeProfileId;
@@ -232,6 +236,8 @@ class AppData {
         ui: ui,
         desktop: desktop,
         client: client,
+        androidMtu: androidMtu,
+        androidExcludedApps: List.of(androidExcludedApps),
         activeProfileId: activeProfileId,
       );
 }
@@ -361,6 +367,16 @@ class Store {
         ui: UiPreferences.fromJson(map['ui']),
         desktop: DesktopSettings.fromJson(map['desktop']),
         client: ClientPreferences.fromJson(map['client'], strict: true),
+        androidMtu: map['androidMtu'] is int &&
+                [1280, 1400, 1500].contains(map['androidMtu'])
+            ? map['androidMtu'] as int
+            : 1500,
+        androidExcludedApps: (map['androidExcludedApps'] is List
+            ? (map['androidExcludedApps'] as List)
+                .whereType<String>()
+                .take(512)
+                .toList()
+            : const []),
         activeProfileId: map['activeProfileId'] is String
             ? map['activeProfileId'] as String
             : null,
@@ -406,6 +422,8 @@ class Store {
         'ui': data.ui.toJson(),
         'desktop': data.desktop.toJson(),
         'client': data.client.toJson(),
+        'androidMtu': data.androidMtu,
+        'androidExcludedApps': data.androidExcludedApps,
         'activeProfileId': data.activeProfileId,
       };
 
