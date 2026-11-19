@@ -1266,6 +1266,7 @@ class _AndroidShellState extends State<AndroidShell> {
                   padding: const EdgeInsets.all(16),
                   children: [
                     ClientSettings(
+                      mobile: true,
                       value: c.data.client,
                       busy: c.busy,
                       onSave: c.saveClient,
