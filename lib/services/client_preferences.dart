@@ -174,11 +174,17 @@ String applyClientPreferences(
   final route = config['route'] as Map<String, dynamic>;
   final rules = (route['rules'] as List? ?? []).whereType<Map>().toList();
   if (preferences.rules.any((r) => r.enabled)) {
+    // Preserve mandatory inbound inspection and DNS interception before routing.
+    final inboundRules = rules
+        .takeWhile((r) => r['action'] == 'sniff' || r['action'] == 'hijack-dns')
+        .toList();
+    final routingRules = rules.skip(inboundRules.length);
     // Mode overrides precede user rules. User rules precede template/profile rules.
     route['rules'] = [
-      ...rules.where((r) => r.containsKey('clash_mode')),
+      ...inboundRules,
+      ...routingRules.where((r) => r.containsKey('clash_mode')),
       ...preferences.rules.where((r) => r.enabled).map((r) => r.config),
-      ...rules.where((r) => !r.containsKey('clash_mode')),
+      ...routingRules.where((r) => !r.containsKey('clash_mode')),
     ];
   }
   if (preferences.dnsEnabled && !hasProfile) {

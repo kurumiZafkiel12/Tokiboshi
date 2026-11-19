@@ -10,6 +10,7 @@ import 'package:tokiboshi/mobile/android_bridge.dart';
 import 'package:tokiboshi/mobile/android_controller.dart';
 import 'package:tokiboshi/bridge/core_bridge.dart';
 import 'package:tokiboshi/services/store.dart';
+import 'package:tokiboshi/services/client_preferences.dart';
 import 'package:tokiboshi/ui/preferences.dart';
 import 'package:tokiboshi/ui/import_dialog.dart';
 import 'package:tokiboshi/services/subscription_fetcher.dart';
@@ -40,6 +41,56 @@ void main() {
         config['experimental']['clash_api']
             .containsKey('external_ui_download_url'),
         false);
+  });
+  test('Android preferences preserve DNS interception before custom reject rules', () {
+    final config = jsonDecode(applyClientPreferences(androidConfig(sample),
+      const ClientPreferences(rules: [
+        RoutingRule(kind: 'port', value: '53', target: 'reject')
+      ]), hasProfile: false));
+    expect(config['route']['rules'].map((rule) => rule['action']),
+        ['sniff', 'hijack-dns', 'reject']);
+  });
+  test('Android scheduled refresh preserves old source on failure and clears ambiguous exit', () async {
+    final store = MemoryStore();
+    const url = 'https://fixture.example/scheduled';
+    const source = Subscription(id: 'source', name: 'Fixture', url: url,
+        refreshMinutes: 30, updatedAt: '2020-01-01');
+    final fetcher = FakeFetcher({});
+    final bridge = FakeBridge();
+    final previous = (await bridge.parseShareLink('ss://fixture#old')).withSource(source.id);
+    store.data
+      ..nodes = [previous]
+      ..subscriptions = [source]
+      ..selectedIndex = 0;
+    final c = AndroidController(bridge: bridge, store: store, data: store.data,
+        fetcher: fetcher);
+    addTearDown(c.dispose);
+    c.running = true;
+    await c.refreshDueSources();
+    expect(fetcher.requested, isEmpty);
+    c.running = false;
+    await c.refreshDueSources();
+    expect(c.data.selected, same(previous));
+    expect(c.data.subscriptions.single.lastError, isNotNull);
+    fetcher.responses[url] = 'ss://fixture#first\nss://fixture#second';
+    await c.refreshDueSources();
+    expect(fetcher.requested, [url]);
+    await c.updateSource(c.data.subscriptions.single, (_) async => false);
+    expect(c.data.nodes, hasLength(2));
+    expect(c.data.selectedIndex, -1);
+    expect(c.data.subscriptions.single.refreshMinutes, 30);
+    expect(c.data.subscriptions.single.lastError, isNull);
+  });
+  test('Android source editor receives failed write and retains original source', () async {
+    final store = FailingMobileStore();
+    const source = Subscription(id: 'source', name: 'Before',
+        url: 'https://fixture.example/sub');
+    store.data.subscriptions = [source];
+    final c = AndroidController(bridge: FakeBridge(), store: store, data: store.data);
+    addTearDown(c.dispose);
+    await expectLater(c.editSource(source, source.copyWith(name: 'After')),
+        throwsA(isA<FileSystemException>()));
+    expect(c.data.subscriptions.single, same(source));
   });
   test('Android declined VPN consent never starts a service', () async {
     final calls = <String>[];
