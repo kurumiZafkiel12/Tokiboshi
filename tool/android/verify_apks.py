@@ -9,7 +9,7 @@ def alignment(data):
  if cls==2:offset=struct.unpack_from('<Q',data,32)[0];size,count=struct.unpack_from('<HH',data,54);fmt='<IIQQQQQQ'
  else:offset=struct.unpack_from('<I',data,28)[0];size,count=struct.unpack_from('<HH',data,42);fmt='<IIIIIIII'
  return [struct.unpack_from(fmt,data,offset+i*size)[-1] for i in range(count) if struct.unpack_from('<I',data,offset+i*size)[0]==1]
-for abi,code in [('arm64-v8a',2014),('armeabi-v7a',1014),('x86_64',4014)]:
+for abi,code in [('arm64-v8a',2015),('armeabi-v7a',1015),('x86_64',4015)]:
  source=root/f'build/app/outputs/flutter-apk/app-{abi}-release.apk';assert source.is_file(),source
  apk=packages/f'Tokiboshi-0.1.0-android-{abi}.apk';apk.write_bytes(source.read_bytes())
  check=subprocess.run([str(tools/'apksigner'),'verify','--verbose','--print-certs',str(apk)],capture_output=True,text=True,check=True).stdout
