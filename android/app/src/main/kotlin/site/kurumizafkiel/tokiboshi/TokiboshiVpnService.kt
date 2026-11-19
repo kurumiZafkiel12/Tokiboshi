@@ -131,11 +131,11 @@ class TokiboshiVpnService : VpnService(), PlatformInterface, CommandServerHandle
         if(Build.VERSION.SDK_INT>=26)manager.createNotificationChannel(NotificationChannel(CHANNEL,"VPN 连接",NotificationManager.IMPORTANCE_LOW))
         val pending=PendingIntent.getActivity(this,0,Intent(this,MainActivity::class.java),PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         val builder=if(Build.VERSION.SDK_INT>=26)android.app.Notification.Builder(this,CHANNEL)else android.app.Notification.Builder(this)
-        startForeground(1,builder.setSmallIcon(site.kurumizafkiel.tokiboshi.R.drawable.ic_vpn).setContentTitle("Tokiboshi · 時の星").setContentText(text).setContentIntent(pending).setOngoing(true).build())
+        startForeground(1,builder.setSmallIcon(site.kurumizafkiel.tokiboshi.R.drawable.ic_vpn).setContentTitle(getString(R.string.app_name)).setContentText(text).setContentIntent(pending).setOngoing(true).build())
     }
     override fun openTun(options:TunOptions):Int {
         check(prepare(this)==null){"VPN 授权已取消"}
-        val b=Builder().setSession("Tokiboshi").setMtu(options.mtu)
+        val b=Builder().setSession(getString(R.string.app_name)).setMtu(options.mtu)
         if(Build.VERSION.SDK_INT>=29)b.setMetered(false)
         val v4=options.inet4Address;while(v4.hasNext()){val p=v4.next();b.addAddress(p.address(),p.prefix())}
         val v6=options.inet6Address;while(v6.hasNext()){val p=v6.next();b.addAddress(p.address(),p.prefix())}

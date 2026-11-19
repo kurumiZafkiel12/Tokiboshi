@@ -1,3 +1,6 @@
+const String kAppName = 'Tokiboshi';
+const String kInAppName = '時の星';
+
 /// App display version. Kept as a single constant (pubspec version is
 /// the build source of truth; these must be bumped together) until a
 /// package_info dependency is warranted.
