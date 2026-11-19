@@ -13,6 +13,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 import '../app_version.dart';
+import '../bridge/core_bridge.dart';
 import '../services/store.dart';
 import '../services/active_profile.dart';
 import '../services/import_io.dart';
@@ -156,6 +157,8 @@ class _AndroidShellState extends State<AndroidShell> {
   int page = 0;
   String search = '';
   String? source;
+  String? providerGroup;
+  NodeInfo? policyFilter;
   String? get activeId {
     try {
       return activeProfile(c.data)?.id ?? '';
@@ -690,12 +693,28 @@ class _AndroidShellState extends State<AndroidShell> {
         ],
       );
   Widget nodes() {
-    final filtered = c.data.nodes.indexed.where((entry) {
+    final all = c.data.nodes;
+    final sourceId =
+        c.data.subscriptions.any((s) => s.id == source) ? source : null;
+    final scoped = all.where((n) => sourceId == null || n.source == sourceId);
+    final groups = scoped
+        .where((n) => !n.isPolicy && n.group.isNotEmpty)
+        .map((n) => n.group)
+        .toSet();
+    final policies = scoped.where((n) => n.isPolicy).toList();
+    final group = groups.contains(providerGroup) ? providerGroup : null;
+    final policy = policies.contains(policyFilter) ? policyFilter : null;
+    final members =
+        policy == null ? null : policyNodeIndices(all, all.indexOf(policy));
+    final query = search.toLowerCase();
+    final filtered = all.indexed.where((entry) {
       final n = entry.$2;
-      return (source == null || n.source == source) &&
-          '${n.name} ${n.server} ${n.group}'.toLowerCase().contains(
-                search.toLowerCase(),
-              );
+      return (sourceId == null || n.source == sourceId) &&
+          (group == null || n.group == group) &&
+          (members == null || members.contains(entry.$1) || n == policy) &&
+          '${n.name} ${n.server} ${n.group} ${n.protocol}'
+              .toLowerCase()
+              .contains(query);
     }).toList();
     return Column(
       children: [
@@ -720,8 +739,12 @@ class _AndroidShellState extends State<AndroidShell> {
                   label: Text(
                     '全部 ${c.data.nodes.where((n) => !n.isPolicy).length}',
                   ),
-                  selected: source == null,
-                  onSelected: (_) => setState(() => source = null),
+                  selected: sourceId == null,
+                  onSelected: (_) => setState(() {
+                    source = null;
+                    providerGroup = null;
+                    policyFilter = null;
+                  }),
                 ),
               ),
               for (final s in c.data.subscriptions)
@@ -729,13 +752,45 @@ class _AndroidShellState extends State<AndroidShell> {
                   padding: const EdgeInsets.only(right: 8),
                   child: ChoiceChip(
                     label: Text(s.name),
-                    selected: source == s.id,
-                    onSelected: (_) => setState(() => source = s.id),
+                    selected: sourceId == s.id,
+                    onSelected: (_) => setState(() {
+                      source = s.id;
+                      providerGroup = null;
+                      policyFilter = null;
+                    }),
                   ),
                 ),
             ],
           ),
         ),
+        if (groups.isNotEmpty || policies.isNotEmpty)
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.fromLTRB(14, 6, 14, 0),
+            child: Row(children: [
+              for (final name in groups)
+                Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: FilterChip(
+                        label: Text(name),
+                        selected: group == name,
+                        onSelected: (on) => setState(() {
+                              providerGroup = on ? name : null;
+                              policyFilter = null;
+                            }))),
+              for (final item in policies)
+                Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: FilterChip(
+                        label: Text(item.name),
+                        avatar: const Icon(Icons.alt_route, size: 16),
+                        selected: policy == item,
+                        onSelected: (on) => setState(() {
+                              policyFilter = on ? item : null;
+                              providerGroup = null;
+                            }))),
+            ]),
+          ),
         const SizedBox(height: 8),
         Expanded(
           child: filtered.isEmpty
@@ -786,8 +841,11 @@ class _AndroidShellState extends State<AndroidShell> {
                                   );
                                 if (v == 'delay') c.measure(index);
                                 if (v == 'delete' &&
-                                    await confirm('删除节点「${n.name}」？'))
-                                  c.removeNode(index);
+                                    await confirm('删除节点「${n.name}」？')) {
+                                  final current = c.data.nodes.indexOf(n);
+                                  if (mounted && current >= 0)
+                                    c.removeNode(current);
+                                }
                               },
                               itemBuilder: (_) => [
                                 const PopupMenuItem(
@@ -1150,7 +1208,8 @@ class _AndroidShellState extends State<AndroidShell> {
         ),
       );
   Future<void> editSub(Subscription s) async {
-    await editSubscription(context, s, onSave: (next) => c.editSource(s, next));
+    await editSubscription(context, s,
+        mobile: true, onSave: (next) => c.editSource(s, next));
   }
 
   Future<void> editAgent() async {

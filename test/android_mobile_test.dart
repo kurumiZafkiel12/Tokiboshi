@@ -42,28 +42,38 @@ void main() {
             .containsKey('external_ui_download_url'),
         false);
   });
-  test('Android preferences preserve DNS interception before custom reject rules', () {
-    final config = jsonDecode(applyClientPreferences(androidConfig(sample),
-      const ClientPreferences(rules: [
-        RoutingRule(kind: 'port', value: '53', target: 'reject')
-      ]), hasProfile: false));
+  test(
+      'Android preferences preserve DNS interception before custom reject rules',
+      () {
+    final config = jsonDecode(applyClientPreferences(
+        androidConfig(sample),
+        const ClientPreferences(
+            rules: [RoutingRule(kind: 'port', value: '53', target: 'reject')]),
+        hasProfile: false));
     expect(config['route']['rules'].map((rule) => rule['action']),
         ['sniff', 'hijack-dns', 'reject']);
   });
-  test('Android scheduled refresh preserves old source on failure and clears ambiguous exit', () async {
+  test(
+      'Android scheduled refresh preserves old source on failure and clears ambiguous exit',
+      () async {
     final store = MemoryStore();
     const url = 'https://fixture.example/scheduled';
-    const source = Subscription(id: 'source', name: 'Fixture', url: url,
-        refreshMinutes: 30, updatedAt: '2020-01-01');
+    const source = Subscription(
+        id: 'source',
+        name: 'Fixture',
+        url: url,
+        refreshMinutes: 30,
+        updatedAt: '2020-01-01');
     final fetcher = FakeFetcher({});
     final bridge = FakeBridge();
-    final previous = (await bridge.parseShareLink('ss://fixture#old')).withSource(source.id);
+    final previous =
+        (await bridge.parseShareLink('ss://fixture#old')).withSource(source.id);
     store.data
       ..nodes = [previous]
       ..subscriptions = [source]
       ..selectedIndex = 0;
-    final c = AndroidController(bridge: bridge, store: store, data: store.data,
-        fetcher: fetcher);
+    final c = AndroidController(
+        bridge: bridge, store: store, data: store.data, fetcher: fetcher);
     addTearDown(c.dispose);
     c.running = true;
     await c.refreshDueSources();
@@ -81,12 +91,15 @@ void main() {
     expect(c.data.subscriptions.single.refreshMinutes, 30);
     expect(c.data.subscriptions.single.lastError, isNull);
   });
-  test('Android source editor receives failed write and retains original source', () async {
+  test(
+      'Android source editor receives failed write and retains original source',
+      () async {
     final store = FailingMobileStore();
-    const source = Subscription(id: 'source', name: 'Before',
-        url: 'https://fixture.example/sub');
+    const source = Subscription(
+        id: 'source', name: 'Before', url: 'https://fixture.example/sub');
     store.data.subscriptions = [source];
-    final c = AndroidController(bridge: FakeBridge(), store: store, data: store.data);
+    final c =
+        AndroidController(bridge: FakeBridge(), store: store, data: store.data);
     addTearDown(c.dispose);
     await expectLater(c.editSource(source, source.copyWith(name: 'After')),
         throwsA(isA<FileSystemException>()));

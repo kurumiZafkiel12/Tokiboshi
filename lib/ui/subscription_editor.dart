@@ -6,7 +6,7 @@ import 'preferences.dart';
 
 Future<Subscription?> editSubscription(
         BuildContext context, Subscription source,
-        {Future<void> Function(Subscription)? onSave}) =>
+        {Future<void> Function(Subscription)? onSave, bool mobile = false}) =>
     showGeneralDialog<Subscription>(
         context: context,
         barrierDismissible: false,
@@ -19,11 +19,13 @@ Future<Subscription?> editSubscription(
                     .animate(CurvedAnimation(
                         parent: animation, curve: Curves.easeOutCubic)),
                 child: child)),
-        pageBuilder: (_, __, ___) =>
-            _SubscriptionEditor(source: source, onSave: onSave));
+        pageBuilder: (_, __, ___) => _SubscriptionEditor(
+            source: source, onSave: onSave, mobile: mobile));
 
 class _SubscriptionEditor extends StatefulWidget {
-  const _SubscriptionEditor({required this.source, this.onSave});
+  const _SubscriptionEditor(
+      {required this.source, this.onSave, required this.mobile});
+  final bool mobile;
   final Subscription source;
   final Future<void> Function(Subscription)? onSave;
   @override
@@ -167,41 +169,49 @@ class _SubscriptionEditorState extends State<_SubscriptionEditor> {
                                                     : Icons
                                                         .visibility_outlined))))
                                   else
-                                    const Text('本地来源保留原文件或粘贴内容。更新时重新读取该来源。'),
+                                    Text(widget.mobile
+                                        ? '手机保留导入时的内容。重新解析会使用已保存的副本。'
+                                        : '本地来源保留原文件或粘贴内容。更新时重新读取该来源。'),
+                                  if (!widget.mobile ||
+                                      widget.source.isRemote) ...[
+                                    const SizedBox(height: 24),
+                                    DropdownButtonFormField<int>(
+                                        initialValue: interval,
+                                        decoration: const InputDecoration(
+                                            labelText: '自动更新'),
+                                        items: [
+                                          for (final n in {
+                                            0,
+                                            30,
+                                            60,
+                                            180,
+                                            360,
+                                            720,
+                                            1440,
+                                            interval
+                                          })
+                                            DropdownMenuItem(
+                                                value: n,
+                                                child: Text(n == 0
+                                                    ? '仅手动更新'
+                                                    : n < 60
+                                                        ? '每 $n 分钟'
+                                                        : '每 ${n ~/ 60} 小时'))
+                                        ],
+                                        onChanged: (v) =>
+                                            setState(() => interval = v ?? 0)),
+                                    const SizedBox(height: 16),
+                                    Text(
+                                        widget.mobile
+                                            ? '应用在前台且 VPN 已断开时检查更新。更新失败会保留上次有效节点和规则。'
+                                            : '应用运行时检查更新时间。代理运行中将延后更新，停止后自动处理，避免中断当前连接。失败保留上次有效节点和规则。',
+                                        style: TextStyle(fontSize: 13)),
+                                  ],
                                   const SizedBox(height: 24),
-                                  DropdownButtonFormField<int>(
-                                      initialValue: interval,
-                                      decoration: const InputDecoration(
-                                          labelText: '自动更新'),
-                                      items: [
-                                        for (final n in {
-                                          0,
-                                          30,
-                                          60,
-                                          180,
-                                          360,
-                                          720,
-                                          1440,
-                                          interval
-                                        })
-                                          DropdownMenuItem(
-                                              value: n,
-                                              child: Text(n == 0
-                                                  ? '仅手动更新'
-                                                  : n < 60
-                                                      ? '每 $n 分钟'
-                                                      : '每 ${n ~/ 60} 小时'))
-                                      ],
-                                      onChanged: (v) =>
-                                          setState(() => interval = v ?? 0)),
-                                  const SizedBox(height: 16),
-                                  const Text(
-                                      '应用运行时检查更新时间。代理运行中将延后更新，停止后自动处理，避免中断当前连接。失败保留上次有效节点和规则。',
-                                      style: TextStyle(fontSize: 13)),
-                                  const SizedBox(height: 24),
-                                  const Panel(
-                                      child: Text(
-                                          '保存名称、地址和更新计划不会立即替换节点。地址修改后，请执行一次更新以验证新来源。')),
+                                  Panel(
+                                      child: Text(widget.source.isRemote
+                                          ? '保存名称、地址和更新计划不会立即替换节点。地址修改后，请执行一次更新以验证新来源。'
+                                          : '保存名称后，现有节点与规则保持原样。')),
                                   if (error != null)
                                     Padding(
                                         padding: const EdgeInsets.only(top: 16),
