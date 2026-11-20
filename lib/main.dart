@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:tray_manager/tray_manager.dart';
@@ -185,8 +186,7 @@ class TokiboshiApp extends StatelessWidget {
 /// set are skipped and surfaced by the caller via counts.
 Map<String, dynamic> convertProviderPayloadToSource(String body, String behavior) {
   final lines = body
-      .split('
-')
+      .split('\n')
       .map((l) => l.trim())
       .where((l) => l.isNotEmpty && !l.startsWith('#') && !l.startsWith('//'))
       .map((l) => l.startsWith('- ') ? l.substring(2).trim() : l)
@@ -775,10 +775,10 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
     setState(() => _busy = true);
     try {
       final outcome = await _fetchParseExpand(url);
-      if (outcome.profileJson != null) {
-        outcome.profileJson = await _materializeRuleProviders(
-            outcome.profileJson!, widget.fetcher, _message);
-      }
+      final materializedProfile = outcome.profileJson == null
+          ? null
+          : await _materializeRuleProviders(
+              outcome.profileJson!, widget.fetcher, (m) => _setMessage(m));
       final id = 'sub-${DateTime.now().millisecondsSinceEpoch}';
       final nodes = resolvePolicyGroups(outcome.nodes.map((n) => n.withSource(id)).toList());
       setState(() {
@@ -790,8 +790,8 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
             url: url,
             updatedAt: DateTime.now().toIso8601String(),
             lastReport: _subscriptionReport(outcome),
-            profileJson: outcome.profileJson,
-            profileState: outcome.profileJson == null ? 'nodes-only' : 'parsed',
+            profileJson: materializedProfile,
+            profileState: materializedProfile == null ? 'nodes-only' : 'parsed',
           ),
         ];
         _data.nodes = [..._data.nodes, ...nodes];
@@ -813,10 +813,10 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
     setState(() => _busy = true);
     try {
       final outcome = await _fetchParseExpand(sub.url);
-      if (outcome.profileJson != null) {
-        outcome.profileJson = await _materializeRuleProviders(
-            outcome.profileJson!, widget.fetcher, _message);
-      }
+      final materializedProfile = outcome.profileJson == null
+          ? null
+          : await _materializeRuleProviders(
+              outcome.profileJson!, widget.fetcher, (m) => _setMessage(m));
       final selected = _data.selected;
       final selectedFromSub = selected != null && selected.source == sub.id;
       var fresh = outcome.nodes.map((n) => n.withSource(sub.id)).toList();
@@ -834,8 +834,8 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
           for (final s in _data.subscriptions)
             if (s.id == sub.id)
               Subscription(id: s.id, name: s.name, url: s.url,
-                  profileJson: outcome.profileJson,
-                  profileState: outcome.profileJson == null ? 'nodes-only' : 'parsed',
+                  profileJson: materializedProfile,
+                  profileState: materializedProfile == null ? 'nodes-only' : 'parsed',
                   updatedAt: DateTime.now().toIso8601String(),
                   lastReport: '${_subscriptionReport(outcome)}${retained.isEmpty ? '' : '\n保留上次成功获取的 ${retained.length} 个节点（相关来源更新失败）'}')
             else

@@ -37,7 +37,9 @@ class _ToolboxPageState extends State<ToolboxPage> {
   HttpClient _proxyClient() {
     final c = HttpClient()
       ..connectionTimeout = const Duration(seconds: 8)
-      ..findProxy = (Uri uri) => 'PROXY 127.0.0.1:${widget.mixedPort}'
+      ..findProxy = (Uri uri) {
+        return 'PROXY 127.0.0.1:${widget.mixedPort}';
+      }
       ..autoUncompress = false;
     return c;
   }
@@ -95,8 +97,8 @@ class _ToolboxPageState extends State<ToolboxPage> {
     try {
       final req = await client.postUrl(Uri.parse('https://speed.cloudflare.com/__up'));
       req.headers.set(HttpHeaders.contentTypeHeader, 'application/octet-stream');
-      final done = req.add(payload);
-      await done.timeout(const Duration(seconds: 12));
+      req.add(payload);
+      await req.flush().timeout(const Duration(seconds: 12));
       final resp = await req.close().timeout(const Duration(seconds: 10));
       await resp.drain<void>();
       final secs = watch.elapsedMilliseconds / 1000;
