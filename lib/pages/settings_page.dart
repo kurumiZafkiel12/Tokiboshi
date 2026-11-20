@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../services/routing_presets.dart';
+
 import '../app_version.dart';
 
 /// Settings: local port, sing-box path, system proxy, about.
@@ -11,7 +13,9 @@ class SettingsPage extends StatefulWidget {
     required this.singBoxPath,
     required this.systemProxy,
     this.autoConnect = true,
+    this.routingPreset = 'balanced',
     this.onAutoConnectChanged,
+    this.onRoutingPresetChanged,
     required this.running,
     required this.dataFilePath,
     required this.onSave,
@@ -29,6 +33,10 @@ class SettingsPage extends StatefulWidget {
   final String singBoxPath;
   final bool systemProxy;
   final bool autoConnect;
+
+  /// 当前分流细分预设 id（routing_presets.dart 定义）。
+  final String routingPreset;
+  final ValueChanged<String>? onRoutingPresetChanged;
   final ValueChanged<bool>? onAutoConnectChanged;
   final bool running;
   final String dataFilePath;
@@ -189,6 +197,41 @@ class _SettingsPageState extends State<SettingsPage> {
                   child: Text(
                     '固定规则：私有/局域网地址直连、其余流量走代理（规则模式下）。下面两项可开关，改动后重启内核生效。',
                     style: TextStyle(fontSize: 12),
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 6, 16, 0),
+                  child: Text(
+                    '细分预设（优先于上面模板规则）',
+                    style: TextStyle(
+                        fontSize: 13,
+                        color: Theme.of(context).colorScheme.primary),
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+                  child: Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      for (final preset in routingPresets)
+                        ChoiceChip(
+                          label: Text(preset.name),
+                          selected: widget.routingPreset == preset.id,
+                          onSelected: (sel) {
+                            if (sel && preset.id != widget.routingPreset) {
+                              widget.onRoutingPresetChanged?.call(preset.id);
+                            }
+                          },
+                        ),
+                    ],
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 6),
+                  child: Text(
+                    presetById(widget.routingPreset).desc,
+                    style: const TextStyle(fontSize: 12),
                   ),
                 ),
                 SwitchListTile(

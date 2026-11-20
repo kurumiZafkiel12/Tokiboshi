@@ -21,6 +21,7 @@ import 'services/latency.dart';
 import 'services/local_ports.dart';
 import 'services/node_tags.dart';
 import 'services/proxy_chain.dart';
+import 'services/routing_presets.dart';
 import 'services/store.dart';
 import 'services/subscription_fetcher.dart';
 import 'services/subscription_resolver.dart';
@@ -1239,8 +1240,10 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
         selectedName: selected == null ? null : assignNodeTags(configNodes.map((n) => n.name))[configNodes.indexOf(selected)],
         profileJson: profile?.profileJson ?? '',
       );
-      final configFile = await widget.store
-          .writeRuntimeConfig(injectClashSecret(config, _data.clashApiSecret));
+      final presetted =
+          applyRoutingPreset(jsonDecode(config) as Map<String, dynamic>, _data.routingPreset);
+      final configFile = await widget.store.writeRuntimeConfig(
+          injectClashSecret(jsonEncode(presetted), _data.clashApiSecret));
       // Rule-set downloads run in the background after app start; if
       // they have not landed yet this config carries no 分流 rules.
       // The warning is appended to the RUNNING status message so it
@@ -1448,6 +1451,18 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
     }
   }
 
+  Future<void> _setRoutingPreset(String id) async {
+    setState(() => _data.routingPreset = id);
+    await _persist();
+    final p = presetById(id);
+    if (_running) {
+      _setMessage('分流预设「${p.name}」已切换，重启内核后生效');
+      await _restartCore();
+    } else {
+      _setMessage('分流预设：${p.name}');
+    }
+  }
+
   Future<void> _setMode(String mode) async {
     try {
       await _clash.setMode(mode);
@@ -1538,6 +1553,8 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
           singBoxPath: _data.singBoxPath,
           systemProxy: _data.systemProxy,
           autoConnect: _data.autoConnect,
+          routingPreset: _data.routingPreset,
+          onRoutingPresetChanged: _setRoutingPreset,
           onAutoConnectChanged: (value) {
             setState(() => _data.autoConnect = value);
             _persist();

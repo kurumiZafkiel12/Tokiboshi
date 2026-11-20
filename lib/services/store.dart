@@ -104,6 +104,7 @@ class AppData {
     this.cleanExit = true,
     this.runningAtExit = false,
     this.resumeConnect = false,
+    this.routingPreset = 'balanced',
   }) : clashApiSecret = clashApiSecret ?? '';
 
   List<NodeInfo> nodes;
@@ -149,6 +150,10 @@ class AppData {
   /// regardless of the autoConnect preference, then consumed on load.
   /// Never set by the daily auto-connect path.
   bool resumeConnect;
+
+  /// 内置分流细分预设 id（balanced/streaming/ai/harden，见
+  /// routing_presets.dart）；均衡 = 不注入额外规则。
+  String routingPreset;
 
   NodeInfo? get selected =>
       (selectedIndex >= 0 && selectedIndex < nodes.length)
@@ -291,6 +296,7 @@ class Store {
         cleanExit: (map['cleanExit'] as bool?) ?? true,
         runningAtExit: runningAtExitRaw ?? migratedRunningAtExit,
         resumeConnect: (map['resumeConnect'] as bool?) ?? false,
+        routingPreset: (map['routingPreset'] as String?) ?? 'balanced',
       );
     } catch (_) {
       return null;
@@ -332,6 +338,7 @@ class Store {
       'cleanExit': data.cleanExit,
       'runningAtExit': data.runningAtExit,
       'resumeConnect': data.resumeConnect,
+      'routingPreset': data.routingPreset,
     };
     // Rotation: previous main BECOMES the backup (rename, not copy),
     // then tmp becomes main. An unhealthy main is quarantined as
