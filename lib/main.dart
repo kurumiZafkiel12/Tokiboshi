@@ -718,7 +718,6 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
     if (sets.isEmpty) return profileJson;
     final dataDir = Directory('$_dataDir\\rules');
     await dataDir.create(recursive: true);
-    var changed = false;
     final reports = <String>[];
     final kept = <Map<String, dynamic>>[];
     for (final raw in sets) {
@@ -748,7 +747,6 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
           ..['path'] = dest.path
           ..remove('download_detour');
         kept.add(entry);
-        changed = true;
         reports.add('$tag 已转换为本地规则集');
       } catch (e) {
         reports.add('$tag 拉取/转换失败（$e），保留现有文件');

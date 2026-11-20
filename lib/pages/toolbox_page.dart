@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 
@@ -28,7 +27,6 @@ class _ToolboxPageState extends State<ToolboxPage> {
   String? _dlErr;
   String? _ulErr;
   int _dlProgress = 0; // 0-100
-  HttpClient? _dlClient;
 
   static const dlBytes = 100 * 1024 * 1024; // 100 MB 上限
   static const dlSeconds = 10;
