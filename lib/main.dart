@@ -14,6 +14,7 @@ import 'pages/logs_page.dart';
 import 'pages/nodes_page.dart';
 import 'pages/panel_page.dart';
 import 'pages/settings_page.dart';
+import 'pages/toolbox_page.dart';
 import 'pages/subscriptions_page.dart';
 import 'services/clash_api.dart';
 import 'services/latency.dart';
@@ -174,6 +175,79 @@ class TokiboshiApp extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Convert a Clash rule-provider payload (YAML rule lines) into a
+/// sing-box source rule-set JSON document (T069-S02). Behavior decides
+/// the line grammar: domain/ipcidr payloads carry no target; classic
+/// payloads carry TYPE,VALUE,TARGET. Entries outside the supported
+/// set are skipped and surfaced by the caller via counts.
+Map<String, dynamic> convertProviderPayloadToSource(String body, String behavior) {
+  final lines = body
+      .split('
+')
+      .map((l) => l.trim())
+      .where((l) => l.isNotEmpty && !l.startsWith('#') && !l.startsWith('//'))
+      .map((l) => l.startsWith('- ') ? l.substring(2).trim() : l)
+      .where((l) => l.isNotEmpty)
+      .toList();
+  if (lines.isEmpty) throw const FormatException('provider 载荷为空');
+  final domain = <String>[];
+  final suffix = <String>[];
+  final keyword = <String>[];
+  final cidr = <String>[];
+  final full = <Map<String, dynamic>>[];
+  var used = 0;
+  for (final line in lines) {
+    final parts = line.split(',').map((p) => p.trim()).where((p) => p.isNotEmpty).toList();
+    if (parts.isEmpty) continue;
+    final type = parts[0].toUpperCase();
+    switch (behavior.toLowerCase()) {
+      case 'domain':
+        if (parts.length == 1) {
+          domain.add(parts[0]);
+          used++;
+        } else if (parts.length >= 2) {
+          final v = parts[1];
+          if (type == 'DOMAIN') { domain.add(v); used++; }
+          else if (type == 'DOMAIN-SUFFIX') { suffix.add(v); used++; }
+          else if (type == 'DOMAIN-KEYWORD') { keyword.add(v); used++; }
+        }
+        break;
+      case 'ipcidr':
+        if (type == 'IP-CIDR' || type == 'IP-CIDR6') {
+          if (parts.length >= 2) { cidr.add(parts[1]); used++; }
+        }
+        break;
+      case 'classic':
+        if (parts.length < 3) continue;
+        final t = parts[0], v = parts[1], target = parts[2];
+        final entry = <String, dynamic>{'outbound': target};
+        switch (t) {
+          case 'DOMAIN': entry['domain'] = [v]; break;
+          case 'DOMAIN-SUFFIX': entry['domain_suffix'] = [v]; break;
+          case 'DOMAIN-KEYWORD': entry['domain_keyword'] = [v]; break;
+          case 'IP-CIDR' || 'IP-CIDR6': entry['ip_cidr'] = [v]; break;
+          default: continue;
+        }
+        full.add(entry);
+        used++;
+        break;
+      default:
+        // unknown behavior: skip lines
+        break;
+    }
+  }
+  if (used == 0) throw const FormatException('provider 载荷无可识别条目');
+  final rules = <Map<String, dynamic>>[
+    if (domain.isNotEmpty) {'domain': domain},
+    if (suffix.isNotEmpty) {'domain_suffix': suffix},
+    if (keyword.isNotEmpty) {'keyword': keyword},
+    if (cidr.isNotEmpty) {'ip_cidr': cidr},
+    ...full,
+  ];
+  if (rules.isEmpty) throw const FormatException('provider 载荷无可转换条目');
+  return {'version': 1, 'rules': rules};
 }
 
 class ShellPage extends StatefulWidget {
@@ -630,6 +704,62 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
     await _addSubscription(name, result.url);
   }
 
+  /// T069-S02: sing-box `remote`+`source` rule-sets expect sing-box
+  /// JSON, but Clash rule-provider payloads are YAML rule lines. Fetch
+  /// each provider payload, convert to a local source rule-set file
+  /// under <dataDir>/rules/, and rewrite the profile's rule_set
+  /// entries to local. Failures keep the previous file and are
+  /// reported through [onReport] - never silently dropped.
+  Future<String> _materializeRuleProviders(
+      String profileJson, SubscriptionFetcher fetcher, void Function(String) onReport) async {
+    final profile = jsonDecode(profileJson) as Map<String, dynamic>;
+    final sets = (profile['rule_sets'] as List<dynamic>? ?? []);
+    if (sets.isEmpty) return profileJson;
+    final dataDir = Directory('$_dataDir\\rules');
+    await dataDir.create(recursive: true);
+    var changed = false;
+    final reports = <String>[];
+    final kept = <Map<String, dynamic>>[];
+    for (final raw in sets) {
+      final entry = raw as Map<String, dynamic>;
+      final tag = entry['tag'] as String? ?? 'ruleset';
+      final fmt = (entry['__format'] as String?) ?? entry['format'] as String? ?? '';
+      final url = entry['__provider_url'] as String? ?? entry['url'] as String?;
+      final behavior = (entry['__behavior'] as String?) ?? '';
+      final isProviderPayload =
+          entry['__provider_url'] != null && (fmt == 'yaml' || fmt == 'text' || fmt.isEmpty);
+      if (!isProviderPayload) {
+        kept.add(entry);
+        continue;
+      }
+      try {
+        final body = await fetcher.fetch(url!, userAgent: 'Tokiboshi/1.0');
+        final converted = convertProviderPayloadToSource(body, behavior);
+        final dest = File('${dataDir.path}\\provider-$tag.json');
+        await dest.writeAsString(jsonEncode(converted), flush: true);
+        entry
+          ..remove('__provider_url')
+          ..remove('__provider_behavior')
+          ..remove('__provider_format')
+          ..remove('url')
+          ..['type'] = 'local'
+          ..['format'] = 'source'
+          ..['path'] = dest.path
+          ..remove('download_detour');
+        kept.add(entry);
+        changed = true;
+        reports.add('$tag 已转换为本地规则集');
+      } catch (e) {
+        reports.add('$tag 拉取/转换失败（$e），保留现有文件');
+      }
+    }
+    profile['rule_sets'] = kept;
+    if (reports.isNotEmpty) {
+      onReport('规则集维护：${reports.join('；')}');
+    }
+    return jsonEncode(profile);
+  }
+
   String _subscriptionReport(ParseOutcome outcome) {
     final counts = <String, int>{};
     for (final node in outcome.nodes) {
@@ -644,6 +774,10 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
     setState(() => _busy = true);
     try {
       final outcome = await _fetchParseExpand(url);
+      if (outcome.profileJson != null) {
+        outcome.profileJson = await _materializeRuleProviders(
+            outcome.profileJson!, widget.fetcher, _message);
+      }
       final id = 'sub-${DateTime.now().millisecondsSinceEpoch}';
       final nodes = resolvePolicyGroups(outcome.nodes.map((n) => n.withSource(id)).toList());
       setState(() {
@@ -678,6 +812,10 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
     setState(() => _busy = true);
     try {
       final outcome = await _fetchParseExpand(sub.url);
+      if (outcome.profileJson != null) {
+        outcome.profileJson = await _materializeRuleProviders(
+            outcome.profileJson!, widget.fetcher, _message);
+      }
       final selected = _data.selected;
       final selectedFromSub = selected != null && selected.source == sub.id;
       var fresh = outcome.nodes.map((n) => n.withSource(sub.id)).toList();
@@ -789,7 +927,7 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
   Future<void> _measureNode(NodeInfo node) async {
     if (_measuring) return;
     if (!_running && _udpProtocols.contains(node.protocol)) {
-      _setMessage('内核未启动：${node.protocol} 是 UDP 协议，测速需先启动内核');
+      _setMessage('内核未启动：${node.protocol} 是 UDP 协议，延迟测试需先启动内核');
       return;
     }
     _measuring = true;
@@ -1379,6 +1517,8 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
           onMeasureAll: _measureAll,
           onCreateChain: _createChainDialog,
         );
+      case 6:
+        page = ToolboxPage(running: _running, mixedPort: _data.mixedPort);
       case 3:
         page = SubscriptionsPage(
           subscriptions: _data.subscriptions,
@@ -1479,6 +1619,7 @@ class _ShellPageState extends State<ShellPage> with WindowListener, TrayListener
                 _navItem(0, Icons.dashboard_outlined, '仪表盘'),
                 _navItem(1, Icons.web_asset_outlined, '面板'),
                 _navItem(2, Icons.dns_outlined, '节点'),
+                _navItem(6, Icons.home_repair_service_outlined, '工具箱'),
                 _navItem(3, Icons.subscriptions_outlined, '订阅'),
                 _navItem(4, Icons.terminal_outlined, '日志'),
                 _navItem(5, Icons.settings_outlined, '设置'),

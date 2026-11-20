@@ -232,14 +232,14 @@ class DashboardPage extends StatelessWidget {
                               node == null
                                   ? '—'
                                   : (!selectedMeasured
-                                      ? '未测速'
+                                      ? '未测延迟'
                                       : (selectedLatency == null ? '超时' : '$selectedLatency ms')),
                               style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w600),
                             ),
                             const Spacer(),
                             IconButton(
                               icon: const Icon(Icons.refresh, size: 18),
-                              tooltip: '测速',
+                              tooltip: '延迟（测速）',
                               visualDensity: VisualDensity.compact,
                               onPressed: node == null ? null : onMeasureSelected,
                             ),

@@ -108,7 +108,7 @@ class _NodesPageState extends State<NodesPage> {
               OutlinedButton.icon(
                 onPressed: widget.busy ? null : widget.onMeasureAll,
                 icon: const Icon(Icons.speed, size: 18),
-                label: const Text('测速全部'),
+                label: const Text('延迟（测速）· 全部节点'),
               ),
               const SizedBox(width: 8),
               FilledButton.icon(
@@ -300,7 +300,7 @@ class _NodesPageState extends State<NodesPage> {
                   const Spacer(),
                   Text(
                     !hasLatency
-                        ? '未测速'
+                        ? '未测延迟'
                         : (ms == null ? '失败' : '$ms ms'),
                     style: TextStyle(
                       fontSize: 13,
