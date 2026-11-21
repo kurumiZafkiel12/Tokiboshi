@@ -41,10 +41,10 @@ void main() {
     expect(find.text('节点选择（2）'), findsOneWidget);
     // 分组筛选行已按用户要求移除（2026-11-21）：节点直接点选。
     expect(find.text('分组'), findsNothing);
-    await tester.tap(find.text('policy'));
+    expect(find.text('policy'), findsNothing);
+    await tester.tap(find.text('member'));
     await tester.pumpAndSettle();
-    expect(selected, 2);
-    expect(find.text('member'), findsOneWidget);
+    expect(selected, 0);
     expect(find.text('other'), findsOneWidget);
   });
 
