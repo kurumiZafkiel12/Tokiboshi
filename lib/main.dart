@@ -576,6 +576,17 @@ class _ShellPageState extends State<ShellPage>
 
   // ---- import / subscriptions ----
 
+  /// 内置分流模板规则的用户配置（开关 + 每条独立出站）。
+  /// value：'off' = 关闭；'' = 启用+默认出站；'reject' / 'direct' /
+  /// 'proxy' / 节点名 = 启用+指定出站。
+  void _setTemplateRouting(String id, String value) {
+    setState(() {
+      _data.templateRouting = Map.of(_data.templateRouting)..[id] = value;
+    });
+    unawaited(_persist());
+    _setMessage('分流规则已更新，${_running ? '重启内核后生效' : '下次启动生效'}');
+  }
+
   Future<void> _importDialog({String initialMethod = 'link'}) async {
     if (_running || _busy || _profileChanging || _settingsBusy) return;
     final request = await showDialog<ImportRequest>(
@@ -596,8 +607,7 @@ class _ShellPageState extends State<ShellPage>
       for (final line in lines) {
         if (isSubscriptionUrl(line)) {
           await _addSubscription(
-              request.name.isEmpty ? Uri.parse(line).host : request.name, line,
-              routing: request.routing);
+              request.name.isEmpty ? Uri.parse(line).host : request.name, line);
           if (_importCancelling || !mounted) return;
         } else {
           remaining.add(line);
@@ -605,12 +615,10 @@ class _ShellPageState extends State<ShellPage>
       }
       if (remaining.isNotEmpty)
         await _addSubscription(request.name.isEmpty ? '本地导入' : request.name, '',
-            routing: request.routing,
             content: remaining.join('\n'),
             manual: true);
     } else {
       await _addSubscription(request.name.isEmpty ? '本地导入' : request.name, '',
-          routing: request.routing,
           content: text,
           localPath: request.localPath,
           manual: request.manual);
@@ -620,7 +628,6 @@ class _ShellPageState extends State<ShellPage>
   Future<ParseOutcome> _fetchParseExpand(String url,
       {String? content,
       bool nodesOnly = false,
-      ImportRouting routing = ImportRouting.smart,
       bool interactive = true}) async {
     final fetcher = widget.fetcher is HttpSubscriptionFetcher
         ? HttpSubscriptionFetcher(
@@ -633,15 +640,13 @@ class _ShellPageState extends State<ShellPage>
         isCancelled: () => _importCancelling);
     try {
       final outcome = content == null
-          ? await resolver.resolve(url,
-              nodesOnly: nodesOnly || routing == ImportRouting.nodesOnly)
-          : await resolver.resolveContent(content,
-              nodesOnly: nodesOnly || routing == ImportRouting.nodesOnly);
+          ? await resolver.resolve(url, nodesOnly: nodesOnly)
+          : await resolver.resolveContent(content, nodesOnly: nodesOnly);
       if (!outcome.nodes.any((n) => !n.isPolicy))
         throw const FormatException('没有识别到可用节点，请检查内容和来源诊断');
       return outcome;
     } on ProfileCompatibilityException catch (e) {
-      if (routing == ImportRouting.full || !interactive) rethrow;
+      if (!interactive) rethrow;
       if (!e.nodesOnlyOutcome.nodes.any((n) => !n.isPolicy)) rethrow;
       if (!mounted) rethrow;
       final accepted = await showDialog<bool>(
@@ -792,10 +797,7 @@ class _ShellPageState extends State<ShellPage>
   }
 
   Future<void> _addSubscription(String name, String url,
-      {ImportRouting routing = ImportRouting.smart,
-      String? content,
-      String? localPath,
-      bool manual = false}) async {
+      {String? content, String? localPath, bool manual = false}) async {
     final before = _data.copyWith();
     setState(() {
       _busy = true;
@@ -805,8 +807,9 @@ class _ShellPageState extends State<ShellPage>
     });
     _setMessage('正在读取并解析来源…');
     try {
+      // 用户设定（2026-11-21）：订阅只导入节点，不再尝试识别来源规则 / DNS。
       final outcome =
-          await _fetchParseExpand(url, content: content, routing: routing);
+          await _fetchParseExpand(url, content: content, nodesOnly: true);
       if (manual && outcome.profileJson == null) {
         if (_importCancelling) throw const ImportCancelled();
         _importCommitting = true;
@@ -888,11 +891,9 @@ class _ShellPageState extends State<ShellPage>
           throw const FormatException('配置文件过大');
         content = await file.readAsString();
       }
+      // 仅节点设定：更新同样只取节点，不再尝试来源规则 / DNS。
       final outcome = await _fetchParseExpand(sub.url,
-          content: content,
-          nodesOnly: !retryFull && sub.nodesOnly,
-          routing: retryFull ? ImportRouting.full : ImportRouting.smart,
-          interactive: !automatic);
+          content: content, nodesOnly: true, interactive: !automatic);
       String? previousActive;
       try {
         previousActive = activeProfile(_data)?.id;
@@ -1450,6 +1451,7 @@ class _ShellPageState extends State<ShellPage>
       if (profile != null && selected.source != profile.id) {
         throw const FormatException('当前节点不属于规则订阅，请选择该订阅的节点或策略组');
       }
+      final nodeTags = assignNodeTags(configNodes.map((n) => n.name));
       final config = await widget.bridge.buildConfig(
         nodes: configNodes
             .map((n) => NodeSpec(name: n.name, outboundJson: n.outboundJson))
@@ -1460,8 +1462,8 @@ class _ShellPageState extends State<ShellPage>
         blockAds: _data.blockAds,
         bypassCn: _data.bypassCn,
         dataDir: _dataDir,
-        selectedName: assignNodeTags(
-            configNodes.map((n) => n.name))[configNodes.indexOf(selected)],
+        selectedName:
+            nodeTags[configNodes.indexOf(selected)],
         profileJson: profile?.profileJson ?? '',
       );
       if (_data.routingPreset != 'balanced' && _ruleResources.isEmpty) {
@@ -1472,8 +1474,13 @@ class _ShellPageState extends State<ShellPage>
           applyClientPreferences(
               applyNetworkSettings(
                   injectClashSecret(
-                      applyResourcePreset(config, _data.routingPreset,
-                          _ruleResources, _dataDir),
+                      applyTemplateRouting(
+                          applyResourcePreset(config, _data.routingPreset,
+                              _ruleResources, _dataDir),
+                          _data.templateRouting, {
+                        for (var i = 0; i < configNodes.length; i++)
+                          configNodes[i].name: nodeTags[i]
+                      }),
                       _data.clashApiSecret),
                   _data.desktop),
               _data.client,
@@ -1981,7 +1988,13 @@ class _ShellPageState extends State<ShellPage>
             onApply: _running ? _restartCore : _toggleCore,
             onSources: () => setState(() => _page = 3),
             blockAds: _data.blockAds,
-            bypassCn: _data.bypassCn);
+            bypassCn: _data.bypassCn,
+            templateRouting: _data.templateRouting,
+            nodeNames: _data.nodes
+                .where((n) => !n.isPolicy)
+                .map((n) => n.name)
+                .toList(),
+            onTemplateRouting: _setTemplateRouting);
       case 8:
         page = ToolboxPage(
           running: _running,

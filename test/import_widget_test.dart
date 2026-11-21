@@ -172,7 +172,7 @@ void main() {
     await t.pumpWidget(const SizedBox());
   });
   testWidgets(
-      'smart incompatibility requires consent and remembers node-only choice on update',
+      'imports are nodes-only: incompatible rules are skipped without a dialog',
       (t) async {
     final fetch = FakeFetcher({'https://fixture.example/sub': 'unsupported'});
     final (store, _) = await mount(t, fetcher: fetch);
@@ -183,10 +183,8 @@ void main() {
     await t.tap(find.text('导入').last);
     await t.pump();
     await t.pump(const Duration(milliseconds: 300));
-    expect(find.text('节点可导入，完整规则暂不兼容'), findsOneWidget);
-    expect(store.data.nodes, isEmpty);
-    await t.tap(find.text('仅导入节点'));
     await t.pumpAndSettle();
+    expect(find.text('节点可导入，完整规则暂不兼容'), findsNothing);
     expect(store.data.nodes.single.name, 'usable');
     expect(store.data.subscriptions.single.nodesOnly, true);
     expect(store.data.subscriptions.single.profileJson, isNull);
@@ -195,12 +193,11 @@ void main() {
     await t.pumpAndSettle();
     await t.tap(find.byTooltip('更新'));
     await t.pumpAndSettle();
-    expect(find.text('节点可导入，完整规则暂不兼容'), findsNothing);
     expect(store.data.nodes.length, 1);
     expect(fetch.requested.length, 2);
     await t.pumpWidget(const SizedBox());
   });
-  testWidgets('cancelling incompatible profile preserves existing data',
+  testWidgets('incompatible profile imports nodes-only alongside existing data',
       (t) async {
     final store = MemoryStore();
     store.data.nodes = const [
@@ -220,10 +217,11 @@ void main() {
     await t.tap(find.text('导入').last);
     await t.pump();
     await t.pump(const Duration(milliseconds: 300));
-    await t.tap(find.text('取消，保留原配置'));
     await t.pumpAndSettle();
-    expect(store.data.nodes.single.name, 'old');
-    expect(store.data.subscriptions, isEmpty);
+    expect(find.byType(AlertDialog), findsNothing);
+    expect(store.data.nodes.length, 2);
+    expect(store.data.nodes.map((n) => n.name), containsAll(['old', 'usable']));
+    expect(store.data.subscriptions.single.nodesOnly, true);
     await t.pumpWidget(const SizedBox());
   });
   testWidgets('failed import persistence rolls back nodes and sources',

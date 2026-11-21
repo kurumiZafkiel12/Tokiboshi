@@ -353,8 +353,6 @@ class AndroidController extends ChangeNotifier {
   Future<ParseOutcome> _resolve({
     required String url,
     String? content,
-    required ImportRouting routing,
-    required Future<bool> Function(ProfileCompatibilityException) consent,
   }) async {
     final resolver = SubscriptionResolver(
       bridge: bridge,
@@ -365,27 +363,14 @@ class AndroidController extends ChangeNotifier {
           ),
       isCancelled: () => cancelling || _disposed,
     );
-    try {
-      return content == null
-          ? await resolver.resolve(
-              url,
-              nodesOnly: routing == ImportRouting.nodesOnly,
-            )
-          : await resolver.resolveContent(
-              content,
-              nodesOnly: routing == ImportRouting.nodesOnly,
-            );
-    } on ProfileCompatibilityException catch (e) {
-      if (routing == ImportRouting.full) rethrow;
-      if (await consent(e)) return e.nodesOnlyOutcome;
-      throw const ImportCancelled();
-    }
+    // Nodes-only by design (2026-11-21): subscriptions never import
+    // their own routing / DNS, so the consent flow is gone entirely.
+    return content == null
+        ? await resolver.resolve(url, nodesOnly: true)
+        : await resolver.resolveContent(content, nodesOnly: true);
   }
 
-  Future<void> importRequest(
-    ImportRequest request,
-    Future<bool> Function(ProfileCompatibilityException) consent,
-  ) =>
+  Future<void> importRequest(ImportRequest request) =>
       operation(() async {
         if (running) throw const FormatException('请先停止 VPN 再导入');
         importing = true;
@@ -419,8 +404,6 @@ class AndroidController extends ChangeNotifier {
           final outcome = await _resolve(
             url: source.url,
             content: source.content,
-            routing: request.routing,
-            consent: consent,
           );
           if (cancelling || _disposed) throw const ImportCancelled();
           if (!outcome.nodes.any((n) => !n.isPolicy))
@@ -460,10 +443,7 @@ class AndroidController extends ChangeNotifier {
         await commit(next);
         report('导入已保存，共 ${data.nodes.where((n) => !n.isPolicy).length} 个节点');
       });
-  Future<void> updateSource(
-    Subscription source,
-    Future<bool> Function(ProfileCompatibilityException) consent,
-  ) =>
+  Future<void> updateSource(Subscription source) =>
       operation(() async {
         if (running) throw const FormatException('请先停止 VPN 再更新');
         if (!data.subscriptions.contains(source)) return;
@@ -475,10 +455,6 @@ class AndroidController extends ChangeNotifier {
           final outcome = await _resolve(
             url: source.url,
             content: source.inlineContent,
-            routing: source.nodesOnly
-                ? ImportRouting.nodesOnly
-                : ImportRouting.smart,
-            consent: consent,
           );
           if (cancelling || _disposed) throw const ImportCancelled();
           if (!outcome.nodes.any((n) => !n.isPolicy))

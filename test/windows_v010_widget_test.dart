@@ -24,7 +24,7 @@ void main() {
 
   for (final incompatible in [false, true]) {
     testWidgets(
-        'scheduled refresh ${incompatible ? 'preserves old data without consent dialog on incompatibility' : 'commits a due source while stopped'}',
+        'scheduled refresh ${incompatible ? 'commits nodes-only when source rules are incompatible' : 'commits a due source while stopped'}',
         (t) async {
       desktop(t);
       final store = MemoryStore();
@@ -61,12 +61,11 @@ void main() {
       await t.pump(const Duration(seconds: 31));
       await t.pumpAndSettle();
       expect(fetcher.requested, hasLength(1));
+      // Nodes-only by design (2026-11-21): incompatible rule payloads
+      // no longer fail the refresh - fresh nodes still commit.
       expect(store.data.nodes.single.name,
-          incompatible ? 'old-node' : 'fresh-node');
-      if (incompatible) {
-        expect(store.data.subscriptions.single.lastError, isNotNull);
-        expect(find.byType(AlertDialog), findsNothing);
-      }
+          incompatible ? 'usable' : 'fresh-node');
+      expect(find.byType(AlertDialog), findsNothing);
       await t.pump(const Duration(seconds: 31));
       await t.pumpAndSettle();
       expect(fetcher.requested, hasLength(1),

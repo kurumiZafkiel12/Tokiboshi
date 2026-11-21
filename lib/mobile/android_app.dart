@@ -17,7 +17,6 @@ import '../bridge/core_bridge.dart';
 import '../services/store.dart';
 import '../services/active_profile.dart';
 import '../services/import_io.dart';
-import '../services/subscription_resolver.dart';
 import '../ui/design.dart';
 import '../ui/preferences.dart';
 import '../ui/motion.dart';
@@ -173,43 +172,9 @@ class _AndroidShellState extends State<AndroidShell> {
       context: context,
       builder: (_) => ImportDialog(io: widget.importIo, initialMethod: method),
     );
-    if (request != null && mounted) await c.importRequest(request, consent);
+    if (request != null && mounted) await c.importRequest(request);
   }
 
-  Future<bool> consent(ProfileCompatibilityException e) async =>
-      await showDialog<bool>(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('完整配置暂不兼容'),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  '已识别 ${e.nodesOnlyOutcome.nodes.where((n) => !n.isPolicy).length} 个节点。仅导入节点不会应用这份订阅的规则与 DNS。',
-                ),
-                const SizedBox(height: 12),
-                SelectableText(
-                  redactDiagnostics('${e.message}'),
-                  style: const TextStyle(fontSize: 12),
-                ),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('取消'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('仅导入节点'),
-            ),
-          ],
-        ),
-      ) ??
-      false;
   Future<bool> confirm(String text) async =>
       await showDialog<bool>(
         context: context,
@@ -948,7 +913,7 @@ class _AndroidShellState extends State<AndroidShell> {
                             OutlinedButton.icon(
                               onPressed: c.busy || c.running
                                   ? null
-                                  : () => c.updateSource(s, consent),
+                                  : () => c.updateSource(s),
                               icon: const Icon(Icons.refresh, size: 18),
                               label: Text(s.isRemote ? '更新' : '重新解析'),
                             ),

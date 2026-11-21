@@ -85,7 +85,7 @@ void main() {
     fetcher.responses[url] = 'ss://fixture#first\nss://fixture#second';
     await c.refreshDueSources();
     expect(fetcher.requested, [url]);
-    await c.updateSource(c.data.subscriptions.single, (_) async => false);
+    await c.updateSource(c.data.subscriptions.single);
     expect(c.data.nodes, hasLength(2));
     expect(c.data.selectedIndex, -1);
     expect(c.data.subscriptions.single.refreshMinutes, 30);
@@ -186,8 +186,7 @@ void main() {
         AndroidController(bridge: FakeBridge(), store: store, data: store.data);
     addTearDown(c.dispose);
     await c.importRequest(
-        const ImportRequest(text: 'ss://fixture#new', manual: true),
-        (_) async => false);
+        const ImportRequest(text: 'ss://fixture#new', manual: true));
     expect(c.data.nodes.single.name, 'old');
     expect(c.data.selectedIndex, 0);
     expect(c.message, contains('操作失败'));
@@ -203,12 +202,11 @@ void main() {
         bridge: bridge, store: store, data: store.data, fetcher: fetcher);
     addTearDown(c.dispose);
     await c.importRequest(
-        const ImportRequest(text: 'https://fixture.example/sub'),
-        (_) async => false);
+        const ImportRequest(text: 'https://fixture.example/sub'));
     expect(c.data.subscriptions.single.url, 'https://fixture.example/sub');
     expect(c.data.selected?.name, 'remote');
     expect(c.data.nodes.single.source, c.data.subscriptions.single.id);
-    await c.updateSource(c.data.subscriptions.single, (_) async => false);
+    await c.updateSource(c.data.subscriptions.single);
     expect(c.data.nodes, hasLength(1));
     expect(c.data.selected?.name, 'remote');
   });

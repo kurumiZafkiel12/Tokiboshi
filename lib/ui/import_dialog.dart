@@ -5,18 +5,14 @@ import '../services/import_io.dart';
 import 'design.dart';
 import 'preferences.dart';
 
-enum ImportRouting { smart, nodesOnly, full }
-
 class ImportRequest {
   const ImportRequest(
       {required this.text,
       this.name = '',
-      this.routing = ImportRouting.smart,
       this.localPath,
       this.forceUrl = false,
       this.manual = false});
   final String text, name;
-  final ImportRouting routing;
   final String? localPath;
   final bool forceUrl, manual;
 }
@@ -43,7 +39,6 @@ class _ImportDialogState extends State<ImportDialog> {
       _advanced = TextEditingController();
   String _protocol = 'vless', _cipher = 'aes-128-gcm';
   bool _tls = true, _json = false, _working = false, _submitted = false;
-  ImportRouting _routing = ImportRouting.smart;
   String? _path, _filename, _error, _fileContent;
   @override
   void dispose() {
@@ -182,7 +177,6 @@ class _ImportDialogState extends State<ImportDialog> {
           ImportRequest(
               text: text,
               name: _name.text.trim(),
-              routing: _routing,
               localPath: _method == 'file' ? _path : null,
               manual: _method == 'custom',
               forceUrl: _method == 'link'));
@@ -441,37 +435,6 @@ class _ImportDialogState extends State<ImportDialog> {
                                             : '分享链接 / Base64 / Clash YAML / sing-box JSON')),
                               ],
                               const SizedBox(height: 18),
-                              DropdownButtonFormField<ImportRouting>(
-                                  initialValue: _routing,
-                                  isExpanded: true,
-                                  decoration: const InputDecoration(
-                                      labelText: '导入规则方式'),
-                                  items: [
-                                    DropdownMenuItem(
-                                        value: ImportRouting.smart,
-                                        child: Text(
-                                            MediaQuery.sizeOf(context).width <
-                                                    600
-                                                ? '智能（不兼容时询问）'
-                                                : '智能：兼容时使用完整配置，不兼容时询问')),
-                                    DropdownMenuItem(
-                                        value: ImportRouting.nodesOnly,
-                                        child: Text(
-                                            MediaQuery.sizeOf(context).width <
-                                                    600
-                                                ? '仅节点（不使用规则 / DNS）'
-                                                : '仅导入节点（不使用来源的规则 / DNS）')),
-                                    DropdownMenuItem(
-                                        value: ImportRouting.full,
-                                        child: Text(
-                                            MediaQuery.sizeOf(context).width <
-                                                    600
-                                                ? '完整配置（不兼容时拒绝）'
-                                                : '完整配置（不兼容时保留原配置并报告）'))
-                                  ],
-                                  onChanged: _working
-                                      ? null
-                                      : (v) => setState(() => _routing = v!)),
                               if (_working) ...[
                                 const SizedBox(height: 12),
                                 const LinearProgressIndicator(minHeight: 2)
