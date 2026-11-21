@@ -704,6 +704,21 @@ class _ToolboxPageState extends State<ToolboxPage> {
                                 ? Colors.orangeAccent
                                 : Colors.green))),
             ]),
+            const SizedBox(height: 4),
+            Row(children: [
+              const SizedBox(
+                  width: 96,
+                  child: Text('直连出口', style: TextStyle(fontSize: 13))),
+              SelectableText(_directIp?.ip ?? '—',
+                  style: const TextStyle(fontSize: 13)),
+              if (_directIp != null && _directIp!.asn.isNotEmpty)
+                Expanded(
+                    child: Text(
+                        '  直连与物理一致：${_directIp!.ip == physicalIp}',
+                        maxLines: 1,
+                        style: const TextStyle(
+                            fontSize: 11, color: Colors.grey))),
+            ]),
           ],
           const Divider(height: 20),
           Row(children: [
