@@ -163,7 +163,7 @@ class _ImportDialogState extends State<ImportDialog> {
           ? _manual()
           : normalizeImportText(_method == 'file' ? _fileContent! : _text.text);
       if (text.isEmpty) throw const FormatException('请先填写或读取导入内容');
-      if (_method == 'link' || _method == 'clipboard' || _method == 'custom') {
+      if (_method != 'file' && _method != 'qr' && _method != 'custom') {
         for (final line in text.split('\n').where((s) => s.trim().isNotEmpty)) {
           if (!isSubscriptionUrl(normalizeImportText(line)) &&
               !RegExp(r'^[a-zA-Z][a-zA-Z0-9+.-]*://')
@@ -178,8 +178,8 @@ class _ImportDialogState extends State<ImportDialog> {
               text: text,
               name: _name.text.trim(),
               localPath: _method == 'file' ? _path : null,
-              manual: false,
-              forceUrl: true));
+              manual: _method == 'custom',
+              forceUrl: _method == 'link'));
     } catch (e) {
       setState(
           () => _error = e is FormatException ? e.message : '自定义 JSON 格式无效');
@@ -232,7 +232,8 @@ class _ImportDialogState extends State<ImportDialog> {
                             children: [
                               Row(children: [
                                 Expanded(
-                                    child: Text('粘贴订阅链接、节点链接（hy2/ss/vmess 等）或配置内容，自动识别。',
+                                    child: Text(
+                                        '粘贴订阅链接、节点链接（hy2/ss/vmess 等）或配置内容，自动识别。',
                                         style: TextStyle(
                                             fontSize: 11,
                                             color: Theme.of(context)
@@ -245,6 +246,9 @@ class _ImportDialogState extends State<ImportDialog> {
                                         : () => setState(() {
                                               _method = 'file';
                                               _error = null;
+                                              _path = null;
+                                              _filename = null;
+                                              _fileContent = null;
                                             }),
                                     icon: const Icon(Icons.upload_file_outlined,
                                         size: 19)),
@@ -255,6 +259,10 @@ class _ImportDialogState extends State<ImportDialog> {
                                         : () => setState(() {
                                               _method = 'qr';
                                               _error = null;
+                                              _path = null;
+                                              _filename = null;
+                                              _fileContent = null;
+                                              _text.clear();
                                             }),
                                     icon: const Icon(Icons.qr_code_2, size: 19)),
                                 IconButton(
@@ -264,8 +272,25 @@ class _ImportDialogState extends State<ImportDialog> {
                                         : () => setState(() {
                                               _method = 'custom';
                                               _error = null;
+                                              _path = null;
+                                              _filename = null;
+                                              _fileContent = null;
+                                              _text.clear();
                                             }),
                                     icon: const Icon(Icons.tune, size: 19)),
+                                IconButton(
+                                    tooltip: '文本 / 剪贴板',
+                                    onPressed: _working
+                                        ? null
+                                        : () => setState(() {
+                                              _method = 'clipboard';
+                                              _error = null;
+                                              _path = null;
+                                              _filename = null;
+                                              _fileContent = null;
+                                            }),
+                                    icon: const Icon(Icons.content_paste,
+                                        size: 19)),
                               ]),
                               const SizedBox(height: 14),
                               const SizedBox(height: 20),
@@ -421,7 +446,7 @@ class _ImportDialogState extends State<ImportDialog> {
                                   if (_tls) _field('SNI（可选，默认服务器）', _sni),
                                 ]
                               ] else ...[
-                                                                if (['link', 'clipboard'].contains(_method))
+                                if (['link', 'clipboard'].contains(_method))
                                   Align(
                                       alignment: Alignment.centerRight,
                                       child: TextButton.icon(
