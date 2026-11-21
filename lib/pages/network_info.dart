@@ -26,7 +26,6 @@ class _NetworkInfoState extends State<NetworkInfo> {
   bool byIp = false, busy = false;
   // Party 式视图：'graph' = 四层链路图；其余为单维度视图。
   String view = 'graph';
-  TopologyKey? selected;
   static const viewTabs = [
     ('graph', '链路图'),
     ('group', '代理组'),
@@ -262,7 +261,6 @@ class _NetworkInfoState extends State<NetworkInfo> {
                           e.key: e.value.count
                       },
                       Theme.of(context).colorScheme.outline,
-                      selected,
                     )))),
                     for (final e in positions.entries)
                       Positioned(
@@ -277,9 +275,7 @@ class _NetworkInfoState extends State<NetworkInfo> {
                                 foregroundColor: Colors.white,
                                 padding: const EdgeInsets.symmetric(
                                     horizontal: 9, vertical: 4)),
-                            onPressed: () => setState(() =>
-                                selected = selected == e.key ? null : e.key),
-                            onLongPress: () => details(
+                            onPressed: () => details(
                                 context, e.key.$2, topology.nodes[e.key]!),
                             child: Column(
                                 mainAxisAlignment: MainAxisAlignment.center,
@@ -343,7 +339,6 @@ class _NetworkInfoState extends State<NetworkInfo> {
                                 selected: view == mode,
                                 onSelected: (_) => setState(() {
                                       view = mode;
-                                      selected = null;
                                       if (mode == 'byIp') byIp = true;
                                       if (mode == 'byPort') byIp = false;
                                       if (mode != 'graph') {
@@ -408,13 +403,11 @@ class _NetworkInfoState extends State<NetworkInfo> {
 }
 
 class _Edges extends CustomPainter {
-  _Edges(this.positions, this.columnWidth, this.counts, this.color,
-      this.selected);
+  _Edges(this.positions, this.columnWidth, this.counts, this.color);
   final Map<TopologyKey, Offset> positions;
   final Map<TopologyEdge, int> counts;
   final double columnWidth;
   final Color color;
-  final TopologyKey? selected;
   @override
   void paint(Canvas canvas, Size size) {
     for (final e in counts.entries) {
@@ -424,17 +417,12 @@ class _Edges extends CustomPainter {
       final path = Path()
         ..moveTo(from.dx, from.dy)
         ..cubicTo(mid, from.dy, mid, to.dy, to.dx, to.dy);
-      final touchesSelection = selected != null &&
-          (e.key.$1 == selected || e.key.$2 == selected);
-      final dimmed = selected != null && !touchesSelection;
       canvas.drawPath(
           path,
           Paint()
             ..style = PaintingStyle.stroke
-            ..color = color.withValues(alpha: dimmed ? .15 : .7)
-            ..strokeWidth = touchesSelection
-                ? (e.value.clamp(2, 7) + 2).toDouble()
-                : e.value.clamp(1, 7).toDouble());
+            ..color = color.withValues(alpha: .6)
+            ..strokeWidth = e.value.clamp(1, 7).toDouble());
     }
   }
 
@@ -442,7 +430,6 @@ class _Edges extends CustomPainter {
   bool shouldRepaint(covariant _Edges oldDelegate) =>
       oldDelegate.color != color ||
       oldDelegate.columnWidth != columnWidth ||
-      oldDelegate.selected != selected ||
       !mapEquals(oldDelegate.positions, positions) ||
       !mapEquals(oldDelegate.counts, counts);
 }

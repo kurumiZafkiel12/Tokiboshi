@@ -103,8 +103,14 @@ void main() {
           onChanged: (_) {},
           child: const MaterialApp(home: Scaffold(body: ImportDialog()))));
       await t.pumpAndSettle();
-      for (final title in ['自定义', '二维码', '文件', '链接', '自定义', '链接']) {
-        await t.tap(find.widgetWithText(ChoiceChip, title));
+      for (final tooltip in [
+        '自定义节点 JSON',
+        '二维码',
+        '从文件导入',
+        '自定义节点 JSON',
+        '从文件导入'
+      ]) {
+        await t.tap(find.byTooltip(tooltip));
         await t.pump(const Duration(milliseconds: 30));
         expect(t.takeException(), isNull);
       }

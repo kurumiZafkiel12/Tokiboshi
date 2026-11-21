@@ -257,6 +257,15 @@ class _ImportDialogState extends State<ImportDialog> {
                                               _error = null;
                                             }),
                                     icon: const Icon(Icons.qr_code_2, size: 19)),
+                                IconButton(
+                                    tooltip: '自定义节点 JSON',
+                                    onPressed: _working
+                                        ? null
+                                        : () => setState(() {
+                                              _method = 'custom';
+                                              _error = null;
+                                            }),
+                                    icon: const Icon(Icons.tune, size: 19)),
                               ]),
                               const SizedBox(height: 14),
                               const SizedBox(height: 20),
@@ -412,7 +421,7 @@ class _ImportDialogState extends State<ImportDialog> {
                                   if (_tls) _field('SNI（可选，默认服务器）', _sni),
                                 ]
                               ] else ...[
-                                if (['link', 'clipboard'].contains(_method))
+                                                                if (['link', 'clipboard'].contains(_method))
                                   Align(
                                       alignment: Alignment.centerRight,
                                       child: TextButton.icon(
