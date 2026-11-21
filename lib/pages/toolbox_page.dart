@@ -54,6 +54,11 @@ class _ToolboxPageState extends State<ToolboxPage> {
   static const upBytes = 8 * 1024 * 1024; // 8 MB 上行载荷
   static const latencyProbes = 10;
 
+  // speed.cloudflare.com rejects bare-Dart agents with 403;
+  // a browser UA is required for the speed endpoints.
+  static const speedUa =
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36';
+
   /// 目标连通清单：名称 → URL。204/trace 类端点轻量；非 2xx 也算连通
   /// （握手完成即计延迟），只把网络层失败算作错误。
   static const targets = <String, String>{
@@ -103,7 +108,11 @@ class _ToolboxPageState extends State<ToolboxPage> {
     try {
       final req = await client.getUrl(
           Uri.parse('https://speed.cloudflare.com/__down?bytes=$dlBytes'));
+      req.headers.set(HttpHeaders.userAgentHeader, speedUa);
       final resp = await req.close().timeout(const Duration(seconds: 15));
+      if (resp.statusCode == 403) {
+        throw HttpException('端点拒绝（403）：该出口 IP 可能被 Cloudflare 限制，换个节点再试');
+      }
       if (resp.statusCode != 200) {
         throw HttpException('HTTP ${resp.statusCode}');
       }
@@ -164,6 +173,7 @@ class _ToolboxPageState extends State<ToolboxPage> {
     try {
       final req =
           await client.postUrl(Uri.parse('https://speed.cloudflare.com/__up'));
+      req.headers.set(HttpHeaders.userAgentHeader, speedUa);
       req.headers
           .set(HttpHeaders.contentTypeHeader, 'application/octet-stream');
       req.add(payload);
@@ -205,6 +215,7 @@ class _ToolboxPageState extends State<ToolboxPage> {
         final watch = Stopwatch()..start();
         final req = await client.getUrl(
             Uri.parse('https://speed.cloudflare.com/__down?bytes=0'));
+        req.headers.set(HttpHeaders.userAgentHeader, speedUa);
         final resp = await req.close().timeout(const Duration(seconds: 8));
         await resp.drain<void>();
         samples.add(watch.elapsedMilliseconds);
@@ -246,6 +257,7 @@ class _ToolboxPageState extends State<ToolboxPage> {
       try {
         final watch = Stopwatch()..start();
         final req = await client.getUrl(Uri.parse(entry.value));
+        req.headers.set(HttpHeaders.userAgentHeader, speedUa);
         req.followRedirects = false;
         final resp = await req.close().timeout(const Duration(seconds: 8));
         await resp.drain<void>().timeout(const Duration(seconds: 5));
