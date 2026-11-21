@@ -422,7 +422,7 @@ class _ToolboxPageState extends State<ToolboxPage> {
 
   Widget _matrix() {
     final groups = <String,
-        List<(String, String, String, IconData, VoidCallback)>>[
+        List<(String, String, String, IconData, VoidCallback)>>{
       '测速': [
         (
           'speed',
@@ -459,7 +459,7 @@ class _ToolboxPageState extends State<ToolboxPage> {
           () => setState(() => _openTool = 'resources')
         ),
       ],
-    ];
+    };
     return SingleChildScrollView(
         padding: const EdgeInsets.all(20),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
