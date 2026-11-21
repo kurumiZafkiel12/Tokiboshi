@@ -36,7 +36,8 @@ class _MechanicalClockState extends State<MechanicalClock>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _start();
+    // 首次启动放到 didChangeDependencies：_tier() 读取 UiScope / MediaQuery
+    // 等 inherited widget，不能在 initState 里 dependOnInheritedElement。
   }
 
   @override
