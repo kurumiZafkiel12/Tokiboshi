@@ -8,6 +8,7 @@ import '../ui/preferences.dart';
 import '../ui/runtime.dart';
 import '../ui/motion.dart';
 import '../ui/traffic_chart.dart';
+import '../ui/mechanical_clock.dart';
 
 class DashboardPage extends StatefulWidget {
   const DashboardPage(
@@ -63,6 +64,7 @@ class DashboardPage extends StatefulWidget {
 
 class _DashboardPageState extends State<DashboardPage> {
   bool _editing = false;
+  bool _clockOpen = true;
   void _move(String key, int direction) {
     final ui = UiScope.of(context),
         order = List<String>.of(UiScope.of(context).order);
@@ -147,7 +149,7 @@ class _DashboardPageState extends State<DashboardPage> {
                           final width =
                               narrow ? grid.maxWidth : (grid.maxWidth - 14) / 2;
                           final columns = narrow ? 1 : 2;
-                          return SizedBox(
+                          final gridWidget = SizedBox(
                               height: narrow ? 918 : 458,
                               child: Stack(children: [
                                 for (final key in ui.order)
@@ -170,6 +172,33 @@ class _DashboardPageState extends State<DashboardPage> {
                                                 _editable(key, modules[key]!))),
                                   )
                               ]));
+                          // 机械钟主题模块（可折叠）：宽屏放右侧，窄屏移到下方。
+                          final clockModule = Column(children: [
+                            Row(children: [
+                              Text('主题钟',
+                                  style: TextStyle(
+                                      fontSize: 12,
+                                      color: Theme.of(context)
+                                          .colorScheme
+                                          .onSurfaceVariant)),
+                              const Spacer(),
+                              TextButton(
+                                  onPressed: () =>
+                                      setState(() => _clockOpen = !_clockOpen),
+                                  child: Text(_clockOpen ? '折叠' : '展开')),
+                            ]),
+                            MechanicalClock(
+                                size: narrow ? 232 : 236,
+                                initiallyOpen: _clockOpen),
+                          ]);
+                          if (narrow) {
+                            return Column(children: [gridWidget, clockModule]);
+                          }
+                          return Row(crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Expanded(child: gridWidget),
+                                SizedBox(width: 268, child: clockModule),
+                              ]);
                         }),
                         if (_editing)
                           Padding(
