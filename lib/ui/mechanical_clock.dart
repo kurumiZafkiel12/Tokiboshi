@@ -25,7 +25,7 @@ class MechanicalClock extends StatefulWidget {
 }
 
 class _MechanicalClockState extends State<MechanicalClock>
-    with WidgetsBindingObserver, SingleTickerProviderStateMixin {
+    with WidgetsBindingObserver, TickerProviderStateMixin {
   late bool _open = widget.initiallyOpen;
   Ticker? _ticker;
   Timer? _secondTimer;
