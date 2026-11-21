@@ -197,6 +197,7 @@ class _DashboardPageState extends State<DashboardPage> {
                           return Row(crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Expanded(child: gridWidget),
+                                const SizedBox(width: 16),
                                 SizedBox(width: 268, child: clockModule),
                               ]);
                         }),
