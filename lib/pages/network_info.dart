@@ -27,7 +27,6 @@ class _NetworkInfoState extends State<NetworkInfo> {
   // Party 式视图：'graph' = 四层链路图；其余为单维度视图。
   String view = 'graph';
   TopologyKey? selected;
-
   static const viewTabs = [
     ('graph', '链路图'),
     ('group', '代理组'),
@@ -161,8 +160,8 @@ class _NetworkInfoState extends State<NetworkInfo> {
               ? '暂无活动连接。通过代理访问网络后，链路会出现在这里。'
               : '暂时无法读取连接，正在重试。'));
     }
-    final topology = ConnectionTopology(monitor.connections,
-        byIp: view == 'byIp');
+    final topology =
+        ConnectionTopology(monitor.connections, byIp: view == 'byIp');
     // 实时速率：与上一帧（约 1s 前）差分。首帧不计。
     final now = DateTime.now();
     _rates.clear();
@@ -193,6 +192,7 @@ class _NetworkInfoState extends State<NetworkInfo> {
     final height =
         columns.fold(0, (max, next) => next.length > max ? next.length : max) *
             47.0;
+    // Party 式单维度视图：按当前 tab 只列出该层的节点（按连接数排序）。
     if (view != 'graph') {
       final layer = switch (view) {
         'group' => 0,
@@ -205,7 +205,6 @@ class _NetworkInfoState extends State<NetworkInfo> {
           .toList()
         ..sort((a, b) => topology.nodes[b]!.count
             .compareTo(topology.nodes[a]!.count));
-      final rates = _rates;
       return Column(children: [
         for (final key in keys)
           Padding(
@@ -219,12 +218,11 @@ class _NetworkInfoState extends State<NetworkInfo> {
                           maxLines: 1, overflow: TextOverflow.ellipsis),
                       subtitle: Text(
                           '${topology.nodes[key]!.count} 条连接'
-                          '${rates[key] == null ? '' : ' · ${_rateLabel(rates[key])}'}',
+                          '${_rates[key] == null ? '' : ' · ${_rateLabel(_rates[key])}'}',
                           style: const TextStyle(fontSize: 11)),
                       trailing: Text(
                           bytesLabel(topology.nodes[key]!.download),
-                          style: const TextStyle(fontSize: 12)))),
-              )),
+                          style: const TextStyle(fontSize: 12))))),
       ]);
     }
     return LayoutBuilder(builder: (_, constraints) {
@@ -264,8 +262,8 @@ class _NetworkInfoState extends State<NetworkInfo> {
                           e.key: e.value.count
                       },
                       Theme.of(context).colorScheme.outline,
-                      selected))),
-                    ),
+                      selected,
+                    )))),
                     for (final e in positions.entries)
                       Positioned(
                           top: e.value.dy - 21,
@@ -279,8 +277,8 @@ class _NetworkInfoState extends State<NetworkInfo> {
                                 foregroundColor: Colors.white,
                                 padding: const EdgeInsets.symmetric(
                                     horizontal: 9, vertical: 4)),
-                            onPressed: () => setState(() => selected =
-                                selected == e.key ? null : e.key),
+                            onPressed: () => setState(() =>
+                                selected = selected == e.key ? null : e.key),
                             onLongPress: () => details(
                                 context, e.key.$2, topology.nodes[e.key]!),
                             child: Column(
@@ -348,16 +346,12 @@ class _NetworkInfoState extends State<NetworkInfo> {
                                       selected = null;
                                       if (mode == 'byIp') byIp = true;
                                       if (mode == 'byPort') byIp = false;
+                                      if (mode != 'graph') {
+                                        _prevTotals.clear();
+                                        _prevAt = null;
+                                      }
                                     })),
-                        ]),                            ButtonSegment(value: true, label: Text('来源 IP')),
-                          ],
-                          selected: {byIp},
-                          onSelectionChanged: (values) => setState(() {
-                            byIp = values.single;
-                            _prevTotals.clear();
-                            _prevAt = null;
-                          }),
-                        ),
+                        ]),
                       ]),
                   const SizedBox(height: 14),
                   ListenableBuilder(
