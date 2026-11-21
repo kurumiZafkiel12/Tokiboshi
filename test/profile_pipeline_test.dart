@@ -114,7 +114,7 @@ void main() {
     }
   });
   testWidgets(
-      'URL add/start carries profile with source isolation; node-only update clears it',
+      'URL add/start runs nodes-only and keeps source isolation across updates',
       (t) async {
     t.view.physicalSize = const Size(1280, 900);
     t.view.devicePixelRatio = 1;
@@ -147,8 +147,10 @@ void main() {
     await t.enterText(fields.last, 'https://fixture.example/root');
     await t.tap(find.text('导入').last);
     await t.pumpAndSettle();
-    expect(store.data.subscriptions.single.profileJson, profile);
-    expect(store.data.subscriptions.single.profileState, 'parsed');
+    // Nodes-only by design (2026-11-21): subscription rules are never
+    // imported, so no profile reaches the bridge on start.
+    expect(store.data.subscriptions.single.profileJson, isNull);
+    expect(store.data.subscriptions.single.profileState, 'nodes-only');
     await t.tap(find.text('节点').first);
     await t.pumpAndSettle();
     t.widget<NodesPage>(find.byType(NodesPage)).onSelect(store.data.nodes
@@ -158,7 +160,7 @@ void main() {
     await t.pumpAndSettle();
     await t.tap(find.text('启动代理'));
     await t.pumpAndSettle();
-    expect(bridge.receivedProfile, profile);
+    expect(bridge.receivedProfile, isNot(profile));
     expect(bridge.receivedNodes, ['fixture']);
     expect(bridge.running, true);
     await t.tap(find.text('停止代理'));
@@ -170,6 +172,7 @@ void main() {
     await t.pumpAndSettle();
     expect(store.data.subscriptions.single.profileJson, isNull);
     expect(store.data.subscriptions.single.profileState, 'nodes-only');
+    expect(bridge.running, false);
     await t.pumpWidget(const SizedBox());
   });
 }

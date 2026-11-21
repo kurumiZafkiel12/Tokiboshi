@@ -136,7 +136,7 @@ void main() {
       await t.pumpWidget(const SizedBox());
     });
   }
-  testWidgets('file JSON keeps routing profile and local source ownership',
+  testWidgets('file JSON imports nodes-only with local source ownership',
       (t) async {
     final (store, _) = await mount(t);
     await open(t, '文件');
@@ -144,7 +144,9 @@ void main() {
     await t.pumpAndSettle();
     await submit(t);
     expect(store.data.subscriptions.single.localPath, 'synthetic-fixture.json');
-    expect(store.data.subscriptions.single.profileJson, isNotNull);
+    // Nodes-only by design (2026-11-21): file profiles are not imported.
+    expect(store.data.subscriptions.single.profileJson, isNull);
+    expect(store.data.subscriptions.single.profileState, 'nodes-only');
     expect(store.data.nodes.single.source, store.data.subscriptions.single.id);
     await t.pumpWidget(const SizedBox());
   });
