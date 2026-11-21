@@ -64,6 +64,7 @@ class DashboardPage extends StatefulWidget {
 
 class _DashboardPageState extends State<DashboardPage> {
   bool _editing = false;
+  bool _clockOpen = true;
   void _move(String key, int direction) {
     final ui = UiScope.of(context),
         order = List<String>.of(UiScope.of(context).order);
@@ -227,8 +228,7 @@ class _DashboardPageState extends State<DashboardPage> {
                                   ),
                                   const SizedBox(width: 16),
                                   SizedBox(width: 268, child: clockModule),
-                                ]);
-                        if (_editing)
+                                ]),
                         if (_editing)
                           Padding(
                               padding: const EdgeInsets.only(top: 8),
