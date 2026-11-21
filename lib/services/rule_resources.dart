@@ -137,7 +137,7 @@ String applyTemplateRouting(String configJson, Map<String, String> settings,
       continue;
     }
     final setting = settings[id];
-    if (setting == 'off') continue; // 用户关闭该条
+    if (setting == null || setting == 'off') continue; // 用户关闭该条
     if (setting == 'reject') {
       rule.remove('outbound');
       rule['action'] = 'reject';
