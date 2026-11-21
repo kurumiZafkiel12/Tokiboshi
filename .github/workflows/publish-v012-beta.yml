@@ -40,7 +40,7 @@ jobs:
             "$SETUP" Tokiboshi-windows.zip SHA256SUMS.txt \
             --target "$RELEASE_TARGET" \
             --title 'Tokiboshi v0.1.2 Beta' \
-            --notes-file .github/release-notes/v0.1.2-beta.md \
+            --notes-file "$GITHUB_WORKSPACE/.github/release-notes/v0.1.2-beta.md" \
             --prerelease --draft
       - name: Roundtrip verify uploaded bytes
         shell: bash
