@@ -252,16 +252,6 @@ class _NodesPageState extends State<NodesPage> {
         ]));
   }
 
-  Widget _filter(String label, String value) => Padding(
-      padding: const EdgeInsets.only(right: 6),
-      child: ChoiceChip(
-          label: Text(label),
-          selected: _group == value,
-          onSelected: widget.busy
-              ? null
-              : (_) {
-                  setState(() => _group = value);
-                }));
   Widget _grouped(List<int> indices) {
     final groups = <String, List<int>>{};
     final labels = <String, String>{};
