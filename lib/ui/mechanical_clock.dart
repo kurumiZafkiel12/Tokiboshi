@@ -215,7 +215,7 @@ class _ClockPainter extends CustomPainter {
     final c = Offset(size.width / 2, size.height / 2);
     final R = math.min(size.width, size.height) / 2 - 2;
     final t = now.millisecond / 1000.0;
-    final sec = now.second + (tier == 'full' ? t : 0);
+    final sec = now.second + (tier == 'full' ? t : 0.0);
     final minute = now.minute + sec / 60;
     final hour = now.hour % 12 + minute / 60;
     final secs = now.minute * 60 + now.second + t;
