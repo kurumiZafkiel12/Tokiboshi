@@ -3,9 +3,10 @@ import 'dart:io';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
-/// 工具箱页：下载/上传测速 + 延迟质量 + 目标连通。
-/// 走 mixed 入站代理，对 Cloudflare Speed 端点测量吞吐；
-/// 时长 bounded，不依赖第三方 SDK。
+import '../services/network_checks.dart';
+
+/// 工具箱页：下载/上传测速 + 延迟质量 + 目标连通 + 检测与修复。
+/// 走 mixed 入站代理，测速多服务可选；不依赖第三方 SDK。
 class ToolboxPage extends StatefulWidget {
   const ToolboxPage({
     super.key,
@@ -15,6 +16,7 @@ class ToolboxPage extends StatefulWidget {
     required this.networkInfo,
     required this.resources,
     this.proxyCredentials,
+    this.systemProxy,
   });
 
   final bool running;
@@ -22,6 +24,7 @@ class ToolboxPage extends StatefulWidget {
   final VoidCallback onStart;
   final Widget networkInfo, resources;
   final (String, String)? proxyCredentials;
+  final SystemProxy? systemProxy;
 
   @override
   State<ToolboxPage> createState() => _ToolboxPageState();
@@ -45,6 +48,14 @@ class _ToolboxPageState extends State<ToolboxPage> {
   int _dlSeconds = 10;
   String _dlService = 'hetzner';
   String? _dlEndpoint;
+
+  // 检测与修复（Hotaru 移植）：出口对照 + 系统代理残留。
+  bool _chkBusy = false;
+  ExitIpInfo? _proxiedIp, _directIp;
+  InternetAddress? _physicalIp;
+  String? _chkErr;
+  String? _proxyServer, _autoConfigUrl;
+  bool _clearing = false;
 
   // 延迟质量（对当前出口，10 次 RTT）
   double? _latMin, _latAvg, _latMax, _latJitter;
@@ -321,6 +332,66 @@ class _ToolboxPageState extends State<ToolboxPage> {
     if (mounted) setState(() => _tgtBusy = false);
   }
 
+  Future<void> _runChecks() async {
+    if (_chkBusy) return;
+    setState(() {
+      _chkBusy = true;
+      _chkErr = null;
+      _proxiedIp = null;
+      _directIp = null;
+      _physicalIp = null;
+    });
+    try {
+      final proxied = _proxyClient();
+      final direct = HttpClient()..connectionTimeout = const Duration(seconds: 6);
+      final results = await Future.wait([
+        queryExitIp(proxied),
+        queryExitIp(direct),
+        probePhysicalIp().then((v) => v as InternetAddress?).catchError((_) => null),
+      ]);
+      final server = await widget.systemProxy?.readProxyServer();
+      final pac = await readAutoConfigUrl();
+      if (mounted) {
+        setState(() {
+          _proxiedIp = results[0] as ExitIpInfo?;
+          _directIp = results[1] as ExitIpInfo?;
+          _physicalIp = results[2] as InternetAddress?;
+          _proxyServer = server;
+          _autoConfigUrl = pac;
+        });
+      }
+      proxied.close(force: true);
+      direct.close(force: true);
+    } catch (e) {
+      if (mounted) setState(() => _chkErr = '$e');
+    } finally {
+      if (mounted) setState(() => _chkBusy = false);
+    }
+  }
+
+  Future<void> _clearResidual() async {
+    setState(() => _clearing = true);
+    try {
+      final ok = await clearProxyResidual();
+      if (mounted) {
+        setState(() {
+          _proxyServer = ok ? null : _proxyServer;
+          _autoConfigUrl = ok ? null : _autoConfigUrl;
+        });
+        _snackbar(ok ? '残留已清理' : '清理失败：注册表操作被拒绝');
+      }
+    } catch (e) {
+      if (mounted) _snackbar('清理失败：$e');
+    } finally {
+      if (mounted) setState(() => _clearing = false);
+    }
+  }
+
+  void _snackbar(String message) {
+    ScaffoldMessenger.maybeOf(context)
+        ?.showSnackBar(SnackBar(content: Text(message)));
+  }
+
   String _fmt(double? v) => v == null ? '—' : '${v.toStringAsFixed(1)}';
   String _ms(int? v) => v == null ? '—' : '${v}ms';
 
@@ -378,6 +449,8 @@ class _ToolboxPageState extends State<ToolboxPage> {
         _latencyCard(),
         const SizedBox(height: 12),
         _targetsCard(),
+        const SizedBox(height: 14),
+        _checksCard(),
         const SizedBox(height: 14),
         widget.networkInfo,
         widget.resources,
@@ -554,6 +627,116 @@ class _ToolboxPageState extends State<ToolboxPage> {
           style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
       Text(label, style: const TextStyle(fontSize: 11, color: Colors.grey)),
     ]);
+  }
+
+  Widget _checksCard() {
+    final residual = proxyResidual(
+        coreRunning: widget.running,
+        proxyServer: _proxyServer,
+        pac: _autoConfigUrl);
+    final proxied = _proxiedIp;
+    final physical = _physicalIp;
+    final proxiedIp = proxied?.ip ?? '—';
+    final physicalIp = physical?.address ?? '—';
+    final leaking =
+        proxied != null && physical != null && proxied.ip == physical.address;
+    return Card(
+      margin: EdgeInsets.zero,
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            const Icon(Icons.health_and_safety_outlined,
+                size: 20, color: Colors.white70),
+            const SizedBox(width: 10),
+            const Expanded(
+                child: Text('检测与修复',
+                    style: TextStyle(
+                        fontSize: 15, fontWeight: FontWeight.w600))),
+            if (_chkBusy)
+              const SizedBox(
+                  width: 8,
+                  height: 8,
+                  child: CircularProgressIndicator(strokeWidth: 2)),
+            FilledButton.tonal(
+                onPressed: _chkBusy ? null : _runChecks,
+                child: Text(_chkBusy ? '检测中…' : '开始检测')),
+          ]),
+          const SizedBox(height: 6),
+          Text(
+              '出口对照：经代理查询的出口 IP vs STUN 探测的物理出口。TUN 模式下两者一致属正常（UDP 已被接管）。',
+              style: const TextStyle(fontSize: 12, color: Colors.grey)),
+          const SizedBox(height: 10),
+          if (_chkErr != null)
+            Text(_chkErr!,
+                style: const TextStyle(fontSize: 12, color: Colors.redAccent))
+          else ...[
+            Row(children: [
+              const SizedBox(
+                  width: 96,
+                  child: Text('代理出口', style: TextStyle(fontSize: 13))),
+              SelectableText(proxiedIp, style: const TextStyle(fontSize: 13)),
+              if (proxied?.asn.isNotEmpty == true)
+                Expanded(
+                    child: Text('  ${proxied.asn} · ${proxied.country}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                            fontSize: 11, color: Colors.grey))),
+            ]),
+            const SizedBox(height: 4),
+            Row(children: [
+              const SizedBox(
+                  width: 96,
+                  child: Text('物理出口', style: TextStyle(fontSize: 13))),
+              SelectableText(physicalIp, style: const TextStyle(fontSize: 13)),
+              if (physical != null)
+                Expanded(
+                    child: Text(
+                        leaking
+                            ? '  ⚠ 与代理出口一致（可能泄漏或 TUN）'
+                            : '  与代理不同：代理生效',
+                        maxLines: 1,
+                        style: TextStyle(
+                            fontSize: 11,
+                            color: leaking
+                                ? Colors.orangeAccent
+                                : Colors.green))),
+            ]),
+          ],
+          const Divider(height: 20),
+          Row(children: [
+            const SizedBox(
+                width: 96,
+                child: Text('系统代理残留', style: TextStyle(fontSize: 13))),
+            Expanded(
+              child: Text(
+                widget.running
+                    ? '内核运行中（退出时会自动清理）'
+                    : residual.residual
+                        ? '检测到残留：${[
+                            if (_proxyServer?.isNotEmpty == true)
+                              'ProxyServer=$_proxyServer',
+                            if (_autoConfigUrl?.isNotEmpty == true)
+                              'PAC=$_autoConfigUrl'
+                          ].join('，')}'
+                        : (_proxyServer == null && _autoConfigUrl == null
+                            ? '未检测（点"开始检测"读取注册表）'
+                            : '无残留'),
+                style: TextStyle(
+                    fontSize: 12,
+                    color:
+                        residual.residual ? Colors.orangeAccent : Colors.grey),
+              ),
+            ),
+            OutlinedButton(
+                onPressed:
+                    residual.residual && !_clearing ? _clearResidual : null,
+                child: Text(_clearing ? '清理中…' : '清除残留')),
+          ]),
+        ]),
+      ),
+    );
   }
 
   Widget _toolCard({

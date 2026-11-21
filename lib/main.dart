@@ -2000,6 +2000,7 @@ class _ShellPageState extends State<ShellPage>
           running: _running,
           mixedPort: _data.mixedPort,
           onStart: _toggleCore,
+          systemProxy: _systemProxy,
           proxyCredentials: _data.desktop.proxyAuth
               ? (_data.desktop.proxyUser, _data.desktop.proxyPassword)
               : null,
