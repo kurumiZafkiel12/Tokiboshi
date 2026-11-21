@@ -264,8 +264,8 @@ class _NetworkInfoState extends State<NetworkInfo> {
                           e.key: e.value.count
                       },
                       Theme.of(context).colorScheme.outline,
-                      selected),
-                    )))),
+                      selected))),
+                    ),
                     for (final e in positions.entries)
                       Positioned(
                           top: e.value.dy - 21,

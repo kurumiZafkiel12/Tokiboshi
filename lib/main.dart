@@ -599,7 +599,7 @@ class _ShellPageState extends State<ShellPage>
           kind: 'process_name', value: process, target: target);
       rule.validate();
       setState(() {
-        _data.client.rules = [..._data.client.rules, rule];
+        _data.client.rules.add(rule);
       });
       unawaited(_persist());
       _setMessage('已为「$process」添加分流（$target），重启内核后生效');
