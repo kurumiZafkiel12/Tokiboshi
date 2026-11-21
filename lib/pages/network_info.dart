@@ -198,7 +198,6 @@ class _NetworkInfoState extends State<NetworkInfo> {
         'group' => 0,
         'node' => 1,
         'rule' => 2,
-        'byIp' => 3,
         _ => 3,
       };
       final keys = topology.nodes.keys

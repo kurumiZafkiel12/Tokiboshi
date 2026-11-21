@@ -58,7 +58,7 @@ class _ToolboxPageState extends State<ToolboxPage> {
   String? _proxyServer, _autoConfigUrl;
   bool _clearing = false;
 
-  // 工具箱矩阵（Hotaru 形态）：null = 矩阵页；否则为打开的工具页。
+  // toolbox matrix: null = matrix page; otherwise the open tool page.
   String? _openTool;
 
   // 延迟质量（对当前出口，10 次 RTT）
@@ -601,6 +601,173 @@ class _ToolboxPageState extends State<ToolboxPage> {
           const SizedBox(height: 14),
           body,
         ]));
+  }
+
+  Widget? _speedDetail() {
+    if (_downMbps == null && _dlLive == null) return null;
+    return Padding(
+      padding: const EdgeInsets.only(top: 6),
+      child: Text(
+        '峰值 ${_fmt(_dlPeak)} Mbps · 已下载 ${_bytes(_dlTotal)}',
+        style: const TextStyle(fontSize: 12, color: Colors.grey),
+      ),
+    );
+  }
+
+  Widget _durationSelector() {
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Wrap(crossAxisAlignment: WrapCrossAlignment.center, children: [
+        const Text('测速服务', style: TextStyle(fontSize: 12, color: Colors.grey)),
+        const SizedBox(width: 8),
+        for (final entry in dlServices.entries)
+          Padding(
+            padding: const EdgeInsets.only(right: 6),
+            child: ChoiceChip(
+              label: Text(entry.value.$1),
+              selected: _dlService == entry.key,
+              onSelected: _dlBusy
+                  ? null
+                  : (_) => setState(() {
+                        _dlService = entry.key;
+                        _dlEndpoint = null;
+                      }),
+            ),
+          ),
+        const SizedBox(width: 10),
+        const Text('采样时长', style: TextStyle(fontSize: 12, color: Colors.grey)),
+        const SizedBox(width: 8),
+        for (final s in const [10, 20, 30])
+          Padding(
+            padding: const EdgeInsets.only(right: 6),
+            child: ChoiceChip(
+              label: Text('${s}s'),
+              selected: _dlSeconds == s,
+              onSelected: _dlBusy
+                  ? null
+                  : (_) => setState(() => _dlSeconds = s),
+            ),
+          ),
+        if (_dlEndpoint != null) ...[
+          const SizedBox(width: 4),
+          Text('端点：$_dlEndpoint',
+              style: const TextStyle(fontSize: 12, color: Colors.grey)),
+        ],
+      ]),
+    );
+  }
+
+  Widget _latencyCard() {
+    return Card(
+      margin: EdgeInsets.zero,
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            const Icon(Icons.speed, size: 20, color: Colors.white70),
+            const SizedBox(width: 10),
+            const Expanded(
+                child: Text('延迟质量',
+                    style:
+                        TextStyle(fontSize: 15, fontWeight: FontWeight.w600))),
+            if (_latBusy)
+              const SizedBox(
+                  width: 8,
+                  height: 8,
+                  child: CircularProgressIndicator(strokeWidth: 2)),
+            FilledButton.tonal(
+                onPressed: _latBusy ? null : _runLatencyQuality,
+                child: Text(_latBusy ? '测量中…' : '开始')),
+          ]),
+          const SizedBox(height: 6),
+          Text('当前出口 · $latencyProbes 次采样 · 抖动 = 相邻样本差的均值',
+              style: const TextStyle(fontSize: 12, color: Colors.grey)),
+          const SizedBox(height: 10),
+          if (_latErr != null)
+            Text(_latErr!, style: const TextStyle(fontSize: 12, color: Colors.redAccent))
+          else
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceAround,
+              children: [
+                _stat('最小', _ms(_latMin?.round())),
+                _stat('平均', _ms(_latAvg?.round())),
+                _stat('最大', _ms(_latMax?.round())),
+                _stat('抖动', _ms(_latJitter?.round())),
+              ],
+            ),
+        ]),
+      ),
+    );
+  }
+
+  Widget _targetsCard() {
+    return Card(
+      margin: EdgeInsets.zero,
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            const Icon(Icons.travel_explore, size: 20, color: Colors.white70),
+            const SizedBox(width: 10),
+            const Expanded(
+                child: Text('目标连通',
+                    style:
+                        TextStyle(fontSize: 15, fontWeight: FontWeight.w600))),
+            if (_tgtBusy)
+              const SizedBox(
+                  width: 8,
+                  height: 8,
+                  child: CircularProgressIndicator(strokeWidth: 2)),
+            FilledButton.tonal(
+                onPressed: _tgtBusy ? null : _runTargetChecks,
+                child: Text(_tgtBusy ? '检测中…' : '开始')),
+          ]),
+          const SizedBox(height: 6),
+          const Text('常用服务经当前出口的 HTTPS 完成延迟',
+              style: TextStyle(fontSize: 12, color: Colors.grey)),
+          const SizedBox(height: 8),
+          for (final name in targets.keys)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 3),
+              child: Row(children: [
+                SizedBox(
+                    width: 110,
+                    child: Text(name,
+                        style: const TextStyle(fontSize: 13))),
+                Expanded(
+                  child: LinearProgressIndicator(
+                    value: _targetMs[name] == null
+                        ? 0
+                        : (1 - (_targetMs[name]! / 3000)).clamp(0.0, 1.0),
+                    minHeight: 4,
+                  ),
+                ),
+                const SizedBox(width: 10),
+                SizedBox(
+                    width: 64,
+                    child: Text(
+                        _targetErr[name] != null
+                            ? '失败'
+                            : _ms(_targetMs[name]),
+                        textAlign: TextAlign.end,
+                        style: TextStyle(
+                            fontSize: 12,
+                            color: _targetErr[name] != null
+                                ? Colors.redAccent
+                                : Colors.grey))),
+              ]),
+            ),
+        ]),
+      ),
+    );
+  }
+
+  Widget _stat(String label, String value) {
+    return Column(children: [
+      Text(value,
+          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+      Text(label, style: const TextStyle(fontSize: 11, color: Colors.grey)),
+    ]);
   }
 
   Widget _checksCard() {
