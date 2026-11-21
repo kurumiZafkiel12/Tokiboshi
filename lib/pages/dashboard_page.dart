@@ -64,7 +64,6 @@ class DashboardPage extends StatefulWidget {
 
 class _DashboardPageState extends State<DashboardPage> {
   bool _editing = false;
-  bool _clockOpen = true;
   void _move(String key, int direction) {
     final ui = UiScope.of(context),
         order = List<String>.of(UiScope.of(context).order);
@@ -145,62 +144,96 @@ class _DashboardPageState extends State<DashboardPage> {
                         const SizedBox(height: 12),
                         _controls(context),
                         const SizedBox(height: 16),
-                        LayoutBuilder(builder: (context, grid) {
-                          final width =
-                              narrow ? grid.maxWidth : (grid.maxWidth - 14) / 2;
-                          final columns = narrow ? 1 : 2;
-                          final gridWidget = SizedBox(
-                              height: narrow ? 918 : 458,
-                              child: Stack(children: [
-                                for (final key in ui.order)
-                                  AnimatedPositioned(
-                                    key: ValueKey('position-$key'),
-                                    duration: UiScope.duration(context, 350),
-                                    curve: Curves.easeOutCubic,
-                                    left: ui.order.indexOf(key) %
-                                        columns *
-                                        (width + 14),
-                                    top: (ui.order.indexOf(key) ~/ columns) *
-                                        234.0,
-                                    width: width,
-                                    height: 222,
-                                    child: MotionEntrance(
-                                        order: ui.order.indexOf(key),
-                                        child: MotionHover(
-                                            lift: true,
-                                            child:
-                                                _editable(key, modules[key]!))),
-                                  )
-                              ]));
-                          // 机械钟主题模块（可折叠）：宽屏放右侧，窄屏移到下方。
-                          final clockModule = Column(children: [
-                            Row(children: [
-                              Text('主题钟',
-                                  style: TextStyle(
-                                      fontSize: 12,
-                                      color: Theme.of(context)
-                                          .colorScheme
-                                          .onSurfaceVariant)),
-                              const Spacer(),
-                              TextButton(
-                                  onPressed: () =>
-                                      setState(() => _clockOpen = !_clockOpen),
-                                  child: Text(_clockOpen ? '折叠' : '展开')),
-                            ]),
-                            MechanicalClock(
-                                size: narrow ? 232 : 236,
-                                initiallyOpen: _clockOpen),
-                          ]);
-                          if (narrow) {
-                            return Column(children: [gridWidget, clockModule]);
-                          }
-                          return Row(crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Expanded(child: gridWidget),
-                                const SizedBox(width: 16),
-                                SizedBox(width: 268, child: clockModule),
-                              ]);
-                        }),
+                        // 机械钟主题模块（可折叠）：宽屏放右侧独立列，窄屏移到下方。
+                        // LayoutBuilder 放在 Expanded 内部，卡片宽度按实际可用
+                        // 宽度计算 — 否则卡片溢出到机械钟列下方，编辑按钮的
+                        // 命中测试会被机械钟面板拦截（Beta 3 实测问题）。
+                        final clockModule = Column(children: [
+                          Row(children: [
+                            Text('主题钟',
+                                style: TextStyle(
+                                    fontSize: 12,
+                                    color: Theme.of(context)
+                                        .colorScheme
+                                        .onSurfaceVariant)),
+                            const Spacer(),
+                            TextButton(
+                                onPressed: () =>
+                                    setState(() => _clockOpen = !_clockOpen),
+                                child: Text(_clockOpen ? '折叠' : '展开')),
+                          ]),
+                          MechanicalClock(
+                              size: narrow ? 232 : 236,
+                              initiallyOpen: _clockOpen),
+                        ]);
+                        narrow
+                            ? LayoutBuilder(builder: (context, grid) {
+                                return Column(children: [
+                                  SizedBox(
+                                      height: 918,
+                                      child: Stack(children: [
+                                        for (final key in ui.order)
+                                          AnimatedPositioned(
+                                            key: ValueKey('position-$key'),
+                                            duration:
+                                                UiScope.duration(context, 350),
+                                            curve: Curves.easeOutCubic,
+                                            left: ui.order.indexOf(key) *
+                                                (grid.maxWidth + 14),
+                                            top: ui.order.indexOf(key) * 234.0,
+                                            width: grid.maxWidth,
+                                            height: 222,
+                                            child: MotionEntrance(
+                                                order: ui.order.indexOf(key),
+                                                child: MotionHover(
+                                                    lift: true,
+                                                    child: _editable(
+                                                        key, modules[key]!))),
+                                          )
+                                      ])),
+                                  const SizedBox(height: 14),
+                                  clockModule,
+                                ]);
+                              })
+                            : Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Expanded(
+                                    child: LayoutBuilder(
+                                        builder: (context, grid) {
+                                      final width = (grid.maxWidth - 14) / 2;
+                                      return SizedBox(
+                                          height: 458,
+                                          child: Stack(children: [
+                                            for (final key in ui.order)
+                                              AnimatedPositioned(
+                                                key: ValueKey('position-$key'),
+                                                duration: UiScope.duration(
+                                                    context, 350),
+                                                curve: Curves.easeOutCubic,
+                                                left: ui.order.indexOf(key) %
+                                                        2 *
+                                                    (width + 14),
+                                                top: (ui.order.indexOf(key) ~/
+                                                        2) *
+                                                    234.0,
+                                                width: width,
+                                                height: 222,
+                                                child: MotionEntrance(
+                                                    order: ui.order
+                                                        .indexOf(key),
+                                                    child: MotionHover(
+                                                        lift: true,
+                                                        child: _editable(key,
+                                                            modules[key]!))),
+                                              )
+                                          ]));
+                                    }),
+                                  ),
+                                  const SizedBox(width: 16),
+                                  SizedBox(width: 268, child: clockModule),
+                                ]);
+                        if (_editing)
                         if (_editing)
                           Padding(
                               padding: const EdgeInsets.only(top: 8),
