@@ -20,16 +20,20 @@ class ConnectionTopology {
       {required bool byIp}) {
     final paths = connections.map((row) {
       final rawChain = row['chains'];
-      final chain =
-          rawChain is List ? rawChain.whereType<String>().toList() : <String>[];
+      // sing-box 1.14 emits the selected exit first, outer selector last.
+      final chain = rawChain is List
+          ? rawChain.whereType<String>().toList().reversed.toList()
+          : <String>[];
       final rule = [row['rule'], row['rulePayload']]
           .whereType<String>()
           .where((x) => x.isNotEmpty)
           .join(',');
       final meta = row['metadata'] is Map ? row['metadata'] as Map : const {};
       final layers = [
-        [chain.firstOrNull ?? '未标记'],
-        chain.length > 1 ? chain.skip(1).toSet().toList() : ['未标记'],
+        [chain.length > 1 ? chain.first : '无代理组'],
+        chain.isEmpty
+            ? ['未标记']
+            : chain.skip(chain.length > 1 ? 1 : 0).toSet().toList(),
         [rule.isEmpty ? '未标记' : rule],
         ['${meta[byIp ? 'sourceIP' : 'sourcePort'] ?? '未知'}'],
       ];

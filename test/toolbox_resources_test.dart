@@ -10,7 +10,7 @@ import 'package:tokiboshi/services/store.dart';
 import 'package:tokiboshi/ui/runtime.dart';
 
 Map<String, dynamic> connection(int port, {String group = '代理'}) => {
-      'chains': [group, '节点'],
+      'chains': ['节点', group],
       'rule': 'DOMAIN-SUFFIX',
       'rulePayload': 'fixture.example',
       'metadata': {'sourceIP': '127.0.0.1', 'sourcePort': port},
