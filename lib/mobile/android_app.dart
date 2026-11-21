@@ -15,6 +15,7 @@ import 'package:flutter/services.dart';
 import '../app_version.dart';
 import '../bridge/core_bridge.dart';
 import '../services/store.dart';
+import '../services/subscription_resolver.dart';
 import '../services/active_profile.dart';
 import '../services/import_io.dart';
 import '../ui/design.dart';

@@ -345,7 +345,7 @@ class AndroidController extends ChangeNotifier {
           DateTime.tryParse(source.lastAttemptAt ?? source.updatedAt ?? '');
       if (last != null &&
           now.difference(last).inMinutes < source.refreshMinutes) continue;
-      await updateSource(source, (error) async => throw error);
+      await updateSource(source);
       return;
     }
   }

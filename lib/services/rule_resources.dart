@@ -107,14 +107,13 @@ String applyResourcePreset(
 /// 'off' = 关闭该条；'reject' = 改为拒绝；'direct' / 'proxy' / 节点名 =
 /// 改出站（节点名经 [tagByName] 映射为生成配置中的 TAG）。
 /// clash_mode 模式规则与订阅自带规则不受影响。
-Map<String, dynamic> applyTemplateRouting(
-    Map<String, dynamic> config,
-    Map<String, String?> settings,
+String applyTemplateRouting(String configJson, Map<String, String> settings,
     Map<String, String> tagByName) {
+  final config = jsonDecode(configJson) as Map<String, dynamic>;
   final route = config['route'];
-  if (route is! Map) return config;
+  if (route is! Map) return configJson;
   final rules = route['rules'];
-  if (rules is! List) return config;
+  if (rules is! List) return configJson;
   String? idOf(Map rule) {
     final rs = rule['rule_set'];
     if (rs is List) {
@@ -149,5 +148,5 @@ Map<String, dynamic> applyTemplateRouting(
     out.add(rule);
   }
   route['rules'] = out;
-  return config;
+  return jsonEncode(config);
 }
