@@ -422,7 +422,7 @@ class _ClockPainter extends CustomPainter {
     }
     hand(hour, .48, faceR * .045, ink.withValues(alpha: .92), tail: .06);
     hand(minute, .66, faceR * .032, ink.withValues(alpha: .92), tail: .08);
-    hand(sec, .72, math.max(1.0, faceR * .016), rose, tail: .12);
+    hand(sec, .72, math.max(1.0, faceR * .016).toDouble(), rose, tail: .12);
 
     canvas.drawCircle(c, faceR * .05, Paint()..color = rose);
     canvas.drawCircle(c, faceR * .022, Paint()..color = const Color(0xFF14101A));
