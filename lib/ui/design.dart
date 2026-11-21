@@ -15,22 +15,31 @@ const mono = TextStyle(
 ThemeData workbenchTheme(UiPreferences ui) {
   final light = ui.light;
   final character = ui.character;
+  // Clash Party 语言：深色近黑底 + 中性层次面 + 大圆角；品牌粉更饱和。
   final bg = light
-      ? (character ? const Color(0xFFF4F0F3) : const Color(0xFFF1F2F5))
-      : (character ? const Color(0xFF141217) : const Color(0xFF151619));
+      ? (character ? const Color(0xFFF6F2F5) : const Color(0xFFF2F3F6))
+      : (character ? const Color(0xFF121016) : const Color(0xFF0F1014));
   final surface = light
-      ? const Color(0xFFFEFBFD)
-      : (character ? const Color(0xFF1D1B20) : const Color(0xFF1A1C20));
-  final line = light ? const Color(0xFFD8C6D0) : const Color(0xFF322C38);
-  final ink = light ? const Color(0xFF36232E) : const Color(0xFFF1EDF0);
-  final sub = light ? const Color(0xFF6E5465) : const Color(0xFFB6AAB8);
-  final accent = light ? const Color(0xFFA33258) : brand;
+      ? const Color(0xFFFFFFFF)
+      : (character ? const Color(0xFF1C1A22) : const Color(0xFF181A20));
+  final surfaceLow = light
+      ? const Color(0xFFFBF8FA)
+      : (character ? const Color(0xFF16141B) : const Color(0xFF121318));
+  final surfaceHigh = light
+      ? const Color(0xFFF3E8EE)
+      : (character ? const Color(0xFF262430) : const Color(0xFF24272F));
+  final line = light
+      ? const Color(0xFFE4D3DC)
+      : (character ? const Color(0xFF2E2A38) : const Color(0xFF262A33));
+  final ink = light ? const Color(0xFF2E2027) : const Color(0xFFF4F1F4);
+  final sub = light ? const Color(0xFF7A5F6E) : const Color(0xFF9C93A3);
+  final accent = light ? const Color(0xFFC23A66) : const Color(0xFFFF8FA8);
   final scheme = ColorScheme.fromSeed(
           seedColor: wine,
           brightness: light ? Brightness.light : Brightness.dark)
       .copyWith(
           primary: accent,
-          onPrimary: light ? Colors.white : const Color(0xFF2C1220),
+          onPrimary: light ? Colors.white : const Color(0xFF20101A),
           primaryContainer: wine.withValues(alpha: light ? .10 : .18),
           surface: surface,
           onSurface: ink,
@@ -38,11 +47,10 @@ ThemeData workbenchTheme(UiPreferences ui) {
           outline: line,
           outlineVariant: line.withValues(alpha: .65),
           error: light ? const Color(0xFFB3473B) : danger,
-          surfaceContainerLow:
-              light ? const Color(0xFFFBF8FA) : const Color(0xFF0F0D12),
-          surfaceContainerHighest:
-              light ? const Color(0xFFEDE3E9) : const Color(0xFF28242C));
-  final radius = BorderRadius.circular(9);
+          surfaceContainerLow: surfaceLow,
+          surfaceContainerHighest: surfaceHigh);
+  const radius = BorderRadius.all(Radius.circular(14));
+  const radiusLg = BorderRadius.all(Radius.circular(18));
   return ThemeData(
       useMaterial3: true,
       materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
@@ -77,11 +85,13 @@ ThemeData workbenchTheme(UiPreferences ui) {
           elevation: 0,
           margin: EdgeInsets.zero,
           shape: RoundedRectangleBorder(
-              borderRadius: radius, side: BorderSide(color: line))),
+              borderRadius: radius,
+              side: BorderSide(
+                  color: light ? line : line.withValues(alpha: .55)))),
       inputDecorationTheme: InputDecorationTheme(
           isDense: true,
           filled: true,
-          fillColor: surface,
+          fillColor: surfaceLow,
           contentPadding:
               const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
           border: OutlineInputBorder(
@@ -93,13 +103,13 @@ ThemeData workbenchTheme(UiPreferences ui) {
           hintStyle: TextStyle(fontSize: 12, color: sub)),
       filledButtonTheme: FilledButtonThemeData(
           style: FilledButton.styleFrom(
-              backgroundColor: wine,
+              backgroundColor: light ? wine : const Color(0xFFF45B87),
               foregroundColor: Colors.white,
               textStyle: const TextStyle(fontFamily: 'Segoe UI', fontSize: 12),
-              minimumSize: const Size(36, 36),
+              minimumSize: const Size(36, 38),
               shape: RoundedRectangleBorder(borderRadius: radius),
               padding:
-                  const EdgeInsets.symmetric(horizontal: 14, vertical: 10))),
+                  const EdgeInsets.symmetric(horizontal: 16, vertical: 10))),
       outlinedButtonTheme: OutlinedButtonThemeData(
           style: OutlinedButton.styleFrom(
               foregroundColor: ink,
@@ -109,10 +119,10 @@ ThemeData workbenchTheme(UiPreferences ui) {
               shape: RoundedRectangleBorder(borderRadius: radius))),
       textButtonTheme: TextButtonThemeData(style: TextButton.styleFrom(foregroundColor: accent, textStyle: const TextStyle(fontFamily: 'Segoe UI', fontSize: 12))),
       iconButtonTheme: IconButtonThemeData(style: IconButton.styleFrom(foregroundColor: sub, iconSize: 18, shape: RoundedRectangleBorder(borderRadius: radius))),
-      switchTheme: SwitchThemeData(thumbColor: WidgetStateProperty.resolveWith((s) => s.contains(WidgetState.selected) ? accent : sub), trackColor: WidgetStateProperty.resolveWith((s) => s.contains(WidgetState.selected) ? wine : line)),
-      chipTheme: ChipThemeData(backgroundColor: surface, selectedColor: wine.withValues(alpha: .2), side: BorderSide(color: line), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(5)), labelStyle: TextStyle(fontFamily: 'Segoe UI', fontSize: 11, color: sub), padding: const EdgeInsets.symmetric(horizontal: 6)),
+      switchTheme: SwitchThemeData(thumbColor: WidgetStateProperty.resolveWith((s) => s.contains(WidgetState.selected) ? Colors.white : sub), trackColor: WidgetStateProperty.resolveWith((s) => s.contains(WidgetState.selected) ? (light ? wine : const Color(0xFFF45B87)) : line)),
+      chipTheme: ChipThemeData(backgroundColor: surfaceLow, selectedColor: (light ? wine : const Color(0xFFF45B87)).withValues(alpha: .28), side: BorderSide(color: line.withValues(alpha: .8)), shape: const StadiumBorder(), labelStyle: TextStyle(fontFamily: 'Segoe UI', fontSize: 11, color: ink), padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4)),
       snackBarTheme: const SnackBarThemeData(behavior: SnackBarBehavior.floating, width: 420),
-      dialogTheme: DialogThemeData(backgroundColor: surface, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: BorderSide(color: line))),
+      dialogTheme: DialogThemeData(backgroundColor: surface, shape: RoundedRectangleBorder(borderRadius: radiusLg, side: BorderSide(color: line.withValues(alpha: .55)))),
       tooltipTheme: TooltipThemeData(decoration: BoxDecoration(color: scheme.surfaceContainerHighest, borderRadius: radius, border: Border.all(color: line)), textStyle: TextStyle(fontSize: 11, color: ink)));
 }
 
@@ -129,16 +139,18 @@ class Panel extends StatelessWidget {
   Widget build(BuildContext context) => Container(
       decoration: BoxDecoration(
           color: Theme.of(context).colorScheme.surface,
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(16),
           border: Border.all(
               color: accent
-                  ? Theme.of(context).colorScheme.primary.withValues(alpha: .32)
-                  : Theme.of(context).dividerColor),
+                  ? Theme.of(context).colorScheme.primary.withValues(alpha: .38)
+                  : Theme.of(context)
+                      .dividerColor
+                      .withValues(alpha: .55)),
           boxShadow: accent
               ? [BoxShadow(color: wine.withValues(alpha: .04), blurRadius: 24)]
               : null),
       child: ClipRRect(
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(16),
           child: Material(
               color: Colors.transparent,
               child: Padding(padding: padding, child: child))));
@@ -152,11 +164,11 @@ class Tag extends StatelessWidget {
   Widget build(BuildContext context) => Container(
       padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
       decoration: BoxDecoration(
-          color: color?.withValues(alpha: .07),
+          color: color?.withValues(alpha: .09),
           border: Border.all(
               color: color?.withValues(alpha: .35) ??
                   Theme.of(context).dividerColor),
-          borderRadius: BorderRadius.circular(4)),
+          borderRadius: BorderRadius.circular(999)),
       child: Text(text,
           style: TextStyle(
               fontSize: 10,
