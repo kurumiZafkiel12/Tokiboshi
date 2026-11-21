@@ -161,7 +161,10 @@ void main() {
     await t.tap(find.text('启动代理'));
     await t.pumpAndSettle();
     expect(bridge.receivedProfile, isNot(profile));
-    expect(bridge.receivedNodes, ['fixture']);
+    // Nodes-only config carries every node as an outbound, not just
+    // the subscription's own source-scoped set.
+    expect(bridge.receivedNodes, contains('fixture'));
+    expect(bridge.receivedNodes, contains('other'));
     expect(bridge.running, true);
     await t.tap(find.text('停止代理'));
     await t.pumpAndSettle();
