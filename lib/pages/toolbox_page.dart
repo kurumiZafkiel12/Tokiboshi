@@ -43,6 +43,8 @@ class _ToolboxPageState extends State<ToolboxPage> {
   String? _latErr;
   int _dlProgress = 0; // 0-100
   int _dlSeconds = 10;
+  String _dlService = 'cloudflare';
+  String? _dlEndpoint;
 
   // 延迟质量（对当前出口，10 次 RTT）
   double? _latMin, _latAvg, _latMax, _latJitter;
@@ -50,7 +52,6 @@ class _ToolboxPageState extends State<ToolboxPage> {
   final Map<String, int> _targetMs = {};
   final Map<String, String?> _targetErr = {};
 
-  static const dlBytes = 100 * 1024 * 1024; // 100 MB 上限
   static const upBytes = 8 * 1024 * 1024; // 8 MB 上行载荷
   static const latencyProbes = 10;
 
@@ -58,6 +59,17 @@ class _ToolboxPageState extends State<ToolboxPage> {
   // a browser UA is required for the speed endpoints.
   static const speedUa =
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36';
+
+  /// 下载测速服务：Cloudflare 对数据中心出口 IP 常见 403（TLS 指纹
+  /// 层拦截，换 UA 无效），所以提供多服务并在所选端点失败时自动回退。
+  static const dlServices = <String, (String, String)>{
+    'cloudflare': ('Cloudflare', 'https://speed.cloudflare.com/__down?bytes=104857600'),
+    'hetzner': ('Hetzner 德国', 'https://speed.hetzner.de/100MB.bin'),
+    'tele2': ('Tele2 荷兰', 'http://speedtest.tele2.net/100MB.zip'),
+  };
+
+  /// 延迟质量探测端点：gstatic 204 无 bot 拦截、全球 anycast。
+  static const latencyProbeUrl = 'https://www.gstatic.com/generate_204';
 
   /// 目标连通清单：名称 → URL。204/trace 类端点轻量；非 2xx 也算连通
   /// （握手完成即计延迟），只把网络层失败算作错误。
@@ -100,32 +112,62 @@ class _ToolboxPageState extends State<ToolboxPage> {
       _dlLive = null;
       _dlPeak = null;
       _dlTotal = 0;
+      _dlEndpoint = null;
     });
     final client = _proxyClient();
     final watch = Stopwatch()..start();
     var received = 0;
     double? peak;
+    Object? lastError;
+    final tried = <String>[];
+    // 候选：用户所选端点优先，其余按表顺序自动回退（Cloudflare 对
+    // 数据中心出口 IP 常见 403——TLS 指纹层拦截，换 UA 无效）。
+    final order = [
+      _dlService,
+      for (final key in dlServices.keys)
+        if (key != _dlService) key,
+    ];
+    HttpClientResponse? resp;
+    String used = _dlService;
+    for (final key in order) {
+      final (name, url) = dlServices[key]!;
+      tried.add(name);
+      try {
+        final req = await client.getUrl(Uri.parse(url));
+        req.headers.set(HttpHeaders.userAgentHeader, speedUa);
+        final candidate =
+            await req.close().timeout(const Duration(seconds: 15));
+        if (candidate.statusCode != 200) {
+          throw HttpException('HTTP ${candidate.statusCode}');
+        }
+        resp = candidate;
+        used = key;
+        break;
+      } catch (e) {
+        lastError = e;
+      }
+    }
     try {
-      final req = await client.getUrl(
-          Uri.parse('https://speed.cloudflare.com/__down?bytes=$dlBytes'));
-      req.headers.set(HttpHeaders.userAgentHeader, speedUa);
-      final resp = await req.close().timeout(const Duration(seconds: 15));
-      if (resp.statusCode == 403) {
-        throw HttpException('端点拒绝（403）：该出口 IP 可能被 Cloudflare 限制，换个节点再试');
+      if (resp == null) {
+        throw HttpException(
+            '全部端点失败（${tried.join('、')}）：${lastError is HttpException ? lastError.message : '$lastError'}');
       }
-      if (resp.statusCode != 200) {
-        throw HttpException('HTTP ${resp.statusCode}');
+      if (used != _dlService) {
+        setState(() => _dlEndpoint = '${dlServices[used]!.$1}（自动回退）');
+      } else {
+        setState(() => _dlEndpoint = dlServices[used]!.$1);
       }
+      // 时长上限只对 Cloudflare（无限流式）生效；文件型端点跑满整个文件。
+      final seconds = used == 'cloudflare' ? _dlSeconds : 1 << 20;
       // 瞬时速率：最近 1s 滑窗样本
       final window = <int, int>{}; // elapsedMs -> cumulative bytes
-      await for (final chunk in resp.timeout(const Duration(seconds: 10))) {
+      await for (final chunk in resp.timeout(const Duration(seconds: 15))) {
         received += chunk.length;
         final ms = watch.elapsedMilliseconds;
         window[ms] = received;
-        // 清理滑窗外样本
         window.removeWhere((k, _) => k < ms - 1000);
         if (window.isNotEmpty) {
-          final oldest = (window.keys.reduce(math.min));
+          final oldest = window.keys.reduce(math.min);
           final instant =
               (received - (window[oldest] ?? 0)) * 8 / ((ms - oldest) / 1000) / 1e6;
           peak = math.max(peak ?? 0, instant);
@@ -134,11 +176,12 @@ class _ToolboxPageState extends State<ToolboxPage> {
               _dlLive = instant;
               _dlPeak = peak;
               _dlTotal = received;
-              _dlProgress = (ms / (_dlSeconds * 1000)).clamp(0, 99).round();
+              _dlProgress =
+                  (ms / (seconds * 1000)).clamp(0, 99).round();
             });
           }
         }
-        if (watch.elapsed >= Duration(seconds: _dlSeconds)) break;
+        if (watch.elapsed >= Duration(seconds: seconds)) break;
       }
       final secs = watch.elapsedMilliseconds / 1000;
       if (secs > 0.5 && received > 0) {
@@ -179,6 +222,9 @@ class _ToolboxPageState extends State<ToolboxPage> {
       req.add(payload);
       await req.flush().timeout(const Duration(seconds: 12));
       final resp = await req.close().timeout(const Duration(seconds: 10));
+      if (resp.statusCode == 403) {
+        throw HttpException('端点拒绝（403）：该出口 IP 被 Cloudflare 限制（上传端点暂无免费替代），换个节点再试');
+      }
       if (resp.statusCode < 200 || resp.statusCode >= 300) {
         throw HttpException('HTTP ${resp.statusCode}');
       }
@@ -213,8 +259,7 @@ class _ToolboxPageState extends State<ToolboxPage> {
     try {
       for (var i = 0; i < latencyProbes; i++) {
         final watch = Stopwatch()..start();
-        final req = await client.getUrl(
-            Uri.parse('https://speed.cloudflare.com/__down?bytes=0'));
+        final req = await client.getUrl(Uri.parse(latencyProbeUrl));
         req.headers.set(HttpHeaders.userAgentHeader, speedUa);
         final resp = await req.close().timeout(const Duration(seconds: 8));
         await resp.drain<void>();
@@ -301,7 +346,8 @@ class _ToolboxPageState extends State<ToolboxPage> {
         _toolCard(
           icon: Icons.cloud_download_outlined,
           title: '下载测速',
-          sub: 'Cloudflare 下载端点 · 经当前出口 · $_dlSeconds 秒采样',
+          sub:
+              '${dlServices[_dlService]!.$1} 下载端点 · 经当前出口 · 失败自动切换服务',
           busy: _dlBusy,
           progress: _dlProgress,
           value: _fmt(_dlBusy && _dlLive != null ? _dlLive : _downMbps),
@@ -352,7 +398,24 @@ class _ToolboxPageState extends State<ToolboxPage> {
   Widget _durationSelector() {
     return Padding(
       padding: const EdgeInsets.only(top: 8),
-      child: Row(children: [
+      child: Wrap(crossAxisAlignment: WrapCrossAlignment.center, children: [
+        const Text('测速服务', style: TextStyle(fontSize: 12, color: Colors.grey)),
+        const SizedBox(width: 8),
+        for (final entry in dlServices.entries)
+          Padding(
+            padding: const EdgeInsets.only(right: 6),
+            child: ChoiceChip(
+              label: Text(entry.value.$1),
+              selected: _dlService == entry.key,
+              onSelected: _dlBusy
+                  ? null
+                  : (_) => setState(() {
+                        _dlService = entry.key;
+                        _dlEndpoint = null;
+                      }),
+            ),
+          ),
+        const SizedBox(width: 10),
         const Text('采样时长', style: TextStyle(fontSize: 12, color: Colors.grey)),
         const SizedBox(width: 8),
         for (final s in const [10, 20, 30])
@@ -366,6 +429,11 @@ class _ToolboxPageState extends State<ToolboxPage> {
                   : (_) => setState(() => _dlSeconds = s),
             ),
           ),
+        if (_dlEndpoint != null) ...[
+          const SizedBox(width: 4),
+          Text('端点：$_dlEndpoint',
+              style: const TextStyle(fontSize: 12, color: Colors.grey)),
+        ],
       ]),
     );
   }
