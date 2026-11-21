@@ -24,6 +24,18 @@ class NetworkInfo extends StatefulWidget {
 
 class _NetworkInfoState extends State<NetworkInfo> {
   bool byIp = false, busy = false;
+  // Party 式视图：'graph' = 四层链路图；其余为单维度视图。
+  String view = 'graph';
+  TopologyKey? selected;
+
+  static const viewTabs = [
+    ('graph', '链路图'),
+    ('group', '代理组'),
+    ('node', '出站节点'),
+    ('rule', '规则'),
+    ('byIp', '来源 IP'),
+    ('byPort', '来源端口'),
+  ];
   static const colors = [
     Color(0xffb43c62),
     Color(0xff6d55ad),
@@ -149,7 +161,8 @@ class _NetworkInfoState extends State<NetworkInfo> {
               ? '暂无活动连接。通过代理访问网络后，链路会出现在这里。'
               : '暂时无法读取连接，正在重试。'));
     }
-    final topology = ConnectionTopology(monitor.connections, byIp: byIp);
+    final topology = ConnectionTopology(monitor.connections,
+        byIp: view == 'byIp');
     // 实时速率：与上一帧（约 1s 前）差分。首帧不计。
     final now = DateTime.now();
     _rates.clear();
@@ -180,6 +193,41 @@ class _NetworkInfoState extends State<NetworkInfo> {
     final height =
         columns.fold(0, (max, next) => next.length > max ? next.length : max) *
             47.0;
+    if (view != 'graph') {
+      final layer = switch (view) {
+        'group' => 0,
+        'node' => 1,
+        'rule' => 2,
+        'byIp' => 3,
+        _ => 3,
+      };
+      final keys = topology.nodes.keys
+          .where((key) => key.$1 == layer)
+          .toList()
+        ..sort((a, b) => topology.nodes[b]!.count
+            .compareTo(topology.nodes[a]!.count));
+      final rates = _rates;
+      return Column(children: [
+        for (final key in keys)
+          Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Card(
+                  margin: EdgeInsets.zero,
+                  child: ListTile(
+                      onTap: () =>
+                          details(context, key.$2, topology.nodes[key]!),
+                      title: Text(key.$2,
+                          maxLines: 1, overflow: TextOverflow.ellipsis),
+                      subtitle: Text(
+                          '${topology.nodes[key]!.count} 条连接'
+                          '${rates[key] == null ? '' : ' · ${_rateLabel(rates[key])}'}',
+                          style: const TextStyle(fontSize: 11)),
+                      trailing: Text(
+                          bytesLabel(topology.nodes[key]!.download),
+                          style: const TextStyle(fontSize: 12)))),
+              )),
+      ]);
+    }
     return LayoutBuilder(builder: (_, constraints) {
       final width = constraints.maxWidth < 640 ? 640.0 : constraints.maxWidth;
       final columnWidth = width / 4;
@@ -217,6 +265,7 @@ class _NetworkInfoState extends State<NetworkInfo> {
                           e.key: e.value.count
                       },
                       Theme.of(context).colorScheme.outline,
+                      selected),
                     )))),
                     for (final e in positions.entries)
                       Positioned(
@@ -231,7 +280,9 @@ class _NetworkInfoState extends State<NetworkInfo> {
                                 foregroundColor: Colors.white,
                                 padding: const EdgeInsets.symmetric(
                                     horizontal: 9, vertical: 4)),
-                            onPressed: () => details(
+                            onPressed: () => setState(() => selected =
+                                selected == e.key ? null : e.key),
+                            onLongPress: () => details(
                                 context, e.key.$2, topology.nodes[e.key]!),
                             child: Column(
                                 mainAxisAlignment: MainAxisAlignment.center,
@@ -288,10 +339,18 @@ class _NetworkInfoState extends State<NetworkInfo> {
                       children: [
                         Text('网络信息',
                             style: Theme.of(context).textTheme.titleLarge),
-                        SegmentedButton<bool>(
-                          segments: const [
-                            ButtonSegment(value: false, label: Text('来源端口')),
-                            ButtonSegment(value: true, label: Text('来源 IP')),
+                        Wrap(spacing: 6, children: [
+                          for (final (mode, label) in viewTabs)
+                            ChoiceChip(
+                                label: Text(label),
+                                selected: view == mode,
+                                onSelected: (_) => setState(() {
+                                      view = mode;
+                                      selected = null;
+                                      if (mode == 'byIp') byIp = true;
+                                      if (mode == 'byPort') byIp = false;
+                                    })),
+                        ]),                            ButtonSegment(value: true, label: Text('来源 IP')),
                           ],
                           selected: {byIp},
                           onSelectionChanged: (values) => setState(() {
@@ -356,11 +415,13 @@ class _NetworkInfoState extends State<NetworkInfo> {
 }
 
 class _Edges extends CustomPainter {
-  _Edges(this.positions, this.columnWidth, this.counts, this.color);
+  _Edges(this.positions, this.columnWidth, this.counts, this.color,
+      this.selected);
   final Map<TopologyKey, Offset> positions;
   final Map<TopologyEdge, int> counts;
   final double columnWidth;
   final Color color;
+  final TopologyKey? selected;
   @override
   void paint(Canvas canvas, Size size) {
     for (final e in counts.entries) {
@@ -370,12 +431,17 @@ class _Edges extends CustomPainter {
       final path = Path()
         ..moveTo(from.dx, from.dy)
         ..cubicTo(mid, from.dy, mid, to.dy, to.dx, to.dy);
+      final touchesSelection = selected != null &&
+          (e.key.$1 == selected || e.key.$2 == selected);
+      final dimmed = selected != null && !touchesSelection;
       canvas.drawPath(
           path,
           Paint()
             ..style = PaintingStyle.stroke
-            ..color = color.withValues(alpha: .6)
-            ..strokeWidth = e.value.clamp(1, 7).toDouble());
+            ..color = color.withValues(alpha: dimmed ? .15 : .7)
+            ..strokeWidth = touchesSelection
+                ? (e.value.clamp(2, 7) + 2).toDouble()
+                : e.value.clamp(1, 7).toDouble());
     }
   }
 
@@ -383,6 +449,7 @@ class _Edges extends CustomPainter {
   bool shouldRepaint(covariant _Edges oldDelegate) =>
       oldDelegate.color != color ||
       oldDelegate.columnWidth != columnWidth ||
+      oldDelegate.selected != selected ||
       !mapEquals(oldDelegate.positions, positions) ||
       !mapEquals(oldDelegate.counts, counts);
 }

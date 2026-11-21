@@ -20,9 +20,13 @@ class RoutingRule {
     'port': '目标端口',
   };
   void validate() {
+    // target：proxy/direct/reject 或节点名（生成时经 tagByName 映射为 TAG，
+    // 用户需求"按软件分流、单独设置出口节点"）。
     if (!kinds.containsKey(kind) ||
-        !['proxy', 'direct', 'reject'].contains(target))
-      throw const FormatException('不支持的规则类型或动作');
+        target.trim().isEmpty ||
+        target.length > 128 ||
+        target.contains(RegExp(r'[\s\x00-\x1f]')))
+      throw const FormatException('不支持的规则类型或出站目标');
     if (value.trim().isEmpty ||
         value.length > 512 ||
         value.contains(RegExp(r'[\s\x00-\x1f]')))
@@ -166,6 +170,7 @@ String applyClientPreferences(
   String text,
   ClientPreferences preferences, {
   required bool hasProfile,
+  Map<String, String> tagByName = const {},
 }) {
   preferences.validate();
   if (!preferences.rules.any((r) => r.enabled) &&
@@ -183,7 +188,14 @@ String applyClientPreferences(
     route['rules'] = [
       ...inboundRules,
       ...routingRules.where((r) => r.containsKey('clash_mode')),
-      ...preferences.rules.where((r) => r.enabled).map((r) => r.config),
+      ...preferences.rules.where((r) => r.enabled).map((r) {
+        final rule = Map<String, dynamic>.from(r.config);
+        final outbound = rule['outbound'];
+        if (outbound is String && tagByName.containsKey(outbound)) {
+          rule['outbound'] = tagByName[outbound];
+        }
+        return rule;
+      }),
       ...routingRules.where((r) => !r.containsKey('clash_mode')),
     ];
   }

@@ -163,7 +163,7 @@ class _ImportDialogState extends State<ImportDialog> {
           ? _manual()
           : normalizeImportText(_method == 'file' ? _fileContent! : _text.text);
       if (text.isEmpty) throw const FormatException('请先填写或读取导入内容');
-      if (_method == 'link') {
+      if (_method == 'link' || _method == 'clipboard' || _method == 'custom') {
         for (final line in text.split('\n').where((s) => s.trim().isNotEmpty)) {
           if (!isSubscriptionUrl(normalizeImportText(line)) &&
               !RegExp(r'^[a-zA-Z][a-zA-Z0-9+.-]*://')
@@ -178,8 +178,8 @@ class _ImportDialogState extends State<ImportDialog> {
               text: text,
               name: _name.text.trim(),
               localPath: _method == 'file' ? _path : null,
-              manual: _method == 'custom',
-              forceUrl: _method == 'link'));
+              manual: false,
+              forceUrl: true));
     } catch (e) {
       setState(
           () => _error = e is FormatException ? e.message : '自定义 JSON 格式无效');
@@ -230,34 +230,35 @@ class _ImportDialogState extends State<ImportDialog> {
                         child: Column(
                             crossAxisAlignment: CrossAxisAlignment.stretch,
                             children: [
-                              Wrap(spacing: 7, runSpacing: 7, children: [
-                                for (final m in const [
-                                  ('qr', '二维码', Icons.qr_code_2),
-                                  ('file', '文件', Icons.upload_file_outlined),
-                                  ('link', '链接', Icons.link),
-                                  (
-                                    'clipboard',
-                                    '剪贴板 / 文本',
-                                    Icons.content_paste
-                                  ),
-                                  ('custom', '自定义', Icons.tune)
-                                ])
-                                  ChoiceChip(
-                                      avatar: Icon(m.$3, size: 16),
-                                      label: Text(m.$2),
-                                      selected: _method == m.$1,
-                                      onSelected: _working
-                                          ? null
-                                          : (_) => setState(() {
-                                                _method = m.$1;
-                                                _error = null;
-                                                if (_fileContent != null)
-                                                  _text.clear();
-                                                _path = null;
-                                                _filename = null;
-                                                _fileContent = null;
-                                              }))
+                              Row(children: [
+                                Expanded(
+                                    child: Text('粘贴订阅链接、节点链接（hy2/ss/vmess 等）或配置内容，自动识别。',
+                                        style: TextStyle(
+                                            fontSize: 11,
+                                            color: Theme.of(context)
+                                                .colorScheme
+                                                .onSurfaceVariant))),
+                                IconButton(
+                                    tooltip: '从文件导入',
+                                    onPressed: _working
+                                        ? null
+                                        : () => setState(() {
+                                              _method = 'file';
+                                              _error = null;
+                                            }),
+                                    icon: const Icon(Icons.upload_file_outlined,
+                                        size: 19)),
+                                IconButton(
+                                    tooltip: '二维码',
+                                    onPressed: _working
+                                        ? null
+                                        : () => setState(() {
+                                              _method = 'qr';
+                                              _error = null;
+                                            }),
+                                    icon: const Icon(Icons.qr_code_2, size: 19)),
                               ]),
+                              const SizedBox(height: 14),
                               const SizedBox(height: 20),
                               _field('名称（可选）', _name),
                               if (_method == 'file') ...[
@@ -427,12 +428,8 @@ class _ImportDialogState extends State<ImportDialog> {
                                     maxLines: _method == 'link' ? 4 : 7,
                                     minLines: 3,
                                     decoration: InputDecoration(
-                                        labelText: _method == 'link'
-                                            ? '订阅 / 节点链接（每行一个）'
-                                            : '导入内容',
-                                        hintText: _method == 'link'
-                                            ? 'https://example.com/subscription\n可粘贴 Markdown 或客户端导入链接'
-                                            : '分享链接 / Base64 / Clash YAML / sing-box JSON')),
+                                        labelText: '订阅 / 节点链接 / 配置内容（自动识别）',
+                                        hintText: 'https://example.com/subscription\nhy2://user@host:443#JP\n或直接粘贴 Clash YAML / sing-box JSON')),
                               ],
                               const SizedBox(height: 18),
                               if (_working) ...[

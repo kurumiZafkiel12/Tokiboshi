@@ -58,6 +58,9 @@ class _ToolboxPageState extends State<ToolboxPage> {
   String? _proxyServer, _autoConfigUrl;
   bool _clearing = false;
 
+  // 工具箱矩阵（Hotaru 形态）：null = 矩阵页；否则为打开的工具页。
+  String? _openTool;
+
   // 延迟质量（对当前出口，10 次 RTT）
   double? _latMin, _latAvg, _latMax, _latJitter;
   // 目标连通（经当前出口的 HTTPS 完成延迟，ms）
@@ -404,7 +407,7 @@ class _ToolboxPageState extends State<ToolboxPage> {
 
   @override
   Widget build(BuildContext context) {
-    if (!widget.running) {
+    if (!widget.running && _openTool == null) {
       return ListView(padding: const EdgeInsets.all(20), children: [
         const Icon(Icons.construction_outlined, size: 40, color: Colors.grey),
         const SizedBox(height: 10),
@@ -414,220 +417,190 @@ class _ToolboxPageState extends State<ToolboxPage> {
         widget.resources,
       ]);
     }
+    return _openTool == null ? _matrix() : _toolPage(_openTool!);
+  }
+
+  Widget _matrix() {
+    final groups = <String,
+        List<(String, String, String, IconData, VoidCallback)>>[
+      '测速': [
+        (
+          'speed',
+          '网络测速',
+          '下载 / 上传 / 延迟质量 / 目标连通',
+          Icons.speed_outlined,
+          () => setState(() => _openTool = 'speed')
+        ),
+      ],
+      '检测': [
+        (
+          'checks',
+          '检测与修复',
+          '出口泄漏对照 · 系统代理残留清理',
+          Icons.health_and_safety_outlined,
+          () => setState(() => _openTool = 'checks')
+        ),
+      ],
+      '网络': [
+        (
+          'topology',
+          '网络信息',
+          '链路拓扑 · 实时速率 · 网络延迟',
+          Icons.account_tree_outlined,
+          () => setState(() => _openTool = 'topology')
+        ),
+      ],
+      '资源': [
+        (
+          'resources',
+          '规则集资源',
+          '17 个内置规则集 · 源可配 · 自动更新',
+          Icons.inventory_2_outlined,
+          () => setState(() => _openTool = 'resources')
+        ),
+      ],
+    ];
     return SingleChildScrollView(
-      padding: const EdgeInsets.all(20),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        const Text('工具箱',
-            style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600)),
-        const SizedBox(height: 14),
-        _toolCard(
-          icon: Icons.cloud_download_outlined,
-          title: '下载测速',
-          sub:
-              '${dlServices[_dlService]!.$1} 下载端点 · 经当前出口 · 失败自动切换服务',
-          busy: _dlBusy,
-          progress: _dlProgress,
-          value: _fmt(_dlBusy && _dlLive != null ? _dlLive : _downMbps),
-          unit: 'Mbps',
-          error: _dlErr,
-          detail: _speedDetail(),
-          extra: _durationSelector(),
-          onStart: _runDownload,
-        ),
-        const SizedBox(height: 12),
-        _toolCard(
-          icon: Icons.cloud_upload_outlined,
-          title: '上传测速',
-          sub: 'Cloudflare 上传端点 · 8 MB 载荷 · 已发送 ${_bytes(_ulTotal)}',
-          busy: _ulBusy,
-          progress: null,
-          value: _fmt(_upMbps),
-          unit: 'Mbps',
-          error: _ulErr,
-          onStart: _runUpload,
-        ),
-        const SizedBox(height: 12),
-        _latencyCard(),
-        const SizedBox(height: 12),
-        _targetsCard(),
-        const SizedBox(height: 14),
-        _checksCard(),
-        const SizedBox(height: 14),
-        widget.networkInfo,
-        widget.resources,
-        const Text(
-            '测速走当前出口：切换节点后重测可对比线路质量。'
-            '下载/上传结果仅为采样窗口内的平均吞吐；目标连通为 HTTPS 完成延迟，受远端负载影响。',
-            style: TextStyle(fontSize: 12, color: Colors.grey)),
-      ]),
-    );
-  }
-
-  Widget? _speedDetail() {
-    if (_downMbps == null && _dlLive == null) return null;
-    return Padding(
-      padding: const EdgeInsets.only(top: 6),
-      child: Text(
-        '峰值 ${_fmt(_dlPeak)} Mbps · 已下载 ${_bytes(_dlTotal)}',
-        style: const TextStyle(fontSize: 12, color: Colors.grey),
-      ),
-    );
-  }
-
-  Widget _durationSelector() {
-    return Padding(
-      padding: const EdgeInsets.only(top: 8),
-      child: Wrap(crossAxisAlignment: WrapCrossAlignment.center, children: [
-        const Text('测速服务', style: TextStyle(fontSize: 12, color: Colors.grey)),
-        const SizedBox(width: 8),
-        for (final entry in dlServices.entries)
-          Padding(
-            padding: const EdgeInsets.only(right: 6),
-            child: ChoiceChip(
-              label: Text(entry.value.$1),
-              selected: _dlService == entry.key,
-              onSelected: _dlBusy
-                  ? null
-                  : (_) => setState(() {
-                        _dlService = entry.key;
-                        _dlEndpoint = null;
-                      }),
-            ),
-          ),
-        const SizedBox(width: 10),
-        const Text('采样时长', style: TextStyle(fontSize: 12, color: Colors.grey)),
-        const SizedBox(width: 8),
-        for (final s in const [10, 20, 30])
-          Padding(
-            padding: const EdgeInsets.only(right: 6),
-            child: ChoiceChip(
-              label: Text('${s}s'),
-              selected: _dlSeconds == s,
-              onSelected: _dlBusy
-                  ? null
-                  : (_) => setState(() => _dlSeconds = s),
-            ),
-          ),
-        if (_dlEndpoint != null) ...[
-          const SizedBox(width: 4),
-          Text('端点：$_dlEndpoint',
-              style: const TextStyle(fontSize: 12, color: Colors.grey)),
-        ],
-      ]),
-    );
-  }
-
-  Widget _latencyCard() {
-    return Card(
-      margin: EdgeInsets.zero,
-      child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(20),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Row(children: [
-            const Icon(Icons.speed, size: 20, color: Colors.white70),
-            const SizedBox(width: 10),
-            const Expanded(
-                child: Text('延迟质量',
-                    style:
-                        TextStyle(fontSize: 15, fontWeight: FontWeight.w600))),
-            if (_latBusy)
-              const SizedBox(
-                  width: 8,
-                  height: 8,
-                  child: CircularProgressIndicator(strokeWidth: 2)),
-            FilledButton.tonal(
-                onPressed: _latBusy ? null : _runLatencyQuality,
-                child: Text(_latBusy ? '测量中…' : '开始')),
-          ]),
-          const SizedBox(height: 6),
-          Text('当前出口 · $latencyProbes 次采样 · 抖动 = 相邻样本差的均值',
+          const Text('工具箱',
+              style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600)),
+          const SizedBox(height: 4),
+          Text('点开对应工具。${widget.running ? '' : '内核未运行：测速与拓扑不可用。'}',
               style: const TextStyle(fontSize: 12, color: Colors.grey)),
-          const SizedBox(height: 10),
-          if (_latErr != null)
-            Text(_latErr!, style: const TextStyle(fontSize: 12, color: Colors.redAccent))
-          else
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceAround,
-              children: [
-                _stat('最小', _ms(_latMin?.round())),
-                _stat('平均', _ms(_latAvg?.round())),
-                _stat('最大', _ms(_latMax?.round())),
-                _stat('抖动', _ms(_latJitter?.round())),
-              ],
-            ),
-        ]),
-      ),
-    );
+          for (final entry in groups.entries) ...[
+            const SizedBox(height: 14),
+            Text(entry.key,
+                style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.grey)),
+            const SizedBox(height: 8),
+            for (final tool in entry.value)
+              Padding(
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: _matrixButton(tool)),
+          ],
+        ]));
   }
 
-  Widget _targetsCard() {
+  Widget _matrixButton((String, String, String, IconData, VoidCallback) tool) {
     return Card(
-      margin: EdgeInsets.zero,
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Row(children: [
-            const Icon(Icons.travel_explore, size: 20, color: Colors.white70),
-            const SizedBox(width: 10),
-            const Expanded(
-                child: Text('目标连通',
-                    style:
-                        TextStyle(fontSize: 15, fontWeight: FontWeight.w600))),
-            if (_tgtBusy)
-              const SizedBox(
-                  width: 8,
-                  height: 8,
-                  child: CircularProgressIndicator(strokeWidth: 2)),
-            FilledButton.tonal(
-                onPressed: _tgtBusy ? null : _runTargetChecks,
-                child: Text(_tgtBusy ? '检测中…' : '开始')),
-          ]),
-          const SizedBox(height: 6),
-          const Text('常用服务经当前出口的 HTTPS 完成延迟',
-              style: TextStyle(fontSize: 12, color: Colors.grey)),
-          const SizedBox(height: 8),
-          for (final name in targets.keys)
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 3),
-              child: Row(children: [
-                SizedBox(
-                    width: 110,
-                    child: Text(name,
-                        style: const TextStyle(fontSize: 13))),
-                Expanded(
-                  child: LinearProgressIndicator(
-                    value: _targetMs[name] == null
-                        ? 0
-                        : (1 - (_targetMs[name]! / 3000)).clamp(0.0, 1.0),
-                    minHeight: 4,
-                  ),
-                ),
-                const SizedBox(width: 10),
-                SizedBox(
-                    width: 64,
-                    child: Text(
-                        _targetErr[name] != null
-                            ? '失败'
-                            : _ms(_targetMs[name]),
-                        textAlign: TextAlign.end,
-                        style: TextStyle(
-                            fontSize: 12,
-                            color: _targetErr[name] != null
-                                ? Colors.redAccent
-                                : Colors.grey))),
-              ]),
-            ),
-        ]),
-      ),
-    );
+        margin: EdgeInsets.zero,
+        child: InkWell(
+            borderRadius: BorderRadius.circular(14),
+            onTap: tool.$5,
+            child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Row(children: [
+                  Container(
+                      width: 42,
+                      height: 42,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                          color: Theme.of(context)
+                              .colorScheme
+                              .primary
+                              .withValues(alpha: .12),
+                          borderRadius: BorderRadius.circular(12)),
+                      child: Icon(tool.$4,
+                          size: 22,
+                          color: Theme.of(context).colorScheme.primary)),
+                  const SizedBox(width: 14),
+                  Expanded(
+                      child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                        Text(tool.$2,
+                            style: const TextStyle(
+                                fontSize: 15, fontWeight: FontWeight.w600)),
+                        const SizedBox(height: 2),
+                        Text(tool.$3,
+                            style: const TextStyle(
+                                fontSize: 12, color: Colors.grey)),
+                      ])),
+                  const Icon(Icons.chevron_right, color: Colors.grey),
+                ]))));
   }
 
-  Widget _stat(String label, String value) {
-    return Column(children: [
-      Text(value,
-          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
-      Text(label, style: const TextStyle(fontSize: 11, color: Colors.grey)),
-    ]);
+  Widget _toolPage(String tool) {
+    final title = switch (tool) {
+      'speed' => '网络测速',
+      'checks' => '检测与修复',
+      'topology' => '网络信息',
+      _ => '规则集资源',
+    };
+    Widget body;
+    if (!widget.running && tool != 'resources') {
+      body = Column(children: [
+        const Icon(Icons.construction_outlined, size: 40, color: Colors.grey),
+        const SizedBox(height: 10),
+        const Text('该工具需要内核运行'),
+        const SizedBox(height: 10),
+        FilledButton(onPressed: widget.onStart, child: const Text('启动内核')),
+      ]);
+    } else {
+      body = switch (tool) {
+        'speed' => Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _toolCard(
+                icon: Icons.cloud_download_outlined,
+                title: '下载测速',
+                sub:
+                    '${dlServices[_dlService]!.$1} 下载端点 · 经当前出口 · 失败自动切换服务',
+                busy: _dlBusy,
+                progress: _dlProgress,
+                value: _fmt(_dlBusy && _dlLive != null ? _dlLive : _downMbps),
+                unit: 'Mbps',
+                error: _dlErr,
+                detail: _speedDetail(),
+                extra: _durationSelector(),
+                onStart: _runDownload,
+              ),
+              const SizedBox(height: 12),
+              _toolCard(
+                icon: Icons.cloud_upload_outlined,
+                title: '上传测速',
+                sub: 'Cloudflare 上传端点 · 8 MB 载荷 · 已发送 ${_bytes(_ulTotal)}',
+                busy: _ulBusy,
+                progress: null,
+                value: _fmt(_upMbps),
+                unit: 'Mbps',
+                error: _ulErr,
+                onStart: _runUpload,
+              ),
+              const SizedBox(height: 12),
+              _latencyCard(),
+              const SizedBox(height: 12),
+              _targetsCard(),
+              const SizedBox(height: 14),
+              const Text(
+                  '测速走当前出口：切换节点后重测可对比线路质量。下载/上传结果仅为采样窗口内的平均吞吐；目标连通为 HTTPS 完成延迟，受远端负载影响。',
+                  style: TextStyle(fontSize: 12, color: Colors.grey)),
+            ],
+          ),
+        'checks' => _checksCard(),
+        'topology' => widget.networkInfo,
+        _ => widget.resources,
+      };
+    }
+    return SingleChildScrollView(
+        padding: const EdgeInsets.all(20),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          Row(children: [
+            IconButton(
+                tooltip: '返回工具箱',
+                onPressed: () => setState(() => _openTool = null),
+                icon: const Icon(Icons.arrow_back, size: 19)),
+            const SizedBox(width: 6),
+            Text(title,
+                style: const TextStyle(
+                    fontSize: 20, fontWeight: FontWeight.w600)),
+          ]),
+          const SizedBox(height: 14),
+          body,
+        ]));
   }
 
   Widget _checksCard() {

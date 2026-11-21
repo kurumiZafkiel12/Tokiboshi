@@ -576,6 +576,38 @@ class _ShellPageState extends State<ShellPage>
 
   // ---- import / subscriptions ----
 
+  /// 当前活跃连接的进程名（去重；内核未启用进程识别时为空列表）。
+  List<String> _activeProcesses() {
+    final names = <String>{};
+    for (final row in _monitor.connections) {
+      final meta = row['metadata'];
+      if (meta is! Map) continue;
+      for (final key in ['processName', 'process_path', 'processPath']) {
+        final v = meta[key];
+        if (v is String && v.isNotEmpty) {
+          names.add(v.split(Platform.pathSeparator).last);
+          break;
+        }
+      }
+    }
+    return names.toList()..sort();
+  }
+
+  void _addProcessRule(String process, String target) {
+    try {
+      final rule = RoutingRule(
+          kind: 'process_name', value: process, target: target);
+      rule.validate();
+      setState(() {
+        _data.client.rules = [..._data.client.rules, rule];
+      });
+      unawaited(_persist());
+      _setMessage('已为「$process」添加分流（$target），重启内核后生效');
+    } catch (e) {
+      _setMessage('添加失败：$e');
+    }
+  }
+
   /// 内置分流模板规则的用户配置（开关 + 每条独立出站）。
   /// value：'off' = 关闭；'' = 启用+默认出站；'reject' / 'direct' /
   /// 'proxy' / 节点名 = 启用+指定出站。
@@ -1484,7 +1516,11 @@ class _ShellPageState extends State<ShellPage>
                       _data.clashApiSecret),
                   _data.desktop),
               _data.client,
-              hasProfile: profile != null));
+              hasProfile: profile != null,
+              tagByName: {
+                for (var i = 0; i < configNodes.length; i++)
+                  configNodes[i].name: nodeTags[i]
+              }));
       _checkConnectCancelled();
       // Rule-set downloads run in the background after app start; if
       // they have not landed yet this config carries no 分流 rules.
@@ -1994,7 +2030,9 @@ class _ShellPageState extends State<ShellPage>
                 .where((n) => !n.isPolicy)
                 .map((n) => n.name)
                 .toList(),
-            onTemplateRouting: _setTemplateRouting);
+            onTemplateRouting: _setTemplateRouting,
+            activeProcesses: _activeProcesses(),
+            onAddProcessRule: _addProcessRule);
       case 8:
         page = ToolboxPage(
           running: _running,

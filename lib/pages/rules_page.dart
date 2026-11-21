@@ -21,6 +21,8 @@ class RulesPage extends StatefulWidget {
       this.templateRouting = const {},
       this.nodeNames = const [],
       this.onTemplateRouting,
+      this.activeProcesses = const [],
+      this.onAddProcessRule,
       this.dataDir,
       this.activeProfileId,
       this.customRules = const [],
@@ -38,6 +40,10 @@ class RulesPage extends StatefulWidget {
   final Map<String, String> templateRouting;
   final List<String> nodeNames;
   final void Function(String id, String value)? onTemplateRouting;
+
+  /// 活跃进程（来自内核连接元数据；内核未启用进程识别时为空）。
+  final List<String> activeProcesses;
+  final void Function(String process, String target)? onAddProcessRule;
   @override
   State<RulesPage> createState() => _RulesPageState();
 }
@@ -221,6 +227,16 @@ class _RulesPageState extends State<RulesPage> {
                         c),
                   ])),
           const SizedBox(height: 16),
+          if (widget.onAddProcessRule != null)
+            Padding(
+                padding: const EdgeInsets.only(bottom: 14),
+                child: _PerAppRoutingCard(
+                  nodeNames: widget.nodeNames,
+                  activeProcesses: widget.activeProcesses,
+                  existing:
+                      widget.customRules.map((r) => r.value).toSet(),
+                  onAdd: widget.onAddProcessRule!,
+                )),
           if (widget.onTemplateRouting != null && profiles.isEmpty && !conflict)
             Panel(
                 padding: EdgeInsets.zero,
@@ -432,5 +448,120 @@ class _TemplateRuleRow extends StatelessWidget {
                   ? (v) => onChanged(true, v ?? 'default')
                   : null),
         ]));
+  }
+}
+
+
+/// 按软件分流：为单个进程添加独立出站规则（PROCESS-NAME）。
+class _PerAppRoutingCard extends StatefulWidget {
+  const _PerAppRoutingCard({
+    required this.nodeNames,
+    required this.activeProcesses,
+    required this.existing,
+    required this.onAdd,
+  });
+  final List<String> nodeNames;
+  final List<String> activeProcesses;
+  final Set<String> existing;
+  final void Function(String process, String target) onAdd;
+
+  @override
+  State<_PerAppRoutingCard> createState() => _PerAppRoutingCardState();
+}
+
+class _PerAppRoutingCardState extends State<_PerAppRoutingCard> {
+  final _process = TextEditingController();
+  String _target = 'proxy';
+
+  @override
+  void dispose() {
+    _process.dispose();
+    super.dispose();
+  }
+
+  void _add() {
+    final name = _process.text.trim();
+    if (name.isEmpty) return;
+    widget.onAdd(name, _target);
+    _process.clear();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final options = <String, String>{
+      'direct': '直连',
+      'proxy': '默认出口（proxy）',
+      'reject': '拒绝',
+      for (final name in widget.nodeNames) name: name,
+    };
+    return Panel(
+        padding: EdgeInsets.zero,
+        child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const Padding(
+                  padding: EdgeInsets.fromLTRB(18, 16, 18, 4),
+                  child: Text('按软件分流',
+                      style: TextStyle(fontWeight: FontWeight.w600))),
+              Padding(
+                  padding: const EdgeInsets.fromLTRB(18, 0, 18, 6),
+                  child: Text(
+                      '为单个程序指定出口：输入进程名（如 steam.exe / Telegram.exe），或从当前活跃连接里选。规则立即添加，重启内核生效。',
+                      style:
+                          const TextStyle(fontSize: 12, color: Colors.grey))),
+              Padding(
+                  padding: const EdgeInsets.fromLTRB(18, 4, 18, 8),
+                  child: Row(children: [
+                    Expanded(
+                        child: TextField(
+                            controller: _process,
+                            isDense: true,
+                            decoration: const InputDecoration(
+                                labelText: '进程名（exe）',
+                                hintText: 'steam.exe')),
+                            onSubmitted: (_) => _add())),
+                    const SizedBox(width: 10),
+                    Expanded(
+                        child: DropdownButtonFormField<String>(
+                            initialValue: _target,
+                            isDense: true,
+                            decoration: const InputDecoration(
+                                labelText: '出口'),
+                            items: [
+                              for (final e in options.entries)
+                                DropdownMenuItem(
+                                    value: e.key, child: Text(e.value)),
+                            ],
+                            onChanged: (v) =>
+                                setState(() => _target = v ?? 'proxy'))),
+                    const SizedBox(width: 10),
+                    FilledButton.icon(
+                        onPressed: _add,
+                        icon: const Icon(Icons.add, size: 16),
+                        label: const Text('添加')),
+                  ])),
+              if (widget.activeProcesses.isNotEmpty)
+                Padding(
+                    padding: const EdgeInsets.fromLTRB(18, 0, 18, 12),
+                    child: Wrap(
+                        spacing: 6,
+                        runSpacing: 6,
+                        children: [
+                          for (final proc
+                              in widget.activeProcesses.take(12))
+                            ActionChip(
+                                label: Text(proc,
+                                    style: const TextStyle(fontSize: 11)),
+                                onPressed: () =>
+                                    setState(() => _process.text = proc))
+                        ])),
+              if (widget.existing.isNotEmpty)
+                Padding(
+                    padding: const EdgeInsets.fromLTRB(18, 0, 18, 14),
+                    child: Text(
+                        '已有 ${widget.existing.length} 条自定义规则（含按软件），在"自定义规则"里管理。',
+                        style: const TextStyle(
+                            fontSize: 11, color: Colors.grey))),
+            ]));
   }
 }
