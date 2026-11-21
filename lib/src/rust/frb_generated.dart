@@ -72,7 +72,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.11.1';
 
   @override
-  int get rustContentHash => -494087970;
+  int get rustContentHash => 941548322;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -122,7 +122,16 @@ abstract class RustLibApi extends BaseApi {
 
   Future<void> crateApiCoreStartEnsureCore({required String dataDir});
 
+  Future<void> crateApiCoreStartEnsureCoreWithRuleUrls(
+      {required String dataDir, required String urlsJson});
+
   Future<void> crateApiCoreStopCore();
+
+  Future<void> crateApiCoreUpdateRuleResource(
+      {required String dataDir,
+      required String tag,
+      required String url,
+      required String corePath});
 
   Future<List<String>> crateApiCoreValidateConfig({required String text});
 }
@@ -515,12 +524,39 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
+  Future<void> crateApiCoreStartEnsureCoreWithRuleUrls(
+      {required String dataDir, required String urlsJson}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_String(dataDir, serializer);
+        sse_encode_String(urlsJson, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 15, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_unit,
+        decodeErrorData: null,
+      ),
+      constMeta: kCrateApiCoreStartEnsureCoreWithRuleUrlsConstMeta,
+      argValues: [dataDir, urlsJson],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiCoreStartEnsureCoreWithRuleUrlsConstMeta =>
+      const TaskConstMeta(
+        debugName: "start_ensure_core_with_rule_urls",
+        argNames: ["dataDir", "urlsJson"],
+      );
+
+  @override
   Future<void> crateApiCoreStopCore() {
     return handler.executeNormal(NormalTask(
       callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 15, port: port_);
+            funcId: 16, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -538,13 +574,45 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
+  Future<void> crateApiCoreUpdateRuleResource(
+      {required String dataDir,
+      required String tag,
+      required String url,
+      required String corePath}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_String(dataDir, serializer);
+        sse_encode_String(tag, serializer);
+        sse_encode_String(url, serializer);
+        sse_encode_String(corePath, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 17, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_unit,
+        decodeErrorData: sse_decode_String,
+      ),
+      constMeta: kCrateApiCoreUpdateRuleResourceConstMeta,
+      argValues: [dataDir, tag, url, corePath],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiCoreUpdateRuleResourceConstMeta =>
+      const TaskConstMeta(
+        debugName: "update_rule_resource",
+        argNames: ["dataDir", "tag", "url", "corePath"],
+      );
+
+  @override
   Future<List<String>> crateApiCoreValidateConfig({required String text}) {
     return handler.executeNormal(NormalTask(
       callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_String(text, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 16, port: port_);
+            funcId: 18, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_list_String,

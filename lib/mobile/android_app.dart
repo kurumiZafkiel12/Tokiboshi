@@ -476,7 +476,7 @@ class _AndroidShellState extends State<AndroidShell> {
                         ],
                       ),
                     ),
-                    if (!compact) const Tag(kAppVersion),
+                    if (!compact) const Tag(kAndroidAppVersion),
                   ],
                 ),
                 const SizedBox(height: 12),
@@ -1080,7 +1080,7 @@ class _AndroidShellState extends State<AndroidShell> {
                   title: const Text('订阅 User-Agent'),
                   subtitle: Text(
                     c.data.desktop.userAgent.isEmpty
-                        ? '默认 Clash.Meta Tokiboshi/$kAppVersion'
+                        ? '默认 Clash.Meta Tokiboshi/$kAndroidAppVersion'
                         : c.data.desktop.userAgent,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
@@ -1145,7 +1145,7 @@ class _AndroidShellState extends State<AndroidShell> {
                   contentPadding: EdgeInsets.zero,
                   title: Text('Tokiboshi · 時の星'),
                   subtitle: Text(
-                    'Android $kAppVersion · build $kAndroidBuild\nsing-box / libbox 1.14.4',
+                    'Android $kAndroidAppVersion · build $kAndroidBuild\nsing-box / libbox 1.14.4',
                   ),
                 ),
                 ListTile(
@@ -1164,7 +1164,7 @@ class _AndroidShellState extends State<AndroidShell> {
                   onTap: () => showLicensePage(
                     context: context,
                     applicationName: 'Tokiboshi · 時の星',
-                    applicationVersion: '$kAppVersion · Android',
+                    applicationVersion: '$kAndroidAppVersion · Android',
                   ),
                 ),
                 const Padding(

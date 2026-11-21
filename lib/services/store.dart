@@ -154,6 +154,11 @@ class AppData {
     this.activeProfileId,
     this.desktop = const DesktopSettings(),
     this.client = const ClientPreferences(),
+    this.routingPreset = 'balanced',
+    this.ruleSetUrls = const {},
+    this.ruleSetLastUpdate = const {},
+    this.ruleSetPending = const {},
+    this.ruleSetAutoUpdate = false,
   }) : clashApiSecret = clashApiSecret ?? '';
 
   List<NodeInfo> nodes;
@@ -203,6 +208,10 @@ class AppData {
   UiPreferences ui;
   DesktopSettings desktop;
   ClientPreferences client;
+  String routingPreset;
+  Map<String, String> ruleSetUrls, ruleSetLastUpdate;
+  Set<String> ruleSetPending;
+  bool ruleSetAutoUpdate;
 
   /// null: legacy unique-source inference; empty: explicit built-in template.
   String? activeProfileId;
@@ -232,6 +241,11 @@ class AppData {
         ui: ui,
         desktop: desktop,
         client: client,
+        routingPreset: routingPreset,
+        ruleSetUrls: Map.of(ruleSetUrls),
+        ruleSetLastUpdate: Map.of(ruleSetLastUpdate),
+        ruleSetPending: Set.of(ruleSetPending),
+        ruleSetAutoUpdate: ruleSetAutoUpdate,
         activeProfileId: activeProfileId,
       );
 }
@@ -328,6 +342,13 @@ class Store {
     }
   }
 
+  static Map<String, String> _ruleStringMap(dynamic value) => {
+        if (value is Map)
+          for (final e in value.entries)
+            if (e.key is String && e.value is String)
+              e.key as String: e.value as String,
+      };
+
   static AppData? decodeData(String text) {
     try {
       final map = jsonDecode(text) as Map<String, dynamic>;
@@ -361,6 +382,15 @@ class Store {
         ui: UiPreferences.fromJson(map['ui']),
         desktop: DesktopSettings.fromJson(map['desktop']),
         client: ClientPreferences.fromJson(map['client'], strict: true),
+        routingPreset: map['routingPreset'] is String
+            ? map['routingPreset'] as String
+            : 'balanced',
+        ruleSetUrls: _ruleStringMap(map['ruleSetUrls']),
+        ruleSetLastUpdate: _ruleStringMap(map['ruleSetLastUpdate']),
+        ruleSetPending: (map['ruleSetPending'] is List
+            ? (map['ruleSetPending'] as List).whereType<String>().toSet()
+            : {}),
+        ruleSetAutoUpdate: map['ruleSetAutoUpdate'] == true,
         activeProfileId: map['activeProfileId'] is String
             ? map['activeProfileId'] as String
             : null,
@@ -406,6 +436,11 @@ class Store {
         'ui': data.ui.toJson(),
         'desktop': data.desktop.toJson(),
         'client': data.client.toJson(),
+        'routingPreset': data.routingPreset,
+        'ruleSetUrls': data.ruleSetUrls,
+        'ruleSetLastUpdate': data.ruleSetLastUpdate,
+        'ruleSetPending': data.ruleSetPending.toList(),
+        'ruleSetAutoUpdate': data.ruleSetAutoUpdate,
         'activeProfileId': data.activeProfileId,
       };
 

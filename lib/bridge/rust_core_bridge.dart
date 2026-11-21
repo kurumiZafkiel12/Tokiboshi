@@ -6,6 +6,12 @@ import '../src/rust/config.dart' as rust_config;
 import 'core_bridge.dart';
 
 class RustCoreBridge implements CoreBridge {
+  Future<void> updateRuleResource(String dataDir, String tag, String url, String corePath) =>
+      rust_api.updateRuleResource(dataDir: dataDir, tag: tag, url: url, corePath: corePath);
+
+  Future<void> startEnsureCoreWithRuleUrls(String dataDir, String urlsJson) async =>
+      rust_api.startEnsureCoreWithRuleUrls(dataDir: dataDir, urlsJson: urlsJson);
+
   @override
   Future<String> convertRuleProvider({required String text, required String behavior, required String format}) =>
       rust_api.convertRuleProvider(text: text, behavior: behavior, format: format);

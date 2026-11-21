@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
 
 import 'dart:async';
@@ -14,6 +15,10 @@ import 'ui/runtime.dart';
 import 'ui/node_widgets.dart';
 import 'ui/shell_widgets.dart';
 import 'pages/rules_page.dart';
+import 'pages/toolbox_page.dart';
+import 'pages/network_info.dart';
+import 'pages/rule_resource_panel.dart';
+import 'services/rule_resources.dart';
 import 'pages/connections_page.dart';
 
 import 'package:tray_manager/tray_manager.dart';
@@ -326,6 +331,8 @@ class _ShellPageState extends State<ShellPage>
   Timer? _statusTimer;
   Timer? _subscriptionTimer;
   bool _scheduledBusy = false;
+  bool _resourcesBusy = false;
+  List<RuleResource> _ruleResources = const [];
   final Map<String, DateTime> _lastSourceAttempt = {};
   final Map<NodeInfo, int?> _latency = {};
 
@@ -417,10 +424,11 @@ class _ShellPageState extends State<ShellPage>
       _loaded = true;
     });
     widget.appearance.value = data.ui;
+    unawaited(_loadRuleResources());
     // Rule-set upkeep is decoupled from the core download (HF053-02):
     // the bundled core must never skip it. Fire-and-forget; the Rust
     // side reports progress through the Logs page.
-    unawaited(widget.bridge.startEnsureCore(_dataDir));
+    unawaited(_ensureCoreAndRules());
     await _refreshCoreVersion();
     // 自动连接 = 上一次正常退出且内核在运行（崩溃后不自启，HV001-01）。
     // TUN 开着但应用非管理员时跳过自动连接：提权需要用户在点「启动」
@@ -1109,12 +1117,14 @@ class _ShellPageState extends State<ShellPage>
     if (mounted) setState(() => _latency[node] = ms);
   }
 
-  Future<void> _measureAll() async {
-    if (_measuring) return;
+  Future<void> _measureAll({bool liveOnly = false}) async {
+    if (_measuring || (liveOnly && !_running)) return;
+    final session = _monitor.startedAt;
     _measuring = true;
     var skipped = 0;
     for (final node in List.of(_data.nodes)) {
-      if (node.isPolicy) continue;
+      if (node.isPolicy && !liveOnly) continue;
+      if (liveOnly && (!_running || _monitor.startedAt != session)) break;
       if (_running && !profileNodes(_data).contains(node)) continue;
       if (!_running && _udpProtocols.contains(node.protocol)) {
         skipped++;
@@ -1128,6 +1138,7 @@ class _ShellPageState extends State<ShellPage>
         _measuring = false;
         return;
       }
+      if (liveOnly && (!_running || _monitor.startedAt != session)) break;
       setState(() => _latency[node] = ms);
     }
     _measuring = false;
@@ -1308,7 +1319,7 @@ class _ShellPageState extends State<ShellPage>
       }
     }
     _setMessage('正在下载 sing-box 内核（首次启动需要）…');
-    await widget.bridge.startEnsureCore(_dataDir);
+    await _ensureCoreAndRules();
     for (var i = 0; i < 200; i++) {
       _checkConnectCancelled();
       await Future<void>.delayed(const Duration(milliseconds: 700));
@@ -1453,10 +1464,17 @@ class _ShellPageState extends State<ShellPage>
             configNodes.map((n) => n.name))[configNodes.indexOf(selected)],
         profileJson: profile?.profileJson ?? '',
       );
+      if (_data.routingPreset != 'balanced' && _ruleResources.isEmpty) {
+        await _loadRuleResources();
+        _checkConnectCancelled();
+      }
       final configFile = await widget.store.writeRuntimeConfig(
           applyClientPreferences(
               applyNetworkSettings(
-                  injectClashSecret(config, _data.clashApiSecret),
+                  injectClashSecret(
+                      applyResourcePreset(config, _data.routingPreset,
+                          _ruleResources, _dataDir),
+                      _data.clashApiSecret),
                   _data.desktop),
               _data.client,
               hasProfile: profile != null));
@@ -1499,6 +1517,9 @@ class _ShellPageState extends State<ShellPage>
             '${portsChanged ? ' · 原端口被占用，已自动更换并保存端口' : ''}'
             '${profile == null && rulesPending ? ' · ⚠ 规则集未就绪，重启内核后分流生效' : ''}');
       });
+      if (_data.ruleSetAutoUpdate) {
+        unawaited(_refreshRuleResources(binary: binary));
+      }
     } catch (e) {
       if (started) {
         try {
@@ -1534,7 +1555,7 @@ class _ShellPageState extends State<ShellPage>
 
   Future<void> _ensureFromSettings() async {
     _setMessage('正在检查/下载 sing-box 内核…');
-    await widget.bridge.startEnsureCore(_dataDir);
+    await _ensureCoreAndRules();
     for (var i = 0; i < 200; i++) {
       await Future<void>.delayed(const Duration(milliseconds: 700));
       final state = await widget.bridge.ensureCoreState();
@@ -1961,6 +1982,29 @@ class _ShellPageState extends State<ShellPage>
             onSources: () => setState(() => _page = 3),
             blockAds: _data.blockAds,
             bypassCn: _data.bypassCn);
+      case 8:
+        page = ToolboxPage(
+          running: _running,
+          mixedPort: _data.mixedPort,
+          onStart: _toggleCore,
+          proxyCredentials: _data.desktop.proxyAuth
+              ? (_data.desktop.proxyUser, _data.desktop.proxyPassword)
+              : null,
+          networkInfo: NetworkInfo(
+              monitor: _monitor,
+              refresh: () => _measureAll(liveOnly: true),
+              latency: [
+                for (final n in profileNodes(_data))
+                  if (_latency.containsKey(n)) (n.name, _latency[n]),
+              ]),
+          resources: RuleResourcePanel(
+              catalog: _ruleResources,
+              data: _data,
+              dataDir: _dataDir,
+              busy: _resourcesBusy || _settingsBusy || _busy,
+              onSettings: _saveRuleResourcePrefs,
+              onUpdate: (item) => _refreshRuleResources(item: item)),
+        );
       case 7:
         page = ConnectionsPage(monitor: _monitor, running: _running);
       case 5:
@@ -2056,7 +2100,8 @@ class _ShellPageState extends State<ShellPage>
       4: '运行日志',
       5: '设置',
       6: '分流规则',
-      7: '请求'
+      7: '请求',
+      8: '工具箱'
     };
     return Shortcuts(
         shortcuts: {
@@ -2198,6 +2243,8 @@ class _ShellPageState extends State<ShellPage>
                               _navItem(
                                   6, Icons.route_outlined, '分流规则', collapsed),
                               _navItem(7, Icons.monitor_heart_outlined, '请求',
+                                  collapsed),
+                              _navItem(8, Icons.construction_outlined, '工具箱',
                                   collapsed),
                               _navItem(4, Icons.terminal_outlined, '运行日志',
                                   collapsed),
@@ -2616,6 +2663,102 @@ class _ShellPageState extends State<ShellPage>
     }
   }
 
+  Future<void> _loadRuleResources() async {
+    try {
+      final resources = await RuleResource.load();
+      if (mounted) setState(() => _ruleResources = resources);
+    } catch (_) {
+      _setMessage('无法读取内置规则集目录');
+    }
+  }
+
+  Future<void> _ensureCoreAndRules() {
+    final bridge = widget.bridge;
+    if (bridge is RustCoreBridge) {
+      return bridge.startEnsureCoreWithRuleUrls(
+          _dataDir,
+          jsonEncode({
+            for (final entry in _data.ruleSetUrls.entries)
+              if (!_data.ruleSetPending.contains(entry.key))
+                entry.key: entry.value,
+          }));
+    }
+    return bridge.startEnsureCore(_dataDir);
+  }
+
+  Future<void> _saveRuleResourcePrefs(AppData Function(AppData) apply) async {
+    if (_resourcesBusy || _settingsBusy || _busy) return;
+    final previous = _data.copyWith();
+    setState(() {
+      _settingsBusy = true;
+      _data = apply(_data.copyWith());
+    });
+    try {
+      if (await _persistImport(previous)) _setMessage('规则集设置已保存');
+    } finally {
+      if (mounted) setState(() => _settingsBusy = false);
+    }
+  }
+
+  Future<void> _refreshRuleResources(
+      {RuleResource? item, String? binary}) async {
+    final bridge = widget.bridge;
+    if (_resourcesBusy || _settingsBusy || bridge is! RustCoreBridge) return;
+    final now = DateTime.now();
+    final due = item != null
+        ? [item]
+        : _ruleResources
+            .where((resource) => ruleResourceDue(
+                downloaded: File(resource.path(_dataDir)).existsSync(),
+                pending: _data.ruleSetPending.contains(resource.tag),
+                lastUpdate: _data.ruleSetLastUpdate[resource.tag],
+                now: now))
+            .toList();
+    if (due.isEmpty) return;
+    final executable =
+        binary ?? resolveSingBoxPath(_data.singBoxPath, _dataDir);
+    final urls = Map.of(_data.ruleSetUrls);
+    setState(() => _resourcesBusy = true);
+    final results = <String, String>{};
+    try {
+      for (var i = 0; i < due.length; i += 3) {
+        await Future.wait(due.skip(i).take(3).map((resource) async {
+          try {
+            final url = urls[resource.tag] ?? '';
+            validateRuleResourceUrl(url);
+            await bridge.updateRuleResource(
+                _dataDir, resource.tag, url, executable);
+            results[resource.tag] = '';
+          } catch (e) {
+            results[resource.tag] = redactDiagnostics('$e');
+          }
+        }));
+        if (!mounted) return;
+      }
+      final previous = _data.copyWith();
+      setState(() {
+        _data.ruleSetLastUpdate = Map.of(_data.ruleSetLastUpdate);
+        _data.ruleSetPending = Set.of(_data.ruleSetPending);
+        for (final resource in due) {
+          if (results[resource.tag] != '') continue;
+          _data.ruleSetLastUpdate[resource.tag] =
+              DateTime.now().toIso8601String();
+          _data.ruleSetPending.remove(resource.tag);
+        }
+      });
+      final saved = await _persistImport(previous);
+      if (!mounted) return;
+      _setMessage([
+        for (final resource in due)
+          '${resource.tag}：${results[resource.tag]!.isEmpty ? '已更新' : results[resource.tag]}',
+        if (!saved) '文件已提交，但更新记录保存失败',
+        if (_running && results.containsValue('')) '重启内核后应用',
+      ].join('；'));
+    } finally {
+      if (mounted) setState(() => _resourcesBusy = false);
+    }
+  }
+
   Future<void> _saveClientPreferences(ClientPreferences value) async {
     if (_busy || _profileChanging || _settingsBusy)
       throw StateError('其他操作正在进行，请稍后保存');
@@ -2669,7 +2812,11 @@ class _ShellPageState extends State<ShellPage>
   }
 
   Future<void> _restoreBackup() async {
-    if (_running || _busy || _profileChanging || _settingsBusy) return;
+    if (_running ||
+        _busy ||
+        _profileChanging ||
+        _settingsBusy ||
+        _resourcesBusy) return;
     setState(() => _settingsBusy = true);
     try {
       final file = await openFile(acceptedTypeGroups: [

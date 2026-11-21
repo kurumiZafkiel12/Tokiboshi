@@ -352,25 +352,151 @@ mod tests {
 /// (tag, download URL). sing-box used to fetch these itself during
 /// startup through the selected node; a slow node then killed the
 /// core before it listened. The app now keeps them on disk instead.
-pub const RULE_SET_FILES: [(&str, &str); 3] = [
-    (
-        "geosite-category-ads-all",
-        "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-category-ads-all.srs",
-    ),
-    (
-        "geosite-cn",
-        "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-cn.srs",
-    ),
-    (
-        "geoip-cn",
-        "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-cn.srs",
-    ),
-];
+#[derive(serde::Deserialize)]
+struct RuleResource {
+    tag: String,
+    group: String,
+    url: String,
+}
 
-/// Best-effort: download any missing or stale (>24h) rule-set files
-/// into `<data_dir>/rules/`. Failures are ignored on purpose — the
-/// config generator drops rules whose files are absent, and the
-/// core must never depend on these downloads to start.
+fn rule_resources() -> Vec<RuleResource> {
+    serde_json::from_str(include_str!("../../assets/rule-resources.json"))
+        .expect("built-in rule catalog")
+}
+
+// The bootstrap and explicit refresh share the same commit path.
+static RULE_WRITE: Mutex<()> = Mutex::new(());
+
+pub fn refresh_rule_resource(
+    data_dir: &Path, tag: &str, url: &str, binary: Option<&Path>,
+    only_missing: bool,
+) -> Result<bool, String> {
+    let resource = rule_resources().into_iter().find(|r| r.tag == tag)
+        .ok_or_else(|| "未知规则集".to_string())?;
+    let url = if url.trim().is_empty() { &resource.url } else { url.trim() };
+    let mut url = url::Url::parse(url).map_err(|_| "规则集地址无效")?;
+    validate_rule_url(&url)?;
+    {
+        let _guard = RULE_WRITE.lock().map_err(|_| "规则集写入锁异常")?;
+        if only_missing && data_dir.join("rules").join(format!("{tag}.srs")).is_file() {
+            return Ok(false);
+        }
+    }
+    let agent = ureq::AgentBuilder::new()
+        .redirects(0)
+        .timeout(std::time::Duration::from_secs(20)).build();
+    let mut redirects = 0;
+    let response = loop {
+        let response = agent.get(url.as_str()).call().map_err(|_| "规则集下载失败")?;
+        if response.status() == 200 { break response; }
+        if !matches!(response.status(), 301 | 302 | 303 | 307 | 308) || redirects >= 4 {
+            return Err("规则集源没有返回可用文件".into());
+        }
+        let next = response.header("Location").ok_or("规则集重定向不含地址")?;
+        url = url.join(next).map_err(|_| "规则集重定向地址无效")?;
+        validate_rule_url(&url)?;
+        redirects += 1;
+    };
+    const MAX: usize = 16 * 1024 * 1024;
+    let mut bytes = Vec::new();
+    response.into_reader().take(MAX as u64 + 1)
+        .read_to_end(&mut bytes).map_err(|_| "无法完整读取规则集")?;
+    commit_rule_resource(data_dir, tag, &bytes, binary, only_missing)
+}
+
+fn validate_rule_url(url: &url::Url) -> Result<(), String> {
+    if url.scheme() != "https" || !url.has_host() || !url.username().is_empty()
+        || url.password().is_some() || url.fragment().is_some() {
+        return Err("规则集地址必须使用 HTTPS，不能含账号或片段".into());
+    }
+    Ok(())
+}
+
+fn commit_rule_resource(
+    data_dir: &Path, tag: &str, bytes: &[u8], binary: Option<&Path>, only_missing: bool,
+) -> Result<bool, String> {
+    if bytes.len() < 8 || bytes.len() > 16 * 1024 * 1024 || !bytes.starts_with(b"SRS") {
+        return Err("无效或过大的 .srs 文件".into());
+    }
+    let _guard = RULE_WRITE.lock().map_err(|_| "规则集写入锁异常")?;
+    let dir = data_dir.join("rules");
+    std::fs::create_dir_all(&dir).map_err(|_| "无法创建规则集目录")?;
+    let dest = dir.join(format!("{tag}.srs"));
+    if only_missing && dest.is_file() { return Ok(false); }
+    let tmp = dir.join(format!("{tag}.srs.tmp"));
+    let decoded = dir.join(format!("{tag}.verify.tmp"));
+    let result = (|| {
+        use std::io::Write;
+        let mut file = std::fs::File::create(&tmp).map_err(|_| "无法创建规则集临时文件")?;
+        file.write_all(bytes).and_then(|_| file.sync_all())
+            .map_err(|_| "无法完整写入规则集")?;
+        drop(file);
+        if let Some(binary) = binary {
+            let mut command = std::process::Command::new(binary);
+            command.args(["rule-set", "decompile"]).arg(&tmp).arg("-o").arg(&decoded)
+                .stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null());
+            #[cfg(windows)]
+            {
+                use std::os::windows::process::CommandExt;
+                command.creation_flags(0x08000000);
+            }
+            let mut child = command.spawn().map_err(|_| "无法验证规则集：内核不可用")?;
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+            loop {
+                match child.try_wait() {
+                    Ok(Some(status)) if status.success() => break,
+                    Ok(Some(_)) => return Err("内核拒绝了规则集内容"),
+                    Ok(None) if std::time::Instant::now() < deadline =>
+                        std::thread::sleep(std::time::Duration::from_millis(25)),
+                    _ => {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        return Err("规则集验证超时或进程异常");
+                    }
+                }
+            }
+        }
+        std::fs::rename(&tmp, &dest).map_err(|_| "规则集提交失败，原文件保留")?;
+        Ok(true)
+    })();
+    let _ = std::fs::remove_file(&tmp);
+    let _ = std::fs::remove_file(&decoded);
+    result.map_err(str::to_owned)
+}
+
+#[cfg(test)]
+mod rule_resource_tests {
+    use super::*;
+
+    #[test]
+    fn invalid_or_rejected_srs_never_replaces_existing_file() {
+        let directory = std::env::temp_dir().join(format!("tokiboshi-rules-{}", std::process::id()));
+        let rules = directory.join("rules");
+        std::fs::create_dir_all(&rules).unwrap();
+        let asset = rules.join("geosite-cn.srs");
+        std::fs::write(&asset, b"previous").unwrap();
+        assert!(commit_rule_resource(&directory, "geosite-cn", b"invalid", None, false).is_err());
+        if let Some(core) = std::env::var_os("SING_BOX") {
+            assert!(commit_rule_resource(&directory, "geosite-cn", b"SRS-invalid-fixture",
+                Some(Path::new(&core)), false).is_err());
+        }
+        assert_eq!(std::fs::read(&asset).unwrap(), b"previous");
+        assert!(!rules.join("geosite-cn.srs.tmp").exists());
+        assert!(!rules.join("geosite-cn.verify.tmp").exists());
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn configured_and_redirected_sources_require_https() {
+        for invalid in ["http://example.test/file", "https://user:secret@example.test",
+            "https://example.test/#fragment"] {
+            assert!(validate_rule_url(&url::Url::parse(invalid).unwrap()).is_err());
+        }
+        assert!(validate_rule_url(&url::Url::parse("https://example.test/rules.srs").unwrap()).is_ok());
+    }
+}
+
 /// Outcome of a rule-set maintenance round, so callers can report
 /// accurately instead of claiming readiness (HF053-02).
 #[derive(Debug, Clone, Copy)]
@@ -388,113 +514,34 @@ pub struct RuleSetSummary {
     pub commit_failed: usize,
 }
 
-pub fn ensure_rule_sets(data_dir: &Path) -> RuleSetSummary {
+pub fn ensure_rule_sets(data_dir: &Path, urls: &std::collections::HashMap<String, String>) -> RuleSetSummary {
     let dir = data_dir.join("rules");
-    if std::fs::create_dir_all(&dir).is_err() {
-        push_extra_log("[rules] 无法创建规则目录，分流/拦截规则不可用".into());
-        return RuleSetSummary {
-            ready: 0,
-            total: RULE_SET_FILES.len(),
-            updated: 0,
-            dir_ok: false,
-            missing: RULE_SET_FILES.len(),
-            commit_failed: 0,
-        };
-    }
-    let agent = ureq::AgentBuilder::new()
-        .timeout(std::time::Duration::from_secs(60))
-        .build();
-    let mut ready = 0usize;
-    let mut updated = 0usize;
-    let mut missing = 0usize;
-    let mut commit_failed = 0usize;
-    for (tag, url) in RULE_SET_FILES {
-        let dest = dir.join(format!("{tag}.srs"));
-        let fresh = std::fs::metadata(&dest)
-            .and_then(|m| m.modified())
-            .map(|t| t.elapsed().map(|e| e.as_secs() < 24 * 3600).unwrap_or(false))
-            .unwrap_or(false);
-        if fresh {
-            ready += 1;
-            continue;
-        }
-        push_extra_log(format!("[rules] 下载 {tag} …"));
-        let Ok(response) = agent.get(url).call() else {
-            push_extra_log(format!(
-                "[rules] {tag} 下载失败（直连 GitHub；缺失时对应分流规则不会生效）"
-            ));
-            missing += 1;
-            continue;
-        };
-        let mut bytes = Vec::new();
-        if response
-            .into_reader()
-            .take(64 * 1024 * 1024)
-            .read_to_end(&mut bytes)
-            .is_err()
-            || bytes.len() < 16
-        {
-            push_extra_log(format!("[rules] {tag} 下载内容无效"));
-            missing += 1;
-            continue;
-        }
-        let tmp = dir.join(format!("{tag}.srs.tmp"));
-        // Full commit chain: write the downloaded bytes to tmp, THEN
-        // rename onto the real file (HV004-01: the write step was
-        // accidentally dropped in the previous fix, renaming a
-        // non-existent tmp and failing every rule).
-        if let Err(e) = std::fs::write(&tmp, &bytes) {
-            push_extra_log(format!("[rules] {tag} 临时文件写入失败：{e}"));
-            missing += 1;
-            continue;
-        }
-        // The rename can fail when the target file is held/locked.
-        // Only a committed file counts as ready — the previous valid
-        // file is kept and the failure is reported (HF053-02).
-        match std::fs::rename(&tmp, &dest) {
-            Ok(()) => {
-                ready += 1;
-                updated += 1;
-                push_extra_log(format!("[rules] {tag} 已更新"));
-            }
-            Err(e) => {
-                push_extra_log(format!(
-                    "[rules] {tag} 提交失败：{e}；保留现有有效文件"
-                ));
-                commit_failed += 1;
-                let _ = std::fs::remove_file(&tmp);
+    let dir_ok = std::fs::create_dir_all(&dir).is_ok();
+    let mut result = RuleSetSummary { ready: 0, total: 0, updated: 0, dir_ok,
+        missing: 0, commit_failed: 0 };
+    for item in rule_resources().into_iter().filter(|r| r.group == "核心") {
+        result.total += 1;
+        let path = dir.join(format!("{}.srs", item.tag));
+        if !path.is_file() && dir_ok {
+            let url = urls.get(&item.tag).map(String::as_str).unwrap_or_default();
+            match refresh_rule_resource(data_dir, &item.tag, url, None, true) {
+                Ok(true) => {
+                    result.updated += 1;
+                    push_extra_log(format!("[rules] {} 已下载", item.tag));
+                }
+                Ok(false) => {}
+                Err(error) => {
+                    if error.contains("提交失败") { result.commit_failed += 1; }
+                    push_extra_log(format!("[rules] {} {error}", item.tag));
+                }
             }
         }
+        if path.is_file() { result.ready += 1; } else { result.missing += 1; }
     }
-    let total = RULE_SET_FILES.len();
-    if ready == total {
-        push_extra_log(format!("[rules] 规则集 {ready}/{total} 就绪"));
-    } else {
-        // Word failures precisely (CV005-01): "缺失" (never downloaded)
-        // and "提交失败" (downloaded but the old file is locked) are
-        // different states with different remedies.
-        let mut parts = Vec::new();
-        if missing > 0 {
-            parts.push(format!("{missing} 个缺失（下载失败，对应分流规则不生效）"));
-        }
-        if commit_failed > 0 {
-            parts.push(format!("{commit_failed} 个提交失败（旧文件被占用，现有文件已保留）"));
-        }
-        push_extra_log(format!(
-            "[rules] 规则集 {ready}/{total} 可用（{}）",
-            parts.join("；")
-        ));
-    }
-    RuleSetSummary {
-        ready,
-        total,
-        updated,
-        dir_ok: true,
-        missing,
-        commit_failed,
-    }
+    push_extra_log(format!("[rules] 规则集 {}/{} 就绪；{} 缺失，{} 提交失败",
+        result.ready, result.total, result.missing, result.commit_failed));
+    result
 }
-
 
 /// Never let sing-box download its dashboard synchronously before binding the
 /// control port. Serve a local waiting page and populate the UI independently.
