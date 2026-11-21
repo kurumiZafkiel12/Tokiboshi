@@ -39,8 +39,8 @@ void main() {
     ))));
     await tester.pumpAndSettle();
     expect(find.text('节点选择（2）'), findsOneWidget);
-    // 分组筛选 chips 已按用户要求移除（2026-11-21）：节点直接点选。
-    expect(find.byType(ChoiceChip), findsNothing);
+    // 分组筛选行已按用户要求移除（2026-11-21）：节点直接点选。
+    expect(find.text('分组'), findsNothing);
     await tester.tap(find.text('policy'));
     await tester.pumpAndSettle();
     expect(selected, 2);
