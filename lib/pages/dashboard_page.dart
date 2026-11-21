@@ -98,6 +98,23 @@ class _DashboardPageState extends State<DashboardPage> {
                 'profile': _profile(context),
                 'runtime': _runtime(context)
               };
+              // 机械钟主题模块（可折叠）：宽屏放右侧独立列，窄屏移到下方。
+              // 注意：卡片宽度的 LayoutBuilder 在 Expanded 内部（见下方布局）。
+              final clockModule = Column(children: [
+                Row(children: [
+                  Text('主题钟',
+                      style: TextStyle(
+                          fontSize: 12,
+                          color: Theme.of(context).colorScheme.onSurfaceVariant)),
+                  const Spacer(),
+                  TextButton(
+                      onPressed: () =>
+                          setState(() => _clockOpen = !_clockOpen),
+                      child: Text(_clockOpen ? '折叠' : '展开')),
+                ]),
+                MechanicalClock(
+                    size: narrow ? 232 : 236, initiallyOpen: _clockOpen),
+              ]);
               return SingleChildScrollView(
                   padding: EdgeInsets.fromLTRB(
                       narrow ? 16 : 22, 20, narrow ? 16 : 22, 18),
@@ -144,28 +161,6 @@ class _DashboardPageState extends State<DashboardPage> {
                         const SizedBox(height: 12),
                         _controls(context),
                         const SizedBox(height: 16),
-                        // 机械钟主题模块（可折叠）：宽屏放右侧独立列，窄屏移到下方。
-                        // LayoutBuilder 放在 Expanded 内部，卡片宽度按实际可用
-                        // 宽度计算 — 否则卡片溢出到机械钟列下方，编辑按钮的
-                        // 命中测试会被机械钟面板拦截（Beta 3 实测问题）。
-                        final clockModule = Column(children: [
-                          Row(children: [
-                            Text('主题钟',
-                                style: TextStyle(
-                                    fontSize: 12,
-                                    color: Theme.of(context)
-                                        .colorScheme
-                                        .onSurfaceVariant)),
-                            const Spacer(),
-                            TextButton(
-                                onPressed: () =>
-                                    setState(() => _clockOpen = !_clockOpen),
-                                child: Text(_clockOpen ? '折叠' : '展开')),
-                          ]),
-                          MechanicalClock(
-                              size: narrow ? 232 : 236,
-                              initiallyOpen: _clockOpen),
-                        ]);
                         narrow
                             ? LayoutBuilder(builder: (context, grid) {
                                 return Column(children: [
