@@ -4,11 +4,19 @@ typedef TopologyEdge = (TopologyKey, TopologyKey);
 class TopologyStats {
   int count = 0, upload = 0, download = 0;
   final rules = <String>{};
+  final destinations = <String>{};
   void add(Map<String, dynamic> row, String rule) {
     count++;
     upload += (row['upload'] as num?)?.toInt() ?? 0;
     download += (row['download'] as num?)?.toInt() ?? 0;
     rules.add(rule);
+    final meta = row['metadata'] is Map ? row['metadata'] as Map : const {};
+    final host = (meta['host'] ?? meta['destinationIP'] ?? '') as String;
+    final port = (meta['destinationPort'] ?? '') as String;
+    if (host.isNotEmpty) {
+      destinations.add(port.isEmpty ? host : '$host:$port');
+    }
+    if (destinations.length > 50) destinations.remove(destinations.first);
   }
 }
 

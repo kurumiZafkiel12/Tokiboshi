@@ -4,6 +4,46 @@ import 'dart:io';
 import '../bridge/core_bridge.dart';
 import 'subscription_fetcher.dart';
 
+/// Fetch with automatic mirror fallback for GitHub raw content.
+/// Airports ship rule-providers on raw.githubusercontent.com, which is
+/// unreachable from many direct connections — the jsDelivr mirrors
+/// rescue the fetch without any state. Non-GitHub URLs are fetched as-is.
+Future<String> fetchWithMirrors(SubscriptionFetcher fetcher, String url) async {
+  try {
+    return await fetcher.fetch(url);
+  } catch (error) {
+    final mirrors = mirrorUrls(url);
+    if (mirrors.isEmpty) rethrow;
+    for (final mirror in mirrors) {
+      try {
+        return await fetcher.fetch(mirror);
+      } catch (_) {
+        // fall through to the next mirror
+      }
+    }
+    rethrow;
+  }
+}
+
+/// jsDelivr mirror URLs for a raw.githubusercontent.com URL.
+List<String> mirrorUrls(String url) {
+  final uri = Uri.tryParse(url);
+  final segments = uri?.pathSegments ?? const [];
+  if (uri == null ||
+      uri.host != 'raw.githubusercontent.com' ||
+      segments.length < 4) {
+    return const [];
+  }
+  final user = segments[0];
+  final repo = segments[1];
+  final branch = segments[2];
+  final rest = segments.skip(3).join('/');
+  return [
+    'https://cdn.jsdelivr.net/gh/$user/$repo@$branch/$rest',
+    'https://fastly.jsdelivr.net/gh/$user/$repo@$branch/$rest',
+  ];
+}
+
 /// Expands merged subscriptions and Clash providers, preserving same-name nodes.
 /// Limits and failures are reported instead of silently truncating the result.
 class SubscriptionResolver {
@@ -151,37 +191,79 @@ class SubscriptionResolver {
         try {
           final parsed = jsonDecode(profile) as Map<String, dynamic>;
           final unsupported = (parsed['unsupported'] as List?) ?? const [];
-          if (unsupported.isNotEmpty) {
-            throw FormatException('订阅规则不兼容：${unsupported.join('；')}');
-          }
+          // Relaxed (v0.1.1 fix): unsupported entries are skipped lines
+          // or providers, NOT a reason to void the whole profile. The
+          // Rust side accumulates them per line; a missing MATCH falls
+          // back to the app default final outbound at generation time.
+          final notes = <String>[
+            if (unsupported.isNotEmpty)
+              '跳过 ${unsupported.length} 项不支持的规则/资源（其余照常应用）：${unsupported.take(3).join('；')}${unsupported.length > 3 ? ' 等' : ''}'
+          ];
           final sets = (parsed['rule_sets'] as List?) ?? const [];
           final converted = <dynamic>[];
+          final droppedTags = <String>{};
           for (final value in sets) {
             final set = Map<String, dynamic>.from(value as Map);
             if (set['__behavior'] == null) {
               converted.add(set);
               continue;
             }
+            final tag = set['tag'] as String;
             final link = uri.resolve(set['url'] as String).toString();
-            if (!ruleCache.containsKey(link) &&
-                cache.length + ruleCache.length >= maxRequests) {
-              throw const FormatException('规则集请求达到上限，保留上次配置');
+            try {
+              if (!ruleCache.containsKey(link) &&
+                  cache.length + ruleCache.length >= maxRequests) {
+                throw const FormatException('规则集请求达到安全上限');
+              }
+              final content = await ruleCache.putIfAbsent(
+                  link, () => fetchWithMirrors(fetcher, link));
+              _checkCancelled();
+              final rules = await bridge.convertRuleProvider(
+                  text: content,
+                  behavior: set['__behavior'] as String,
+                  format: set['__format'] as String? ?? 'yaml');
+              converted.add({
+                'type': 'inline',
+                'tag': tag,
+                'rules': jsonDecode(rules)
+              });
+            } catch (error) {
+              if (error is ImportCancelled) rethrow;
+              // One unreachable rule-set must not void the whole profile:
+              // drop its entries AND the rules that reference them, keep
+              // the rest of the routing intact.
+              droppedTags.add(tag);
+              notes.add(
+                  '规则集「$tag」获取/转换失败（${error is FormatException ? error.message : error}），该组规则未应用，其余照常');
             }
-            final content =
-                await ruleCache.putIfAbsent(link, () => fetcher.fetch(link));
-            _checkCancelled();
-            final rules = await bridge.convertRuleProvider(
-                text: content,
-                behavior: set['__behavior'] as String,
-                format: set['__format'] as String? ?? 'yaml');
-            converted.add({
-              'type': 'inline',
-              'tag': set['tag'],
-              'rules': jsonDecode(rules)
-            });
+          }
+          if (droppedTags.isNotEmpty) {
+            final routeRules = (parsed['route_rules'] as List?) ?? const [];
+            final kept = <dynamic>[];
+            for (final raw in routeRules) {
+              if (raw is! Map) {
+                kept.add(raw);
+                continue;
+              }
+              final rule = Map<String, dynamic>.from(raw);
+              final referenced = (rule['rule_set'] as List?) ?? const [];
+              if (referenced.isEmpty || !referenced.any(droppedTags.contains)) {
+                kept.add(rule);
+                continue;
+              }
+              final remaining = referenced
+                  .where((t) => !droppedTags.contains(t))
+                  .toList();
+              if (remaining.isEmpty) continue; // rule only matched dropped sets
+              rule['rule_set'] = remaining;
+              kept.add(rule);
+            }
+            parsed['route_rules'] = kept;
           }
           parsed['rule_sets'] = converted;
+          parsed['unsupported'] = notes;
           profile = jsonEncode(parsed);
+          if (notes.isNotEmpty) skipped.addAll(notes);
         } catch (error) {
           if (error is ImportCancelled) rethrow;
           throw ProfileCompatibilityException(

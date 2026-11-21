@@ -2724,10 +2724,28 @@ class _ShellPageState extends State<ShellPage>
       for (var i = 0; i < due.length; i += 3) {
         await Future.wait(due.skip(i).take(3).map((resource) async {
           try {
-            final url = urls[resource.tag] ?? '';
+            var url = urls[resource.tag] ?? '';
             validateRuleResourceUrl(url);
-            await bridge.updateRuleResource(
-                _dataDir, resource.tag, url, executable);
+            try {
+              await bridge.updateRuleResource(
+                  _dataDir, resource.tag, url, executable);
+            } catch (primaryError) {
+              // GitHub raw is unreachable from many direct connections:
+              // retry once per jsDelivr mirror before giving up.
+              final base = url.isEmpty ? resource.url : url;
+              Object? lastError = primaryError;
+              for (final mirror in mirrorUrls(base)) {
+                try {
+                  await bridge.updateRuleResource(
+                      _dataDir, resource.tag, mirror, executable);
+                  lastError = null;
+                  break;
+                } catch (e) {
+                  lastError = e;
+                }
+              }
+              if (lastError != null) throw lastError;
+            }
             results[resource.tag] = '';
           } catch (e) {
             results[resource.tag] = redactDiagnostics('$e');
