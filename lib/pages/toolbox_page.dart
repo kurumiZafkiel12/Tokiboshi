@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import '../services/network_checks.dart';
+import '../services/system_proxy.dart';
 
 /// 工具箱页：下载/上传测速 + 延迟质量 + 目标连通 + 检测与修复。
 /// 走 mixed 入站代理，测速多服务可选；不依赖第三方 SDK。
@@ -676,7 +677,7 @@ class _ToolboxPageState extends State<ToolboxPage> {
                   width: 96,
                   child: Text('代理出口', style: TextStyle(fontSize: 13))),
               SelectableText(proxiedIp, style: const TextStyle(fontSize: 13)),
-              if (proxied?.asn.isNotEmpty == true)
+              if (proxied != null && proxied.asn.isNotEmpty)
                 Expanded(
                     child: Text('  ${proxied.asn} · ${proxied.country}',
                         maxLines: 1,
