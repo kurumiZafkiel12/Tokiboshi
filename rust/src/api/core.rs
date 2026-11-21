@@ -251,6 +251,18 @@ pub fn managed_core_path(data_dir: String) -> String {
 /// release into `data_dir`, unless it is already up to date. Poll
 /// `ensure_core_state` for progress.
 pub fn start_ensure_core(data_dir: String) {
+    start_ensure_core_with_rule_urls(data_dir, "{}".into());
+}
+
+pub fn update_rule_resource(data_dir: String, tag: String, url: String, core_path: String) -> Result<(), String> {
+    core_download::refresh_rule_resource(
+        std::path::Path::new(&data_dir), &tag, &url,
+        Some(std::path::Path::new(&core_path)), false,
+    ).map(|_| ())
+}
+
+pub fn start_ensure_core_with_rule_urls(data_dir: String, urls_json: String) {
+    let urls = serde_json::from_str(&urls_json).unwrap_or_default();
     if ENSURE_RUNNING.swap(true, std::sync::atomic::Ordering::SeqCst) {
         return; // a download is already in flight
     }
@@ -281,7 +293,7 @@ pub fn start_ensure_core(data_dir: String) {
         }
         // Rule downloads are optional and may take minutes on a blocked
         // network. Report binary readiness first so startup never waits for them.
-        let rules = core_download::ensure_rule_sets(&dir);
+        let rules = core_download::ensure_rule_sets(&dir, &urls);
         // Only claim "restart to apply" when this round actually
         // changed something or left gaps — a fully fresh set with no
         // updates needs no restart hint (HF053-02: no false-ready).

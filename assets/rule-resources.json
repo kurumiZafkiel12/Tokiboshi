@@ -1,0 +1,87 @@
+[
+  {
+    "tag": "geosite-category-ads-all",
+    "group": "核心",
+    "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-category-ads-all.srs"
+  },
+  {
+    "tag": "geosite-cn",
+    "group": "核心",
+    "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-cn.srs"
+  },
+  {
+    "tag": "geoip-cn",
+    "group": "核心",
+    "url": "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-cn.srs"
+  },
+  {
+    "tag": "geosite-geolocation-!cn",
+    "group": "国际",
+    "url": "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/geolocation-%21cn.srs"
+  },
+  {
+    "tag": "geosite-netflix",
+    "group": "流媒体",
+    "url": "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/netflix.srs"
+  },
+  {
+    "tag": "geosite-disney",
+    "group": "流媒体",
+    "url": "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/disney.srs"
+  },
+  {
+    "tag": "geosite-youtube",
+    "group": "流媒体",
+    "url": "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/youtube.srs"
+  },
+  {
+    "tag": "geosite-hbo",
+    "group": "流媒体",
+    "url": "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/hbo.srs"
+  },
+  {
+    "tag": "geosite-openai",
+    "group": "AI",
+    "url": "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/openai.srs"
+  },
+  {
+    "tag": "geosite-anthropic",
+    "group": "AI",
+    "url": "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/anthropic.srs"
+  },
+  {
+    "tag": "geosite-gemini",
+    "group": "AI",
+    "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-google-gemini.srs"
+  },
+  {
+    "tag": "geosite-bing",
+    "group": "AI",
+    "url": "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/bing.srs"
+  },
+  {
+    "tag": "geosite-telegram",
+    "group": "通讯",
+    "url": "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/telegram.srs"
+  },
+  {
+    "tag": "geosite-twitter",
+    "group": "通讯",
+    "url": "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/twitter.srs"
+  },
+  {
+    "tag": "geosite-apple",
+    "group": "大厂",
+    "url": "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/apple.srs"
+  },
+  {
+    "tag": "geosite-microsoft",
+    "group": "大厂",
+    "url": "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/microsoft.srs"
+  },
+  {
+    "tag": "geosite-steam",
+    "group": "娱乐",
+    "url": "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/steam.srs"
+  }
+]

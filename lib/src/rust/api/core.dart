@@ -8,7 +8,7 @@ import '../frb_generated.dart';
 import '../links.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `set_ensure`
+// These functions are ignored because they are not marked as `pub`: `readiness_address`, `set_ensure`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `eq`, `eq`, `fmt`, `fmt`
 
 /// Validate raw sing-box config JSON. Empty result means valid.
@@ -83,6 +83,19 @@ Future<String> managedCorePath({required String dataDir}) =>
 /// `ensure_core_state` for progress.
 Future<void> startEnsureCore({required String dataDir}) =>
     RustLib.instance.api.crateApiCoreStartEnsureCore(dataDir: dataDir);
+
+Future<void> updateRuleResource(
+        {required String dataDir,
+        required String tag,
+        required String url,
+        required String corePath}) =>
+    RustLib.instance.api.crateApiCoreUpdateRuleResource(
+        dataDir: dataDir, tag: tag, url: url, corePath: corePath);
+
+Future<void> startEnsureCoreWithRuleUrls(
+        {required String dataDir, required String urlsJson}) =>
+    RustLib.instance.api.crateApiCoreStartEnsureCoreWithRuleUrls(
+        dataDir: dataDir, urlsJson: urlsJson);
 
 Future<EnsureState> ensureCoreState() =>
     RustLib.instance.api.crateApiCoreEnsureCoreState();

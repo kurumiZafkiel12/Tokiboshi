@@ -32,7 +32,7 @@ class HttpSubscriptionFetcher implements SubscriptionFetcher {
           HttpHeaders.userAgentHeader,
           userAgent ??
               (this.userAgent.trim().isEmpty
-                  ? 'Clash.Meta Tokiboshi/$kAppVersion'
+                  ? 'Clash.Meta Tokiboshi/${Platform.isAndroid ? kAndroidAppVersion : kAppVersion}'
                   : this.userAgent.trim()));
       request.headers.set(HttpHeaders.acceptHeader, '*/*');
       final response =
