@@ -117,8 +117,6 @@ class _NodesPageState extends State<NodesPage> {
     if (_sort)
       indices.sort((a, b) => (widget.latency[widget.nodes[a]] ?? 0x7fffffff)
           .compareTo(widget.latency[widget.nodes[b]] ?? 0x7fffffff));
-    final providers =
-        widget.nodes.map((n) => n.group).where((g) => g.isNotEmpty).toSet();
     return Padding(
         padding: const EdgeInsets.fromLTRB(22, 20, 22, 12),
         child:
@@ -169,20 +167,6 @@ class _NodesPageState extends State<NodesPage> {
                                     _source = entry.key;
                                     _group = '';
                                   })))
-              ])),
-          const SizedBox(height: 10),
-          SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Row(children: [
-                Text('分组', style: Theme.of(context).textTheme.bodySmall),
-                const SizedBox(width: 10),
-                _filter('全部节点', ''),
-                for (var i = 0; i < widget.nodes.length; i++)
-                  if (widget.nodes[i].isPolicy &&
-                      (_source.isEmpty || widget.nodes[i].source == _source))
-                    _filter(widget.nodes[i].name, 'policy:$i'),
-                for (final provider in providers)
-                  _filter(provider, 'provider:$provider')
               ])),
           if (policyIndex != null)
             Padding(
