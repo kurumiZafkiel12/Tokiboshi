@@ -100,3 +100,54 @@ String applyResourcePreset(
   route['rules'] = rules;
   return jsonEncode(config);
 }
+
+/// 用户可配置的内置模板路由（2026-11-21 用户需求"为分流搞开关，能单独
+/// 设置出口节点"）：在生成的配置上按 [settings] 改写模板规则。
+/// key = 规则 id（ads / cn / private）；value：缺失 = 保持默认（启用）；
+/// 'off' = 关闭该条；'reject' = 改为拒绝；'direct' / 'proxy' / 节点名 =
+/// 改出站（节点名经 [tagByName] 映射为生成配置中的 TAG）。
+/// clash_mode 模式规则与订阅自带规则不受影响。
+Map<String, dynamic> applyTemplateRouting(
+    Map<String, dynamic> config,
+    Map<String, String?> settings,
+    Map<String, String> tagByName) {
+  final route = config['route'];
+  if (route is! Map) return config;
+  final rules = route['rules'];
+  if (rules is! List) return config;
+  String? idOf(Map rule) {
+    final rs = rule['rule_set'];
+    if (rs is List) {
+      if (rs.contains('geosite-category-ads-all')) return 'ads';
+      if (rs.contains('geosite-cn')) return 'cn';
+    }
+    if (rule['ip_is_private'] != null) return 'private';
+    return null;
+  }
+
+  final out = <dynamic>[];
+  for (final raw in rules) {
+    if (raw is! Map) {
+      out.add(raw);
+      continue;
+    }
+    final rule = Map<String, dynamic>.from(raw);
+    final id = idOf(rule);
+    if (id == null || !settings.containsKey(id)) {
+      out.add(rule);
+      continue;
+    }
+    final setting = settings[id];
+    if (setting == 'off') continue; // 用户关闭该条
+    if (setting == 'reject') {
+      rule.remove('outbound');
+      rule['action'] = 'reject';
+    } else if (setting.isNotEmpty && setting != 'default') {
+      rule.remove('action');
+      rule['outbound'] = tagByName[setting] ?? setting;
+    }
+    out.add(rule);
+  }
+  route['rules'] = out;
+  return config;
+}

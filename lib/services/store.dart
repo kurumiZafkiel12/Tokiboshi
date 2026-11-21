@@ -159,6 +159,7 @@ class AppData {
     this.ruleSetLastUpdate = const {},
     this.ruleSetPending = const {},
     this.ruleSetAutoUpdate = false,
+    this.templateRouting = const {},
   }) : clashApiSecret = clashApiSecret ?? '';
 
   List<NodeInfo> nodes;
@@ -213,6 +214,11 @@ class AppData {
   Set<String> ruleSetPending;
   bool ruleSetAutoUpdate;
 
+  /// 内置分流模板的可配置项：key = 规则 id（ads / cn / private），
+  /// value：缺失 = 启用+默认出站；'off' = 关闭；'reject' / 'direct' /
+  /// 'proxy' / 节点名 = 启用+指定出站。
+  Map<String, String> templateRouting;
+
   /// null: legacy unique-source inference; empty: explicit built-in template.
   String? activeProfileId;
 
@@ -246,6 +252,7 @@ class AppData {
         ruleSetLastUpdate: Map.of(ruleSetLastUpdate),
         ruleSetPending: Set.of(ruleSetPending),
         ruleSetAutoUpdate: ruleSetAutoUpdate,
+        templateRouting: Map.of(templateRouting),
         activeProfileId: activeProfileId,
       );
 }
@@ -386,6 +393,7 @@ class Store {
             ? map['routingPreset'] as String
             : 'balanced',
         ruleSetUrls: _ruleStringMap(map['ruleSetUrls']),
+        templateRouting: _ruleStringMap(map['templateRouting']),
         ruleSetLastUpdate: _ruleStringMap(map['ruleSetLastUpdate']),
         ruleSetPending: (map['ruleSetPending'] is List
             ? (map['ruleSetPending'] as List).whereType<String>().toSet()
@@ -438,6 +446,7 @@ class Store {
         'client': data.client.toJson(),
         'routingPreset': data.routingPreset,
         'ruleSetUrls': data.ruleSetUrls,
+        'templateRouting': data.templateRouting,
         'ruleSetLastUpdate': data.ruleSetLastUpdate,
         'ruleSetPending': data.ruleSetPending.toList(),
         'ruleSetAutoUpdate': data.ruleSetAutoUpdate,

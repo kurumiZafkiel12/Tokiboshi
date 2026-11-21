@@ -18,6 +18,9 @@ class RulesPage extends StatefulWidget {
       required this.onSources,
       required this.blockAds,
       required this.bypassCn,
+      this.templateRouting = const {},
+      this.nodeNames = const [],
+      this.onTemplateRouting,
       this.dataDir,
       this.activeProfileId,
       this.customRules = const [],
@@ -30,6 +33,11 @@ class RulesPage extends StatefulWidget {
   final VoidCallback? onEdit;
   final String? dataDir;
   final String? activeProfileId;
+
+  /// 内置模板规则的用户配置（见 Store.templateRouting 注释）。
+  final Map<String, String> templateRouting;
+  final List<String> nodeNames;
+  final void Function(String id, String value)? onTemplateRouting;
   @override
   State<RulesPage> createState() => _RulesPageState();
 }
@@ -213,6 +221,40 @@ class _RulesPageState extends State<RulesPage> {
                         c),
                   ])),
           const SizedBox(height: 16),
+          if (widget.onTemplateRouting != null && profiles.isEmpty && !conflict)
+            Panel(
+                padding: EdgeInsets.zero,
+                child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      const Padding(
+                          padding: EdgeInsets.fromLTRB(18, 16, 18, 4),
+                          child: Text('内置分流模板',
+                              style: TextStyle(fontWeight: FontWeight.w600))),
+                      const Padding(
+                          padding: EdgeInsets.fromLTRB(18, 0, 18, 6),
+                          child: Text('每条规则可单独开关并指定出口；改动后需重启内核生效。',
+                              style:
+                                  TextStyle(fontSize: 12, color: Colors.grey))),
+                      for (final (id, title, desc) in const [
+                        ('private', '私有 / 局域网直连', '私有地址与局域网流量'),
+                        ('ads', '广告拦截', '广告域名拒绝（geosite-ads-all）'),
+                        ('cn', '国内直连', '国内域名与 IP 直连（geosite-cn / geoip-cn）'),
+                      ])
+                        _TemplateRuleRow(
+                          id: id,
+                          title: title,
+                          desc: desc,
+                          allowReject: id == 'ads',
+                          enabled: widget.templateRouting[id] != 'off',
+                          outbound:
+                              widget.templateRouting[id] ?? 'default',
+                          nodeNames: widget.nodeNames,
+                          onChanged: (enabled, outbound) => widget
+                              .onTemplateRouting!(id, enabled ? outbound : 'off'),
+                        ),
+                    ])),
+          const SizedBox(height: 16),
           if (conflict || _error != null || unsupported.isNotEmpty)
             Padding(
                 padding: const EdgeInsets.only(bottom: 14),
@@ -321,4 +363,74 @@ class _RulesPageState extends State<RulesPage> {
                 const SizedBox(height: 6),
                 Text(hint, style: Theme.of(context).textTheme.bodySmall)
               ])));
+}
+
+
+/// 内置模板规则的可配置行：开关 + 出站选择。
+class _TemplateRuleRow extends StatelessWidget {
+  const _TemplateRuleRow({
+    required this.id,
+    required this.title,
+    required this.desc,
+    required this.allowReject,
+    required this.enabled,
+    required this.outbound,
+    required this.nodeNames,
+    required this.onChanged,
+  });
+  final String id, title, desc;
+  final bool allowReject, enabled;
+  final String outbound;
+  final List<String> nodeNames;
+  final void Function(bool enabled, String outbound) onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    // 节点可能已被删除：当前值不在可选项里时回退到"模板默认"。
+    final options = <String, String>{
+      'default': '模板默认',
+      if (allowReject) 'reject': '拒绝',
+      'direct': '直连',
+      'proxy': '默认出口（proxy）',
+      for (final name in nodeNames) name: name,
+    };
+    final current = options.containsKey(outbound) ? outbound : 'default';
+    return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 6),
+        child: Row(children: [
+          Switch(
+              value: enabled,
+              onChanged: (v) =>
+                  onChanged(v, v ? (options.containsKey(outbound) ? outbound : 'default') : 'off')),
+          const SizedBox(width: 4),
+          Expanded(
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                Text(title,
+                    style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: enabled
+                            ? null
+                            : Theme.of(context).disabledColor)),
+                Text(desc,
+                    style: TextStyle(
+                        fontSize: 11,
+                        color: enabled
+                            ? Colors.grey
+                            : Theme.of(context).disabledColor)),
+              ])),
+          DropdownButton<String>(
+              value: enabled ? current : null,
+              hint: enabled ? null : const Text('已关闭'),
+              items: [
+                for (final e in options.entries)
+                  DropdownMenuItem(value: e.key, child: Text(e.value)),
+              ],
+              onChanged: enabled
+                  ? (v) => onChanged(true, v ?? 'default')
+                  : null),
+        ]));
+  }
 }
