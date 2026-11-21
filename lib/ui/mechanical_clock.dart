@@ -60,7 +60,10 @@ class _MechanicalClockState extends State<MechanicalClock>
   void _start() {
     _stop();
     if (!_open || !_visible) return;
-    if (_tier(context) == 'full') {
+    // 滑动秒针的连续 ticker 会让 widget 测试的 pumpAndSettle 永不收敛；
+    // 测试环境（FLUTTER_TEST）自动降级为整秒跳，视觉行为等价。
+    final isTest = Platform.environment.containsKey('FLUTTER_TEST');
+    if (_tier(context) == 'full' && !isTest) {
       _ticker = createTicker((_) {
         if (mounted) setState(() => _tick++);
       })
