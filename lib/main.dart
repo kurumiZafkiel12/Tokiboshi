@@ -1089,7 +1089,17 @@ class _ShellPageState extends State<ShellPage>
         await rollbackLive();
         return;
       }
-      _setMessage(live ? '已切换到 ${node.name}' : '已选择 ${node.name}');
+      if (live) {
+        // sing-box 只把新连接路由到新 selector 成员；既有连接继续走
+        // 旧出站（用户看到"还是上个节点"）。断开全部活动连接强制重连。
+        try {
+          await _clash.closeConnections();
+        } catch (_) {
+          // 连接清理失败不阻断切换本身
+        }
+      }
+      _setMessage(
+          live ? '已切换到 ${node.name}，旧连接已断开' : '已选择 ${node.name}');
       _refreshTray();
     } catch (e) {
       if (mounted) setState(() => _data = before);
