@@ -515,10 +515,10 @@ class _PerAppRoutingCardState extends State<_PerAppRoutingCard> {
                     Expanded(
                         child: TextField(
                             controller: _process,
-                            isDense: true,
                             decoration: const InputDecoration(
+                                isDense: true,
                                 labelText: '进程名（exe）',
-                                hintText: 'steam.exe')),
+                                hintText: 'steam.exe'),
                             onSubmitted: (_) => _add())),
                     const SizedBox(width: 10),
                     Expanded(
