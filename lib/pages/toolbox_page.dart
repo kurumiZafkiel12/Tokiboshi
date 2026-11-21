@@ -43,7 +43,7 @@ class _ToolboxPageState extends State<ToolboxPage> {
   String? _latErr;
   int _dlProgress = 0; // 0-100
   int _dlSeconds = 10;
-  String _dlService = 'cloudflare';
+  String _dlService = 'hetzner';
   String? _dlEndpoint;
 
   // 延迟质量（对当前出口，10 次 RTT）
@@ -63,9 +63,9 @@ class _ToolboxPageState extends State<ToolboxPage> {
   /// 下载测速服务：Cloudflare 对数据中心出口 IP 常见 403（TLS 指纹
   /// 层拦截，换 UA 无效），所以提供多服务并在所选端点失败时自动回退。
   static const dlServices = <String, (String, String)>{
-    'cloudflare': ('Cloudflare', 'https://speed.cloudflare.com/__down?bytes=104857600'),
     'hetzner': ('Hetzner 德国', 'https://speed.hetzner.de/100MB.bin'),
     'tele2': ('Tele2 荷兰', 'http://speedtest.tele2.net/100MB.zip'),
+    'cloudflare': ('Cloudflare', 'https://speed.cloudflare.com/__down?bytes=104857600'),
   };
 
   /// 延迟质量探测端点：gstatic 204 无 bot 拦截、全球 anycast。
@@ -157,8 +157,9 @@ class _ToolboxPageState extends State<ToolboxPage> {
       } else {
         setState(() => _dlEndpoint = dlServices[used]!.$1);
       }
-      // 时长上限只对 Cloudflare（无限流式）生效；文件型端点跑满整个文件。
-      final seconds = used == 'cloudflare' ? _dlSeconds : 1 << 20;
+      // 时长上限只对 Cloudflare（无限流式）生效；文件型端点（默认）
+      // 跑满 100MB 文件，进度按已下载量估算。
+      final seconds = used == 'cloudflare' ? _dlSeconds : 0;
       // 瞬时速率：最近 1s 滑窗样本
       final window = <int, int>{}; // elapsedMs -> cumulative bytes
       await for (final chunk in resp.timeout(const Duration(seconds: 15))) {
@@ -176,12 +177,16 @@ class _ToolboxPageState extends State<ToolboxPage> {
               _dlLive = instant;
               _dlPeak = peak;
               _dlTotal = received;
-              _dlProgress =
-                  (ms / (seconds * 1000)).clamp(0, 99).round();
+              _dlProgress = used == 'cloudflare'
+                  ? (ms / (seconds * 1000)).clamp(0, 99).round()
+                  : (received / (100 * 1024 * 1024) * 100)
+                      .clamp(0, 99)
+                      .round();
             });
           }
         }
-        if (watch.elapsed >= Duration(seconds: seconds)) break;
+        if (used == 'cloudflare' &&
+            watch.elapsed >= Duration(seconds: seconds)) break;
       }
       final secs = watch.elapsedMilliseconds / 1000;
       if (secs > 0.5 && received > 0) {
