@@ -207,7 +207,6 @@ class _ClockPainter extends CustomPainter {
   final bool compact;
 
   static const rose = Color(0xFFFFC1D5);
-  static const roseDeep = Color(0xFFB4678A);
   static const ink = Color(0xFFF8EFF5);
   static const face = Color(0xFF1B1521);
 
@@ -316,9 +315,10 @@ class _ClockPainter extends CustomPainter {
       brand.layout();
       brand.paint(canvas, c - Offset(brand.width / 2, faceR * .42));
       final sub = TextPainter(
-          text: const TextSpan(
+          text: TextSpan(
               text: '時の星',
-              style: TextStyle(fontSize: 8, color: rose.withValues(alpha: .6))),
+              style: TextStyle(
+                  fontSize: 8, color: rose.withValues(alpha: .6))),
           textDirection: TextDirection.ltr);
       sub.layout();
       sub.paint(canvas, c + Offset(-sub.width / 2, faceR * .38));
@@ -326,12 +326,20 @@ class _ClockPainter extends CustomPainter {
 
     if (!compact) {
       // ---- 弧形夹板 + 螺钉 ----
-      canvas.drawArc(c, math.pi * 1.05, math.pi * .9, false,
+      canvas.drawArc(
+          Rect.fromCircle(center: c, radius: faceR),
+          math.pi * 1.05,
+          math.pi * .9,
+          false,
           Paint()
             ..style = PaintingStyle.stroke
             ..strokeWidth = faceR * .12
             ..color = rose.withValues(alpha: .07));
-      canvas.drawArc(c, math.pi * 1.05, math.pi * .9, false,
+      canvas.drawArc(
+          Rect.fromCircle(center: c, radius: faceR),
+          math.pi * 1.05,
+          math.pi * .9,
+          false,
           Paint()
             ..style = PaintingStyle.stroke
             ..strokeWidth = 1
@@ -414,7 +422,7 @@ class _ClockPainter extends CustomPainter {
     }
     hand(hour, .48, faceR * .045, ink.withValues(alpha: .92), tail: .06);
     hand(minute, .66, faceR * .032, ink.withValues(alpha: .92), tail: .08);
-    hand(sec, .72, math.max(1, faceR * .016), rose, tail: .12);
+    hand(sec, .72, math.max(1.0, faceR * .016), rose, tail: .12);
 
     canvas.drawCircle(c, faceR * .05, Paint()..color = rose);
     canvas.drawCircle(c, faceR * .022, Paint()..color = const Color(0xFF14101A));
