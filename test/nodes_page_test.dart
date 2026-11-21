@@ -39,14 +39,13 @@ void main() {
     ))));
     await tester.pumpAndSettle();
     expect(find.text('节点选择（2）'), findsOneWidget);
-    await tester.tap(find.widgetWithText(ChoiceChip, 'policy'));
-    await tester.pumpAndSettle();
-    expect(selected, isNull);
-    await tester.tap(find.text('使用此策略组'));
+    // 分组筛选 chips 已按用户要求移除（2026-11-21）：节点直接点选。
+    expect(find.byType(ChoiceChip), findsNothing);
+    await tester.tap(find.text('policy'));
     await tester.pumpAndSettle();
     expect(selected, 2);
     expect(find.text('member'), findsOneWidget);
-    expect(find.text('other'), findsNothing);
+    expect(find.text('other'), findsOneWidget);
   });
 
   testWidgets('subscription filter includes providers and drawers collapse',
