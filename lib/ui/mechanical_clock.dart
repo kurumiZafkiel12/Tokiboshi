@@ -37,7 +37,6 @@ class _MechanicalClockState extends State<MechanicalClock>
   bool _visible = true;
   bool _movementOpen = false;
   final _frames = ValueNotifier(0);
-  int _lastFrameMs = 0;
 
   @override
   void initState() {
@@ -77,10 +76,10 @@ class _MechanicalClockState extends State<MechanicalClock>
     }
     if (_tier(context) == 'full' && !widget.dashboard) {
       // 100ms 节流：秒针滑动视觉连续，指针层重绘从 60fps 降到 10fps。
-      _ticker = createTicker((_) {
-        final nowMs = DateTime.now().millisecondsSinceEpoch;
-        if (nowMs - _lastFrameMs < 100) return;
-        _lastFrameMs = nowMs;
+      var lastFrame = const Duration(milliseconds: -100);
+      _ticker = createTicker((elapsed) {
+        if (elapsed - lastFrame < const Duration(milliseconds: 100)) return;
+        lastFrame = elapsed;
         _frames.value++;
       })
         ..start();

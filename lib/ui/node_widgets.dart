@@ -262,118 +262,168 @@ Future<NodeInfo?> showNodeEditor(BuildContext context, NodeInfo node) async {
     ob = jsonDecode(node.outboundJson) as Map<String, dynamic>;
   } catch (_) {
     await showDialog<void>(
-        context: context,
-        builder: (_) => AlertDialog(
-            title: const Text('无法编辑'),
-            content: const Text('该节点的出站配置无法解析（非 JSON）。'),
-            actions: [
-              TextButton(
-                  onPressed: () => Navigator.pop(context),
-                  child: const Text('关闭'))
-            ]));
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('无法编辑'),
+        content: const Text('该节点的出站配置无法解析（非 JSON）。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('关闭'),
+          ),
+        ],
+      ),
+    );
     return null;
   }
-  final name = TextEditingController(text: nodeDisplayName(node));
-  final server = TextEditingController(text: '${ob['server'] ?? ''}');
-  final port = TextEditingController(text: '${ob['server_port'] ?? ''}');
-  final secret = TextEditingController(
-      text: '${ob['password'] ?? ob['uuid'] ?? ob['psk'] ?? ''}');
-  final sniKey = ob['tls'] is Map && (ob['tls'] as Map)['sni'] != null
-      ? 'sni'
-      : (ob['tls'] is Map && (ob['tls'] as Map)['server_name'] != null
-          ? 'server_name'
-          : null);
-  final sni = TextEditingController(
-      text: sniKey == null
-          ? ''
-          : '${(ob['tls'] as Map)[sniKey] ?? ''}');
-  final hasSecret =
-      ob.containsKey('password') || ob.containsKey('uuid') || ob.containsKey('psk');
-  final secretLabel = ob.containsKey('uuid')
-      ? 'UUID'
-      : ob.containsKey('psk')
-          ? 'PSK'
-          : '密码';
-  String error = '';
+  var name = node.name;
+  final chainMember = node.group.isNotEmpty &&
+      (node.name.startsWith('${node.group} · 前置') ||
+          node.name.startsWith('${node.group} · 落地'));
+  var server = '${ob['server'] ?? ''}';
+  var port = '${ob['server_port'] ?? ''}';
+  final secrets = {
+    for (final key in ['uuid', 'password', 'psk'])
+      if (ob[key] is String) key: ob[key] as String,
+  };
+  final tls = ob['tls'];
+  final sniKey = tls is Map<String, dynamic>
+      ? tls.containsKey('sni')
+          ? 'sni'
+          : 'server_name'
+      : null;
+  var sni = sniKey == null ? '' : '${tls[sniKey] ?? ''}';
+  String? error;
 
   return showDialog<NodeInfo>(
-      context: context,
-      barrierDismissible: false,
-      builder: (dialog) => StatefulBuilder(builder: (dialog, setState) {
-            Widget field(String label, TextEditingController c,
-                    {bool obscure = false}) =>
-                Padding(
-                    padding: const EdgeInsets.only(bottom: 12),
-                    child: TextField(
-                        controller: c,
-                        obscureText: obscure,
-                        decoration: InputDecoration(
-                            labelText: label,
-                            border: const OutlineInputBorder(),
-                            isDense: true)));
-            return AlertDialog(
-                title: const Text('编辑节点'),
-                content: SingleChildScrollView(
-                    child: Column(mainAxisSize: MainAxisSize.min, children: [
-                  field('名称', name),
-                  Row(children: [
-                    Expanded(flex: 3, child: field('服务器', server)),
-                    const SizedBox(width: 10),
-                    Expanded(child: field('端口', port)),
-                  ]),
-                  if (hasSecret) field(secretLabel, secret, obscure: true),
-                  if (sniKey != null) field('SNI', sni),
-                  if (error.isNotEmpty)
-                    Padding(
-                        padding: const EdgeInsets.only(bottom: 10),
-                        child: Text(error,
-                            style: TextStyle(
-                                color: Theme.of(context).colorScheme.error,
-                                fontSize: 12))),
-                  const Text('仅手动导入的节点可编辑；订阅节点随订阅更新。',
-                      style: TextStyle(fontSize: 11)),
-                ])),
-                actions: [
-                  TextButton(
-                      onPressed: () => Navigator.pop(dialog),
-                      child: const Text('取消')),
-                  FilledButton(
-                      onPressed: () {
-                        final sv = server.text.trim();
-                        final pt = int.tryParse(port.text.trim());
-                        if (sv.isEmpty || pt == null || pt <= 0 || pt > 65535) {
-                          setState(() => error = '服务器与端口无效（端口 1–65535）');
-                          return;
-                        }
-                        if (name.text.trim().isEmpty) {
-                          setState(() => error = '名称不能为空');
-                          return;
-                        }
-                        ob['server'] = sv;
-                        ob['server_port'] = pt;
-                        if (hasSecret && secret.text.isNotEmpty) {
-                          final key = ob.containsKey('uuid')
-                              ? 'uuid'
-                              : ob.containsKey('psk')
-                                  ? 'psk'
-                                  : 'password';
-                          ob[key] = secret.text.trim();
-                        }
-                        if (sniKey != null && sni.text.trim().isNotEmpty) {
-                          (ob['tls'] as Map)[sniKey] = sni.text.trim();
-                        }
-                        if (ob.containsKey('tag')) ob['tag'] = name.text.trim();
-                        Navigator.pop(
-                            dialog,
-                            NodeInfo(
-                                name: name.text.trim(),
-                                outboundJson: jsonEncode(ob),
-                                source: node.source,
-                                group: node.group));
-                      },
-                      child: const Text('保存')),
-                ]);
-          }));
+    context: context,
+    builder: (context) => StatefulBuilder(
+      builder: (dialog, setState) {
+        Widget field(
+          String label,
+          String value,
+          ValueChanged<String> change, {
+          bool obscure = false,
+          TextInputType? keyboardType,
+          bool readOnly = false,
+        }) =>
+            Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: TextFormField(
+                initialValue: value,
+                onChanged: change,
+                readOnly: readOnly,
+                obscureText: obscure,
+                autocorrect: !obscure,
+                enableSuggestions: !obscure,
+                keyboardType: keyboardType,
+                decoration: InputDecoration(labelText: label),
+              ),
+            );
+        return AlertDialog(
+          title: const Text('编辑节点'),
+          content: SizedBox(
+            width: 450,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  field('名称', name, (value) => name = value,
+                      readOnly: chainMember),
+                  field('服务器', server, (value) => server = value),
+                  field(
+                    '端口',
+                    port,
+                    (value) => port = value,
+                    keyboardType: TextInputType.number,
+                  ),
+                  for (final key in secrets.keys)
+                    field(
+                      const {
+                        'uuid': 'UUID',
+                        'password': '密码',
+                        'psk': 'PSK',
+                      }[key]!,
+                      secrets[key]!,
+                      (value) => secrets[key] = value,
+                      obscure: true,
+                    ),
+                  if (sniKey != null) field('SNI', sni, (value) => sni = value),
+                  if (error != null)
+                    Text(
+                      error!,
+                      style: TextStyle(
+                        color: Theme.of(dialog).colorScheme.error,
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialog),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () {
+                final address = server.trim();
+                final number = int.tryParse(port.trim());
+                if (name.trim().isEmpty ||
+                    address.isEmpty ||
+                    address.contains(RegExp(r'[\s/]')) ||
+                    number == null ||
+                    number < 1 ||
+                    number > 65535) {
+                  setState(() => error = '请填写名称、有效服务器和端口（1–65535）');
+                  return;
+                }
+                final uuid = secrets['uuid'];
+                if (uuid != null &&
+                    uuid != ob['uuid'] &&
+                    !RegExp(
+                      r'^[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$',
+                    ).hasMatch(uuid.trim())) {
+                  setState(() => error = '请填写有效 UUID');
+                  return;
+                }
+                if (secrets.entries.any(
+                  (entry) =>
+                      entry.value.isEmpty &&
+                      (ob[entry.key] as String).isNotEmpty,
+                )) {
+                  setState(() => error = '节点凭据不能为空');
+                  return;
+                }
+                ob['server'] = address;
+                ob['server_port'] = number;
+                ob.addAll(secrets);
+                if (uuid != null) ob['uuid'] = uuid.trim();
+                if (sniKey != null &&
+                    (tls.containsKey(sniKey) || sni.trim().isNotEmpty)) {
+                  if (sni.trim().isEmpty) {
+                    tls.remove(sniKey);
+                  } else {
+                    tls[sniKey] = sni.trim();
+                  }
+                }
+                Navigator.pop(
+                  dialog,
+                  NodeInfo(
+                    name: name.trim(),
+                    outboundJson: jsonEncode(ob),
+                    source: node.source,
+                    group: node.group,
+                  ),
+                );
+              },
+              child: const Text('保存'),
+            ),
+          ],
+        );
+      },
+    ),
+  );
 }
 
 class NodePicker extends StatefulWidget {

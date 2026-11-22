@@ -11,6 +11,8 @@ import 'package:tokiboshi/bridge/core_bridge.dart';
 import 'package:tokiboshi/services/store.dart';
 import 'package:tokiboshi/services/desktop_settings.dart';
 import 'package:tokiboshi/services/system_proxy.dart';
+import 'package:tokiboshi/services/client_preferences.dart';
+import 'package:tokiboshi/services/routing_targets.dart';
 import 'package:tokiboshi/ui/preferences.dart';
 import 'package:tokiboshi/ui/node_widgets.dart';
 import 'package:tokiboshi/ui/import_dialog.dart';
@@ -129,6 +131,45 @@ void main() {
     });
   }
 
+  testWidgets(
+      'manual editor rolls back a failed save and updates route references',
+      (t) async {
+    final store = _EditStore();
+    await mount(t, size: const Size(800, 600), withStore: store);
+    final original = store.data.nodes.last;
+    // Seed a rule in the stored fixture, then reload through the normal app entry.
+    store.data.client = ClientPreferences(rules: [
+      RoutingRule(
+          kind: 'process_name',
+          value: 'fixture.exe',
+          target: routeNodeReference(original)),
+    ]);
+    await t.pumpWidget(const SizedBox());
+    await mount(t, size: const Size(800, 600), withStore: store);
+    await t.tap(find.byTooltip('节点').first);
+    await t.pumpAndSettle();
+    await t.tap(find.text('手动导入'));
+    await t.pumpAndSettle();
+    for (final reject in [true, false]) {
+      await t.tap(find.byTooltip('节点操作').first);
+      await t.pumpAndSettle();
+      await t.tap(find.text('编辑节点'));
+      await t.pumpAndSettle();
+      expect(find.byType(AlertDialog), findsOneWidget);
+      final server = find.widgetWithText(TextFormField, '服务器');
+      await t.enterText(server, 'new.example.test');
+      if (reject) await screenshot(t, 'manual-node-editor-800');
+      store.rejectOnce = reject;
+      await t.tap(find.text('保存'));
+      await t.pumpAndSettle();
+      expect(store.data.nodes.last.server,
+          reject ? '127.0.0.1' : 'new.example.test');
+      expect(store.data.client.rules.single.target,
+          routeNodeReference(store.data.nodes.last));
+      expect(t.takeException(), isNull);
+    }
+    await t.pumpWidget(const SizedBox());
+  });
   for (final size in [const Size(1440, 900), const Size(800, 600)]) {
     testWidgets('software routing selects independent targets at ${size.width}',
         (t) async {
@@ -558,4 +599,17 @@ void main() {
     });
     await t.pumpWidget(const SizedBox());
   });
+}
+
+class _EditStore extends MemoryStore {
+  bool rejectOnce = false;
+
+  @override
+  Future<void> save(AppData data) async {
+    if (rejectOnce) {
+      rejectOnce = false;
+      throw const FileSystemException('synthetic save failure');
+    }
+    await super.save(data);
+  }
 }

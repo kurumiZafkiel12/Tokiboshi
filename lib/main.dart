@@ -1029,20 +1029,61 @@ class _ShellPageState extends State<ShellPage>
 
   // ---- nodes ----
 
-  /// 编辑手动导入节点（订阅节点随订阅更新，不允许本地编辑）。
-  void _editNode(int index, NodeInfo updated) {
-    if (index < 0 || index >= _data.nodes.length) return;
+  Future<void> _editNode(NodeInfo original, NodeInfo updated) async {
+    if (_busy ||
+        _settingsBusy ||
+        _proxySwitching ||
+        _profileChanging ||
+        _quitting ||
+        original.source.isNotEmpty ||
+        original.isPolicy) return;
+    final index = _data.nodes.indexOf(original);
+    if (index < 0) {
+      _setMessage('节点编辑失败：原节点已从列表移除');
+      return;
+    }
+    if (original.name == updated.name &&
+        original.outboundJson == updated.outboundJson) return;
     final before = _data.copyWith();
+    final nodes = [..._data.nodes]..[index] = updated;
+    final oldRef = routeNodeReference(original);
+    final newRef = routeNodeReference(updated);
+    final usedByRouting =
+        _data.client.rules.any((rule) => rule.target == oldRef) ||
+            _data.templateRouting.containsValue(oldRef);
+    if (oldRef != newRef &&
+        usedByRouting &&
+        !RoutingTargets(nodes).resolved.containsKey(newRef)) {
+      _setMessage('节点编辑失败：修改后将与已有的分流出口重名');
+      return;
+    }
     setState(() {
-      _data.nodes = [
-        for (var i = 0; i < _data.nodes.length; i++)
-          if (i == index) updated else _data.nodes[i]
-      ];
+      _settingsBusy = true;
+      _data.nodes = nodes;
+      if (usedByRouting && oldRef != newRef) {
+        _data.client = _data.client.withRules([
+          for (final rule in _data.client.rules)
+            if (rule.target == oldRef)
+              RoutingRule(
+                  kind: rule.kind,
+                  value: rule.value,
+                  target: newRef,
+                  enabled: rule.enabled)
+            else
+              rule,
+        ]);
+        _data.templateRouting = _data.templateRouting.map(
+            (key, value) => MapEntry(key, value == oldRef ? newRef : value));
+      }
     });
-    unawaited(_persistImport(before));
-    _setMessage('节点「${updated.name}」已更新，重启内核后生效');
+    try {
+      if (await _persistImport(before)) {
+        _setMessage('节点「${updated.name}」已保存${_running ? '，应用配置后生效' : ''}');
+      }
+    } finally {
+      if (mounted) setState(() => _settingsBusy = false);
+    }
   }
-
 
   String _nodeTag(NodeInfo node) {
     final nodes = _running ? _runtimeNodes : profileNodes(_data);
