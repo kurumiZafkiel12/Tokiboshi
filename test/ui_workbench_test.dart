@@ -503,6 +503,8 @@ void main() {
     await t.pumpAndSettle();
     await t.tap(find.byTooltip('节点操作').first);
     await t.pumpAndSettle();
+    await t.tap(find.text('查看详情'));
+    await t.pumpAndSettle();
     expect(find.text('凭据默认隐藏。详情不展示密码、UUID 或完整配置。'), findsOneWidget);
     await screenshot(t, 'node-drawer');
     await t.tap(find.byTooltip('关闭详情'));
