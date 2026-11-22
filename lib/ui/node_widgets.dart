@@ -12,11 +12,19 @@ String sourceLabel(NodeInfo node, List<Subscription> subscriptions) {
   return node.group.isEmpty ? source : '$source / ${node.group}';
 }
 
+final _regionalFlags = RegExp(r'[\u{1F1E6}-\u{1F1FF}]{2}', unicode: true);
+
+String nodeDisplayName(NodeInfo node) {
+  final name = node.name.replaceAll(_regionalFlags, '').trim();
+  return name.isEmpty ? regionLabel(node) : name;
+}
+
 String regionLabel(NodeInfo node) {
   const regionalStart = 0x1f1e6;
   final runes = node.name.runes.toList();
   for (var i = 0; i + 1 < runes.length; i++) {
-    final first = runes[i] - regionalStart, second = runes[i + 1] - regionalStart;
+    final first = runes[i] - regionalStart,
+        second = runes[i + 1] - regionalStart;
     if (first >= 0 && first < 26 && second >= 0 && second < 26) {
       return String.fromCharCodes([first + 65, second + 65]);
     }
@@ -57,16 +65,24 @@ class RegionMark extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final code = regionLabel(node);
-    final fallback = Text(code, style: mono.copyWith(
-      color: Theme.of(context).colorScheme.primary, fontSize: 11));
-    return Container(width: 31, height: 29, alignment: Alignment.center,
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surfaceContainerHighest,
-        border: Border.all(color: Theme.of(context).dividerColor),
-        borderRadius: BorderRadius.circular(7)),
-      child: code.length != 2 ? fallback : Image.asset('assets/flags/$code.png',
-        width: 20, height: 20, semanticLabel: '地区 $code',
-        errorBuilder: (_, __, ___) => fallback));
+    final fallback = Text(code,
+        style: mono.copyWith(
+            color: Theme.of(context).colorScheme.primary, fontSize: 11));
+    return Container(
+        width: 31,
+        height: 29,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.surfaceContainerHighest,
+            border: Border.all(color: Theme.of(context).dividerColor),
+            borderRadius: BorderRadius.circular(7)),
+        child: code.length != 2
+            ? fallback
+            : Image.asset('assets/flags/$code.png',
+                width: 20,
+                height: 20,
+                semanticLabel: '地区 $code',
+                errorBuilder: (_, __, ___) => fallback));
   }
 }
 
@@ -147,7 +163,7 @@ Future<void> showNodeDetails(BuildContext context, NodeInfo node,
                                       children: [
                                         RegionMark(node),
                                         const SizedBox(height: 16),
-                                        Text(node.name,
+                                        Text(nodeDisplayName(node),
                                             style: const TextStyle(
                                                 fontSize: 23,
                                                 fontWeight: FontWeight.w600)),
@@ -216,10 +232,12 @@ Future<void> showNodeDetails(BuildContext context, NodeInfo node,
                                       },
                                       child: const Text('测试延迟')),
                                 if (onQuality != null)
-                                  OutlinedButton(onPressed: () {
-                                    Navigator.pop(context);
-                                    onQuality();
-                                  }, child: const Text('查看节点质量')),
+                                  OutlinedButton(
+                                      onPressed: () {
+                                        Navigator.pop(context);
+                                        onQuality();
+                                      },
+                                      child: const Text('查看节点质量')),
                                 if (onDelete != null)
                                   TextButton(
                                       onPressed: () {
@@ -399,7 +417,7 @@ class _NodePickerState extends State<NodePicker> {
                                 contentPadding: const EdgeInsets.symmetric(
                                     horizontal: 22, vertical: 3),
                                 leading: RegionMark(node),
-                                title: Text(node.name,
+                                title: Text(nodeDisplayName(node),
                                     overflow: TextOverflow.ellipsis,
                                     style: const TextStyle(fontSize: 13)),
                                 subtitle: Text(

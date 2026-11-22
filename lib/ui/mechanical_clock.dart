@@ -412,6 +412,22 @@ class _ClockPainter extends CustomPainter {
             ]).createShader(Rect.fromCircle(center: c, radius: R));
       canvas.drawCircle(c, R, ring);
       canvas.drawCircle(c, R - 3, Paint()..color = const Color(0xFF30171D));
+      if (R >= 80 && !compact) {
+        final bevel = Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.4
+          ..shader = const SweepGradient(
+            colors: [
+              Color(0x88FFC1D5),
+              Color(0x00462731),
+              Color(0xAAC87E95),
+              Color(0x00462731),
+              Color(0x88FFC1D5),
+            ],
+          ).createShader(Rect.fromCircle(center: c, radius: R));
+        canvas.drawCircle(c, R - 1.6, bevel);
+        canvas.drawCircle(c, R - 11, bevel);
+      }
       if (!compact) {
         // 外圈滚花：60 条径向短刻
         final knurl = Paint()
@@ -550,8 +566,17 @@ class _ClockPainter extends CustomPainter {
               ..color = rose.withValues(alpha: .22));
         for (final (dx, dy) in [(-.42, -.55), (.34, -.62)]) {
           final sp = c + Offset(faceR * dx, faceR * dy);
+          canvas.drawCircle(sp, faceR * .055, Paint()..color = face);
           canvas.drawCircle(
-              sp, faceR * .045, Paint()..color = rose.withValues(alpha: .5));
+              sp,
+              faceR * .045,
+              Paint()
+                ..shader = const LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [Color(0xFFD6A6B2), Color(0xFF5E3945)],
+                ).createShader(
+                    Rect.fromCircle(center: sp, radius: faceR * .045)));
           canvas.drawLine(
               sp - Offset(faceR * .03, 0),
               sp + Offset(faceR * .03, 0),

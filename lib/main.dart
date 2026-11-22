@@ -43,6 +43,7 @@ import 'services/desktop_settings.dart';
 import 'services/desktop_services.dart';
 import 'ui/import_dialog.dart';
 import 'ui/diagnostics.dart';
+import 'ui/motion.dart';
 import 'services/latency.dart';
 import 'services/local_ports.dart';
 import 'services/elevated_handoff.dart';
@@ -293,6 +294,15 @@ class ShellPage extends StatefulWidget {
   State<ShellPage> createState() => _ShellPageState();
 }
 
+typedef _AppliedCore = ({
+  String binary,
+  String config,
+  List<NodeInfo> nodes,
+  bool hasRoutes,
+  Map<String, String> processPreferences,
+  Map<String, String> processOutlets,
+});
+
 class _ShellPageState extends State<ShellPage>
     with WindowListener, TrayListener {
   AppData _data = AppData();
@@ -323,12 +333,7 @@ class _ShellPageState extends State<ShellPage>
   bool _runtimeHasRoutes = false;
   bool _proxySwitching = false;
   List<NodeInfo> _runtimeNodes = const [];
-  ({
-    String binary,
-    String config,
-    List<NodeInfo> nodes,
-    bool hasRoutes
-  })? _appliedCore;
+  _AppliedCore? _appliedCore;
 
   bool get _systemProxyActive =>
       _proxyActive && (_data.systemProxy || !_data.enableTun);
@@ -1111,13 +1116,7 @@ class _ShellPageState extends State<ShellPage>
     }
   }
 
-  Future<bool> _restoreAppliedCore(
-      ({
-        String binary,
-        String config,
-        List<NodeInfo> nodes,
-        bool hasRoutes
-      })? applied) async {
+  Future<bool> _restoreAppliedCore(_AppliedCore? applied) async {
     if (applied == null) return false;
     setState(() => _coreBusy = true);
     final file = await widget.store.writeRuntimeConfig(applied.config);
@@ -1241,7 +1240,9 @@ class _ShellPageState extends State<ShellPage>
           binary: applied.binary,
           config: jsonEncode(config),
           nodes: applied.nodes,
-          hasRoutes: applied.hasRoutes
+          hasRoutes: applied.hasRoutes,
+          processPreferences: applied.processPreferences,
+          processOutlets: applied.processOutlets,
         );
         return;
       }
@@ -1753,6 +1754,11 @@ class _ShellPageState extends State<ShellPage>
       if (_systemProxyActive) {
         await widget.systemProxy.apply(true, _data.mixedPort);
       }
+      final processes = hasRoutes
+          ? processRouteTargets(_data.client.rules)
+          : const <String, String>{};
+      final outlets =
+          _appliedProcessOutlets(runtimeConfig, processes, configNodes);
       setState(() {
         _running = true;
         _runtimeHasRoutes = hasRoutes;
@@ -1761,7 +1767,9 @@ class _ShellPageState extends State<ShellPage>
           binary: binary,
           config: runtimeConfig,
           nodes: _runtimeNodes,
-          hasRoutes: hasRoutes
+          hasRoutes: hasRoutes,
+          processPreferences: processes,
+          processOutlets: outlets,
         );
         _latency.clear();
         _restartCount = 0;
@@ -1839,6 +1847,77 @@ class _ShellPageState extends State<ShellPage>
       if (mounted) setState(() => _proxyActive = false);
     }
     return _running;
+  }
+
+  Map<String, String> _appliedProcessOutlets(
+      String config, Map<String, String> processes, List<NodeInfo> nodes) {
+    if (processes.isEmpty) return const {};
+    final route = (jsonDecode(config) as Map)['route'] as Map?;
+    final namesByPattern = {
+      for (final name in processes.keys) processRoutePattern(name): name,
+    };
+    // The generated Windows regex retains the spelling of the saved exe name.
+    for (final rule
+        in _data.client.rules.where((r) => r.kind == 'process_name')) {
+      namesByPattern[processRoutePattern(rule.value)] =
+          rule.value.trim().toLowerCase();
+    }
+    final tags = assignNodeTags(nodes.map((node) => node.name));
+    final labels = {
+      for (var i = 0; i < tags.length; i++) tags[i]: nodes[i].name
+    };
+    final result = <String, String>{};
+    for (final rule
+        in (route?['rules'] as List? ?? const []).whereType<Map>()) {
+      final action = rule['action'];
+      final outbound = rule['outbound'];
+      final target = action == 'reject'
+          ? 'reject'
+          : outbound is String
+              ? outbound
+              : null;
+      if (target == null) continue;
+      Iterable<String> strings(dynamic value) => value is String
+          ? [value]
+          : value is List
+              ? value.whereType<String>()
+              : const [];
+      final names = [
+        for (final pattern in strings(rule['process_path_regex']))
+          if (namesByPattern.containsKey(pattern)) namesByPattern[pattern]!,
+        for (final name in strings(rule['process_name'])) name.toLowerCase(),
+      ];
+      for (final name in names) {
+        if (processes.containsKey(name)) {
+          result.putIfAbsent(
+              name,
+              () => switch (target) {
+                    'proxy' => '默认代理出口',
+                    'direct' => '直连',
+                    'reject' => '拒绝',
+                    _ => labels[target] ?? target,
+                  });
+        }
+      }
+    }
+    return result;
+  }
+
+  Future<int?> _applyRouteConfiguration() async {
+    final previous = _running ? _appliedCore : null;
+    if (_running) {
+      if (!await _restartCore()) return null;
+    } else {
+      await _startCore();
+    }
+    final applied = _appliedCore;
+    if (!_running ||
+        applied == null ||
+        identical(previous, applied) ||
+        !applied.hasRoutes) return null;
+    return changedProcessRoutes(previous?.processPreferences ?? const {},
+            applied.processPreferences)
+        .length;
   }
 
   Future<void> _ensureFromSettings() async {
@@ -2331,7 +2410,11 @@ class _ShellPageState extends State<ShellPage>
             busy: _busy || _profileChanging || _settingsBusy,
             api: _clash,
             dataDir: _dataDir,
-            onApply: _running ? _restartCore : _startCore,
+            onApply: _applyRouteConfiguration,
+            appliedProcessPreferences:
+                _running ? _appliedCore?.processPreferences : null,
+            appliedProcessOutlets:
+                _running ? _appliedCore?.processOutlets : null,
             onSources: () => setState(() => _page = 3),
             blockAds: _data.blockAds,
             bypassCn: _data.bypassCn,
@@ -2917,9 +3000,8 @@ class _ShellPageState extends State<ShellPage>
                                                                             2)),
                                                         ])),
                                               )))),
-                            if (_loaded)
+                            if (_loaded && _page != 0)
                               ConnectionDock(
-                                  showProxyControl: _page != 0,
                                   node: selected,
                                   subscriptions: _data.subscriptions,
                                   latency: _latency,
@@ -3378,12 +3460,14 @@ class _ShellPageState extends State<ShellPage>
                               if (!collapsed) ...[
                                 const SizedBox(width: 11),
                                 Expanded(
-                                    child: Text(label,
-                                        style: TextStyle(
-                                            fontSize: 14,
-                                            color: selected
-                                                ? Colors.white
-                                                : scheme.onSurfaceVariant))),
+                                    child: MotionEntrance(
+                                        child: Text(label,
+                                            style: TextStyle(
+                                                fontSize: 14,
+                                                color: selected
+                                                    ? Colors.white
+                                                    : scheme
+                                                        .onSurfaceVariant)))),
                                 if (count != null)
                                   Text('$count',
                                       style: mono.copyWith(

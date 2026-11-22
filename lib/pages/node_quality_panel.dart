@@ -3,6 +3,26 @@ import '../bridge/core_bridge.dart';
 import '../ui/design.dart';
 import '../ui/node_widgets.dart';
 
+Future<void> showNodeQuality(BuildContext context, NodeInfo node,
+        Future<int?> Function(NodeInfo) measure) =>
+    showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('出口质量'),
+        content: SizedBox(
+            width: 500,
+            child: SingleChildScrollView(
+              child: NodeQualityPanel(node: node, measure: measure),
+            )),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('关闭'),
+          )
+        ],
+      ),
+    );
+
 class NodeQualityPanel extends StatefulWidget {
   const NodeQualityPanel(
       {super.key, required this.node, required this.measure});
@@ -76,7 +96,7 @@ class _NodeQualityPanelState extends State<NodeQualityPanel> {
           crossAxisAlignment: WrapCrossAlignment.center,
           children: [
             RegionMark(widget.node),
-            Text('节点质量 · ${widget.node.name}',
+            Text('节点质量 · ${nodeDisplayName(widget.node)}',
                 overflow: TextOverflow.ellipsis, maxLines: 1),
             if (_samples.isNotEmpty) ...[
               Tag('${delays.length}/${_samples.length} 成功',

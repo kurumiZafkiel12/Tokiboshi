@@ -2,6 +2,25 @@ import 'dart:convert';
 import 'dart:io';
 import 'routing_targets.dart';
 
+String processRoutePattern(String name) =>
+    r'(?i)(?:^|[\\/])' + RegExp.escape(name.trim()) + r'$';
+
+Map<String, String> processRouteTargets(Iterable<RoutingRule> rules) {
+  final targets = <String, String>{};
+  for (final rule in rules) {
+    if (rule.enabled && rule.kind == 'process_name') {
+      targets.putIfAbsent(rule.value.trim().toLowerCase(), () => rule.target);
+    }
+  }
+  return targets;
+}
+
+Set<String> changedProcessRoutes(
+        Map<String, String> before, Map<String, String> after) =>
+    {...before.keys, ...after.keys}
+        .where((name) => before[name] != after[name])
+        .toSet();
+
 /// Desktop policies are applied only when the next core configuration is built.
 class RoutingRule {
   const RoutingRule({
@@ -214,9 +233,7 @@ String applyClientPreferences(
         final rule = Map<String, dynamic>.from(r.config);
         if (lookupProcesses && r.kind == 'process_name') {
           rule.remove('process_name');
-          rule['process_path_regex'] = [
-            r'(?i)(?:^|[\\/])' + RegExp.escape(r.value.trim()) + r'$'
-          ];
+          rule['process_path_regex'] = [processRoutePattern(r.value)];
         }
         final outbound = rule['outbound'];
         if (outbound is String) {

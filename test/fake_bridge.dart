@@ -73,7 +73,8 @@ class FakeBridge implements CoreBridge {
     }
     lastTunEnabled = enableTun;
     lastConfig = '{"outbounds":[${nodes.map((n) => n.outboundJson).join(',')}]'
-        ',"listen_port":$mixedPort,"clash_api_port":$clashApiPort}';
+        ',"listen_port":$mixedPort,"clash_api_port":$clashApiPort,'
+        '"route":{"rules":[]}}';
     return lastConfig!;
   }
 

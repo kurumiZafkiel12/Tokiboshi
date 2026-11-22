@@ -5,6 +5,7 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tokiboshi/main.dart';
+import 'package:tokiboshi/pages/dashboard_page.dart';
 import 'package:tokiboshi/pages/nodes_page.dart';
 import 'package:tokiboshi/bridge/core_bridge.dart';
 import 'package:tokiboshi/services/store.dart';
@@ -13,6 +14,8 @@ import 'package:tokiboshi/services/system_proxy.dart';
 import 'package:tokiboshi/ui/preferences.dart';
 import 'package:tokiboshi/ui/node_widgets.dart';
 import 'package:tokiboshi/ui/import_dialog.dart';
+import 'package:tokiboshi/ui/design.dart';
+import 'package:tokiboshi/ui/runtime.dart';
 import 'fake_bridge.dart';
 import 'widget_test.dart' show MemoryStore;
 
@@ -46,6 +49,7 @@ void main() {
       bool light = false,
       String motion = 'reduced',
       double dpr = 1,
+      List<NodeInfo> extraNodes = const [],
       bool twoProfiles = false,
       MemoryStore? withStore}) async {
     t.view.physicalSize = size * dpr;
@@ -77,6 +81,7 @@ void main() {
               '{"type":"socks","server":"127.0.0.1","server_port":1080}'),
     ];
     store.data.selectedIndex = 0;
+    store.data.nodes = [...store.data.nodes, ...extraNodes];
     store.data.subscriptions = const [
       Subscription(
           id: 's1',
@@ -153,6 +158,16 @@ void main() {
       expect(rules.map((r) => r.value),
           ['WeChat.exe', 'Weixin.exe', 'WeChatAppEx.exe']);
       expect(rules.map((r) => r.target).toSet(), {'direct'});
+      expect(find.text('待应用 · 直连'), findsOneWidget);
+      await screenshot(t, 'routing-pending-${size.width.toInt()}');
+      final apply = find.text('应用配置 (3)');
+      await t.ensureVisible(apply);
+      await t.tap(apply);
+      await t.pumpAndSettle();
+      expect(find.text('已应用 3 条进程规则变更'), findsOneWidget);
+      expect(find.text('待应用 · 直连'), findsNothing);
+      expect(find.text('当前 · 直连'), findsOneWidget);
+      await screenshot(t, 'routing-applied-${size.width.toInt()}');
       expect(t.takeException(), isNull);
       await t.pumpWidget(const SizedBox());
     });
@@ -321,6 +336,115 @@ void main() {
     await t.pumpWidget(const SizedBox());
   });
   testWidgets(
+      'traffic panel integrates rates peaks and session figures with real layout',
+      (t) async {
+    t.view.physicalSize = const Size(1440, 900);
+    t.view.devicePixelRatio = 1;
+    addTearDown(t.view.reset);
+    const ui = UiPreferences(motion: 'reduced');
+    const node = NodeInfo(
+        name: '东京 · 专线节点 · 适合长名称和正常滚动布局的测试',
+        outboundJson:
+            '{"type":"socks","server":"127.0.0.1","server_port":1080}');
+    final preferences = ValueNotifier(ui);
+    final monitor = RuntimeMonitor()
+      ..available = true
+      ..downSpeed = 512 * 1024
+      ..upSpeed = 144 * 1024
+      ..download = 12 * 1024 * 1024
+      ..upload = 4 * 1024 * 1024
+      ..connections = [
+        {
+          'metadata': {'processName': 'firefox.exe'},
+          'download': 4000,
+          'upload': 3200
+        },
+        {
+          'metadata': {'processName': 'steam.exe'},
+          'download': 1200,
+          'upload': 800
+        },
+      ]
+      ..downHistory =
+          List.generate(60, (index) => (index % 8 + 1) * 1024 * 128.0)
+      ..upHistory = List.generate(60, (index) => (index % 9 + 1) * 1024 * 24.0);
+    addTearDown(preferences.dispose);
+    addTearDown(monitor.dispose);
+    await t.pumpWidget(RepaintBoundary(
+      key: const ValueKey('capture'),
+      child: UiScope(
+        controller: preferences,
+        onChanged: (_) {},
+        child: MaterialApp(
+          theme: workbenchTheme(ui),
+          home: Scaffold(
+              body: DashboardPage(
+                  running: true,
+                  proxyActive: true,
+                  busy: false,
+                  selected: node,
+                  nodeCount: 180,
+                  subscriptionCount: 2,
+                  mixedPort: 7890,
+                  systemProxy: true,
+                  coreVersion: 'sing-box 1.14.4',
+                  onModeChanged: (_) {},
+                  selectedLatency: 86,
+                  selectedMeasured: true,
+                  onToggle: () {},
+                  onMeasureSelected: () {},
+                  onPickNode: () {},
+                  monitor: monitor)),
+        ),
+      ),
+    ));
+    await t.pumpAndSettle();
+    expect(find.text('实时流量'), findsOneWidget);
+    expect(find.text('峰值 1.00 MB/s'), findsOneWidget);
+    expect(find.text('2 条活动连接'), findsOneWidget);
+    expect(find.text('firefox.exe'), findsOneWidget);
+    await screenshot(t, 'dashboard-live-wide');
+    t.platformDispatcher.textScaleFactorTestValue = 1.5;
+    addTearDown(t.platformDispatcher.clearTextScaleFactorTestValue);
+    t.view.physicalSize = const Size(1200, 900);
+    t.view.devicePixelRatio = 1.5;
+    await t.pumpAndSettle();
+    expect(t.takeException(), isNull);
+    expect(find.text('实时流量').hitTestable(), findsOneWidget);
+    await screenshot(t, 'dashboard-live-compact');
+    await t.pumpWidget(const SizedBox());
+  });
+
+  testWidgets(
+      'long names and large source remain searchable in a narrow window',
+      (t) async {
+    const longName = '🇯🇵 东京 · 多线路家庭宽带节点 · 保留完整的超长名称用于悬停与搜索';
+    await mount(t, size: const Size(800, 600), extraNodes: [
+      const NodeInfo(
+          name: longName,
+          source: 's1',
+          outboundJson:
+              '{"type":"socks","server":"node.example.test","server_port":443}'),
+      for (var i = 0; i < 180; i++)
+        NodeInfo(
+            name: '节点样本 $i',
+            source: 's1',
+            outboundJson:
+                '{"type":"socks","server":"node.example.test","server_port":443}'),
+    ]);
+    await t.tap(find.byTooltip('节点').first);
+    await t.pumpAndSettle();
+    await t.enterText(find.byType(TextField).first, '超长名称');
+    await t.pumpAndSettle();
+    expect(find.byTooltip('东京 · 多线路家庭宽带节点 · 保留完整的超长名称用于悬停与搜索'), findsOneWidget);
+    final search = find.byType(TextField).first;
+    expect(search.hitTestable(), findsOneWidget);
+    expect(t.takeException(), isNull);
+    await screenshot(t, 'nodes-long-name-compact');
+    await t.pumpWidget(const SizedBox());
+  });
+
+  testWidgets(
       'red-black dashboard clock opens the detailed movement and survives resizing',
       (t) async {
     final fixture = MemoryStore();
@@ -359,7 +483,9 @@ void main() {
     expect(store.data.ui.order.first, 'status');
     expect(store.data.ui.order[1], 'traffic');
     await t.tap(find.text('完成调整'));
-    await t.tap(find.text('东京 · Sakura 01').last);
+    final outlet = find.byKey(const ValueKey('dashboard-outlet'));
+    await t.ensureVisible(outlet);
+    await t.tap(outlet);
     await t.pumpAndSettle();
     expect(find.byType(NodePicker), findsOneWidget);
     await screenshot(t, 'node-picker');

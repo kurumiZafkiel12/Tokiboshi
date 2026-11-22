@@ -159,8 +159,6 @@ class _DashboardPageState extends State<DashboardPage> {
                     children: [
                       _hero(context),
                       const SizedBox(height: 12),
-                      _metricBand(context),
-                      const SizedBox(height: 12),
                       Wrap(spacing: 12, runSpacing: 12, children: [
                         SizedBox(
                             key: ValueKey(order.first),
@@ -203,8 +201,8 @@ class _DashboardPageState extends State<DashboardPage> {
     final node = widget.selected;
     final sample = widget.onQualitySample;
     final checked = widget.selectedMeasured;
-    return SizedBox(
-        height: 200,
+    return ConstrainedBox(
+        constraints: const BoxConstraints(minHeight: 228),
         child: Panel(
             child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -212,42 +210,40 @@ class _DashboardPageState extends State<DashboardPage> {
             _title(
                 '出口质量',
                 _link(
-                    '测量 ↗',
+                    '测量 5 次 ↗',
                     node != null && sample != null && widget.running
-                        ? () => showDialog<void>(
-                              context: context,
-                              builder: (dialogContext) => AlertDialog(
-                                title: const Text('出口质量'),
-                                content: SizedBox(
-                                    width: 550,
-                                    child: SingleChildScrollView(
-                                        child: NodeQualityPanel(
-                                            node: node, measure: sample))),
-                                actions: [
-                                  TextButton(
-                                      onPressed: () =>
-                                          Navigator.pop(dialogContext),
-                                      child: const Text('关闭'))
-                                ],
-                              ),
-                            )
+                        ? () => showNodeQuality(context, node, sample)
                         : null)),
             if (node != null)
-              Text(node.name, maxLines: 1, overflow: TextOverflow.ellipsis),
-            const Spacer(),
+              Tooltip(
+                  message: nodeDisplayName(node),
+                  child: Text(nodeDisplayName(node),
+                      maxLines: 1, overflow: TextOverflow.ellipsis)),
+            const SizedBox(height: 15),
             Text(
               widget.selectedLatency != null
                   ? '${widget.selectedLatency} ms'
                   : checked
                       ? '测量失败'
                       : '尚未测量',
-              style: Theme.of(context).textTheme.titleLarge?.copyWith(
+              style: Theme.of(context).textTheme.headlineSmall?.copyWith(
                   fontFamily: mono.fontFamily,
                   fontFamilyFallback: mono.fontFamilyFallback),
             ),
             const SizedBox(height: 4),
-            Text('多次测量可查看延迟、抖动和超时。',
+            Text(checked ? '最近一次内核连通性测量' : '多次测量可查看延迟、抖动和超时。',
                 style: Theme.of(context).textTheme.bodySmall),
+            if (node != null && widget.running) ...[
+              const SizedBox(height: 8),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: OutlinedButton.icon(
+                  onPressed: widget.busy ? null : widget.onMeasureSelected,
+                  icon: const Icon(Icons.speed, size: 16),
+                  label: const Text('测量延迟'),
+                ),
+              ),
+            ],
           ],
         )));
   }
@@ -329,181 +325,118 @@ class _DashboardPageState extends State<DashboardPage> {
                 : widget.selected == null
                     ? '导入订阅后选择出口'
                     : '当前出口已保留';
-    final color = error
-        ? colors.error
-        : widget.running
-            ? good
-            : colors.onSurfaceVariant;
     final node = widget.selected;
     return CustomPaint(
         foregroundPainter: _GlassRim(colors.primary.withValues(alpha: .11)),
-        child: Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(23),
-              border: Border.all(color: colors.primary.withValues(alpha: .32)),
-              gradient: LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: [
-                    Color.alphaBlend(
-                        colors.primary.withValues(alpha: .13), colors.surface),
-                    colors.surface,
-                    Color.alphaBlend(
-                        colors.primary.withValues(alpha: .09), colors.surface)
-                  ])),
-          child:
-              Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-            LayoutBuilder(builder: (context, bounds) {
-              final status = Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+        child: WorkbenchGlass(
+            radius: 23,
+            child: Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(23),
+                  border:
+                      Border.all(color: colors.primary.withValues(alpha: .32)),
+                  gradient: LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: [
+                        colors.primary.withValues(alpha: .14),
+                        colors.surface.withValues(alpha: .32),
+                        colors.primary.withValues(alpha: .05),
+                      ])),
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    Wrap(spacing: 10, runSpacing: 5, children: [
-                      StatusDot(widget.running ? '内核已就绪' : '内核未就绪',
-                          color: color),
-                      StatusDot(
-                          (widget.proxyActive ?? widget.running)
-                              ? '代理已开启'
-                              : '代理已关闭',
-                          color: (widget.proxyActive ?? widget.running)
-                              ? good
-                              : colors.onSurfaceVariant),
-                    ]),
-                    const SizedBox(height: 4),
-                    Text(title,
-                        style: Theme.of(context).textTheme.headlineSmall),
-                    Text(hint,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: Theme.of(context).textTheme.bodySmall),
-                    const SizedBox(height: 9),
-                    FilledButton(
-                        onPressed: widget.controlsBlocked
-                            ? null
-                            : widget.busy
-                                ? widget.onCancelConnect
-                                : widget.onToggle,
-                        child: Text(widget.busy
-                            ? '取消连接'
-                            : (widget.proxyActive ?? widget.running)
-                                ? '停止代理'
-                                : '启动代理')),
-                  ]);
-              final outlet = Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('当前出口',
-                        style: Theme.of(context).textTheme.labelMedium),
-                    const SizedBox(height: 4),
-                    Row(children: [
-                      if (node != null) ...[
-                        RegionMark(node),
-                        const SizedBox(width: 7)
-                      ],
-                      Expanded(
-                          child: InkWell(
-                              onTap: widget.controlsBlocked
-                                  ? null
-                                  : widget.onPickNode,
-                              child: Text(node?.name ?? '未选择节点',
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: Theme.of(context)
-                                      .textTheme
-                                      .titleMedium))),
-                    ]),
-                    if (node != null)
-                      Text(sourceLabel(node, widget.subscriptions),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: Theme.of(context).textTheme.bodySmall),
-                    Wrap(
-                        spacing: 8,
-                        crossAxisAlignment: WrapCrossAlignment.center,
-                        children: [
-                          if (widget.onPickNode != null)
-                            TextButton(
+                    LayoutBuilder(builder: (context, bounds) {
+                      final status = Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(title,
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .headlineSmall
+                                    ?.copyWith(
+                                        color: error ? colors.error : null)),
+                            Text(hint,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: Theme.of(context).textTheme.bodySmall),
+                            const SizedBox(height: 9),
+                            FilledButton(
                                 onPressed: widget.controlsBlocked
                                     ? null
-                                    : widget.onPickNode,
-                                child: const Text('选择节点')),
-                          if (node != null)
-                            TextButton(
-                                onPressed: widget.busy
-                                    ? null
-                                    : widget.onMeasureSelected,
-                                child: Text(widget.selectedLatency == null
-                                    ? widget.selectedMeasured
-                                        ? '测速超时 · 重测'
-                                        : '测量延迟'
-                                    : '${widget.selectedLatency} ms · 重测')),
-                        ]),
-                  ]);
-              if (bounds.maxWidth < 450 ||
-                  MediaQuery.textScalerOf(context).scale(14) > 17) {
-                return Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [status, const Divider(height: 18), outlet]);
-              }
-              return Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(child: status),
-                    const SizedBox(width: 22),
-                    Expanded(child: outlet),
-                  ]);
-            }),
-            const Divider(height: 14),
-            _controls(context),
-          ]),
-        ));
-  }
-
-  Widget _metricBand(BuildContext context) {
-    final monitor = widget.monitor;
-    final ready = widget.running && monitor?.available == true;
-    final metrics = [
-      ('↓ 下载', ready ? '${bytesLabel(monitor!.downSpeed)}/s' : '—'),
-      ('↑ 上传', ready ? '${bytesLabel(monitor!.upSpeed)}/s' : '—'),
-      ('活动连接', ready ? '${monitor!.connections.length} 条' : '—'),
-      ('会话用量', ready ? bytesLabel(monitor!.download + monitor.upload) : '—'),
-    ];
-    return LayoutBuilder(builder: (context, bounds) {
-      final columns = bounds.maxWidth < 560 ||
-              MediaQuery.textScalerOf(context).scale(14) > 17
-          ? 2
-          : 4;
-      const gap = 8.0;
-      final width = (bounds.maxWidth - gap * (columns - 1)) / columns;
-      return Wrap(spacing: gap, runSpacing: gap, children: [
-        for (final (label, value) in metrics)
-          SizedBox(
-              width: width,
-              child: Panel(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(label,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: Theme.of(context).textTheme.labelMedium),
-                    Text(value,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: Theme.of(context)
-                            .textTheme
-                            .titleMedium
-                            ?.copyWith(
-                                fontFamily: mono.fontFamily,
-                                fontFamilyFallback: mono.fontFamilyFallback,
-                                fontWeight: FontWeight.w600)),
-                  ],
-                ),
-              )),
-      ]);
-    });
+                                    : widget.busy
+                                        ? widget.onCancelConnect
+                                        : widget.onToggle,
+                                child: Text(widget.busy
+                                    ? '取消连接'
+                                    : (widget.proxyActive ?? widget.running)
+                                        ? '停止代理'
+                                        : '启动代理')),
+                          ]);
+                      final outlet = Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('当前出口',
+                                style: Theme.of(context).textTheme.labelMedium),
+                            const SizedBox(height: 4),
+                            Align(
+                              alignment: Alignment.centerLeft,
+                              child: Tooltip(
+                                message: node == null
+                                    ? '选择节点'
+                                    : nodeDisplayName(node),
+                                child: OutlinedButton(
+                                  key: const ValueKey('dashboard-outlet'),
+                                  onPressed: widget.controlsBlocked
+                                      ? null
+                                      : widget.onPickNode,
+                                  child: Row(children: [
+                                    if (node != null) ...[
+                                      RegionMark(node),
+                                      const SizedBox(width: 8),
+                                    ],
+                                    Expanded(
+                                        child: Text(
+                                            node == null
+                                                ? '未选择节点'
+                                                : nodeDisplayName(node),
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis)),
+                                    const SizedBox(width: 6),
+                                    const Icon(Icons.chevron_right, size: 16),
+                                  ]),
+                                ),
+                              ),
+                            ),
+                            if (node != null)
+                              Text(sourceLabel(node, widget.subscriptions),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: Theme.of(context).textTheme.bodySmall),
+                          ]);
+                      if (bounds.maxWidth < 510 ||
+                          MediaQuery.textScalerOf(context).scale(14) > 22) {
+                        return Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              status,
+                              const Divider(height: 18),
+                              outlet
+                            ]);
+                      }
+                      return Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Expanded(child: status),
+                            const SizedBox(width: 22),
+                            Expanded(child: outlet),
+                          ]);
+                    }),
+                    const Divider(height: 14),
+                    _controls(context),
+                  ]),
+            )));
   }
 
   Widget _editable(String id, Widget panel) {
@@ -568,36 +501,54 @@ class _DashboardPageState extends State<DashboardPage> {
       ]));
   Widget _traffic(BuildContext context) {
     final m = widget.monitor, ready = widget.running && (m?.available ?? false);
-    return SizedBox(
-        height: 200,
+    final theme = Theme.of(context);
+    String speed(double value) => ready ? '${bytesLabel(value)}/s' : '—';
+    double peak(List<double> history) => history.fold(0.0, math.max);
+    Widget readout(String title, String value, String detail, Color color) =>
+        Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(title, style: theme.textTheme.labelMedium),
+          Text(value,
+              style: theme.textTheme.titleMedium
+                  ?.merge(mono)
+                  .copyWith(color: color, fontWeight: FontWeight.w600)),
+          Text(detail, style: theme.textTheme.bodySmall),
+        ]);
+    return ConstrainedBox(
+        constraints: const BoxConstraints(minHeight: 228),
         child: Panel(
-            child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-              _title(
-                  '流量趋势 · 最近 60 次',
-                  Tag(
-                      !widget.running
-                          ? '未连接'
-                          : ready
-                              ? '实时'
-                              : '暂不可用',
-                      color: ready ? good : null)),
-              Wrap(spacing: 14, children: const [Text('↓ 下载'), Text('↑ 上传')]),
-              const SizedBox(height: 10),
-              Expanded(
-                  child: TrafficReadout(
-                      down: m?.downHistory ?? const [],
-                      up: m?.upHistory ?? const [])),
-              const SizedBox(height: 8),
-              Row(children: [
-                Expanded(
-                    child: Text('会话下载 ${ready ? bytesLabel(m!.download) : '—'}',
-                        style: const TextStyle(fontSize: 10))),
-                Text('上传 ${ready ? bytesLabel(m!.upload) : '—'}',
-                    style: const TextStyle(fontSize: 10))
-              ])
-            ])));
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            _title(
+                '实时流量',
+                Tag(
+                    !widget.running
+                        ? '未连接'
+                        : ready
+                            ? '最近 60 次'
+                            : '暂不可用',
+                    color: ready ? good : null)),
+            Wrap(spacing: 24, runSpacing: 9, children: [
+              readout(
+                  '↓ 下载',
+                  speed(m?.downSpeed ?? 0),
+                  '峰值 ${speed(peak(m?.downHistory ?? const []))}',
+                  theme.colorScheme.primary),
+              readout('↑ 上传', speed(m?.upSpeed ?? 0),
+                  '峰值 ${speed(peak(m?.upHistory ?? const []))}', gold),
+              readout(
+                  '会话用量',
+                  ready ? bytesLabel(m!.download + m.upload) : '—',
+                  ready ? '${m!.connections.length} 条活动连接' : '— 条活动连接',
+                  theme.colorScheme.onSurface),
+            ]),
+            const SizedBox(height: 10),
+            SizedBox(
+                height: 98,
+                child: TrafficReadout(
+                    down: m?.downHistory ?? const [],
+                    up: m?.upHistory ?? const [])),
+          ]),
+        ));
   }
 
   Widget _profile(BuildContext context) {

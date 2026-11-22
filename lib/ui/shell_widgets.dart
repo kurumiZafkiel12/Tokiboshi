@@ -65,7 +65,10 @@ class ConnectionDock extends StatelessWidget {
                                         const SizedBox(width: 9)
                                       ],
                                       Expanded(
-                                          child: Text(node?.name ?? '未选择节点',
+                                          child: Text(
+                                              node == null
+                                                  ? '未选择节点'
+                                                  : nodeDisplayName(node!),
                                               maxLines: 1,
                                               overflow: TextOverflow.ellipsis,
                                               style: const TextStyle(

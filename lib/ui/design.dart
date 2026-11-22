@@ -233,13 +233,17 @@ class StatusDot extends StatelessWidget {
 
 class PageHeading extends StatelessWidget {
   const PageHeading(this.title, this.subtitle,
-      {super.key, this.eyebrow, this.actions = const []});
+      {super.key,
+      this.eyebrow,
+      this.actions = const [],
+      this.bottomSpacing = 22});
   final String title, subtitle;
   final String? eyebrow;
+  final double bottomSpacing;
   final List<Widget> actions;
   @override
   Widget build(BuildContext context) => Padding(
-      padding: const EdgeInsets.only(bottom: 22),
+      padding: EdgeInsets.only(bottom: bottomSpacing),
       child: LayoutBuilder(builder: (context, c) {
         final copy =
             Column(crossAxisAlignment: CrossAxisAlignment.start, children: [

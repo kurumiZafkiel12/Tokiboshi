@@ -45,16 +45,11 @@ class NodesPage extends StatefulWidget {
 
 class _NodesPageState extends State<NodesPage> {
   String _query = '', _group = '', _source = '';
-  NodeInfo? _qualityNode;
   final Map<String, bool> _expanded = {};
   @override
   void didUpdateWidget(covariant NodesPage old) {
     super.didUpdateWidget(old);
-    if (!identical(old.nodes, widget.nodes)) {
-      _group = '';
-      if (!widget.nodes.contains(_qualityNode)) _qualityNode = null;
-    }
-    if (old.selectedIndex != widget.selectedIndex) _qualityNode = null;
+    if (!identical(old.nodes, widget.nodes)) _group = '';
   }
 
   bool _grid = false, _sort = false;
@@ -72,7 +67,7 @@ class _NodesPageState extends State<NodesPage> {
         onMeasure: widget.busy ? null : () => widget.onMeasureNode?.call(n),
         onQuality: !widget.running || widget.onQualitySample == null
             ? null
-            : () => setState(() => _qualityNode = n),
+            : () => showNodeQuality(context, n, widget.onQualitySample!),
         onDelete: widget.running || widget.busy ? null : () => _delete(index));
   }
 
@@ -130,8 +125,12 @@ class _NodesPageState extends State<NodesPage> {
     if (_sort)
       indices.sort((a, b) => (widget.latency[widget.nodes[a]] ?? 0x7fffffff)
           .compareTo(widget.latency[widget.nodes[b]] ?? 0x7fffffff));
+    final selected =
+        widget.selectedIndex >= 0 && widget.selectedIndex < widget.nodes.length
+            ? widget.nodes[widget.selectedIndex]
+            : null;
     return Padding(
-        padding: const EdgeInsets.fromLTRB(22, 20, 22, 12),
+        padding: const EdgeInsets.fromLTRB(18, 12, 18, 10),
         child: CustomScrollView(
             key: const PageStorageKey('nodes-scroll'),
             slivers: [
@@ -141,8 +140,8 @@ class _NodesPageState extends State<NodesPage> {
                     children: [
                       PageHeading(
                           '节点选择（${widget.nodes.where((n) => !n.isPolicy).length}）',
-                          '按来源筛选，选择适合当前连接的出口。',
-                          eyebrow: 'FIND YOUR NEXT CONNECTION.',
+                          '',
+                          bottomSpacing: 8,
                           actions: [
                             if (widget.onCreateChain != null)
                               OutlinedButton.icon(
@@ -166,17 +165,24 @@ class _NodesPageState extends State<NodesPage> {
                                         ? widget.onImport()
                                         : widget.onImportMethod!(method))
                           ]),
-                      if (widget.running &&
-                          widget.onQualitySample != null &&
-                          widget.selectedIndex >= 0 &&
-                          widget.selectedIndex < widget.nodes.length) ...[
-                        const SizedBox(height: 8),
-                        NodeQualityPanel(
-                            node: _qualityNode ??
-                                widget.nodes[widget.selectedIndex],
-                            measure: widget.onQualitySample!),
-                        const SizedBox(height: 8),
-                      ],
+                      if (selected != null &&
+                          widget.running &&
+                          widget.onQualitySample != null)
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: TextButton.icon(
+                            onPressed: () => showNodeQuality(
+                                context, selected, widget.onQualitySample!),
+                            icon: const Icon(Icons.speed, size: 17),
+                            label:
+                                Row(mainAxisSize: MainAxisSize.min, children: [
+                              const Text('出口质量'),
+                              const SizedBox(width: 8),
+                              LatencyText(selected, widget.latency),
+                              const Icon(Icons.chevron_right, size: 16),
+                            ]),
+                          ),
+                        ),
                       SingleChildScrollView(
                           scrollDirection: Axis.horizontal,
                           child: Row(children: [
@@ -216,46 +222,52 @@ class _NodesPageState extends State<NodesPage> {
                                   icon: const Icon(Icons.play_arrow, size: 16),
                                   label: const Text('使用此策略组'))
                             ])),
-                      const SizedBox(height: 10),
-                      Row(children: [
-                        Expanded(
-                            child: TextField(
-                                controller: _search,
-                                decoration: InputDecoration(
-                                    prefixIcon:
-                                        const Icon(Icons.search, size: 17),
-                                    hintText: '搜索节点名或服务器、地区、协议',
-                                    suffixIcon: _query.isEmpty
-                                        ? null
-                                        : IconButton(
-                                            tooltip: '清除搜索',
-                                            onPressed: () {
-                                              _search.clear();
-                                              setState(() => _query = '');
-                                            },
-                                            icon: const Icon(Icons.close,
-                                                size: 15))),
-                                onChanged: (v) => setState(
-                                    () => _query = v.trim().toLowerCase()))),
-                        const SizedBox(width: 8),
-                        IconButton(
-                            tooltip: '按延迟排序',
-                            isSelected: _sort,
-                            onPressed: () => setState(() => _sort = !_sort),
-                            icon: const Icon(Icons.sort)),
-                        IconButton(
-                            tooltip: '列表视图',
-                            isSelected: !_grid,
-                            onPressed: () => setState(() => _grid = false),
-                            icon: const Icon(Icons.view_list_outlined)),
-                        IconButton(
-                            tooltip: '卡片视图',
-                            isSelected: _grid,
-                            onPressed: () => setState(() => _grid = true),
-                            icon: const Icon(Icons.grid_view_outlined))
-                      ]),
-                      const SizedBox(height: 6),
                     ]),
+              ),
+              PinnedHeaderSliver(
+                child: ColoredBox(
+                  color: Theme.of(context).colorScheme.surface,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 5),
+                    child: Row(children: [
+                      Expanded(
+                          child: TextField(
+                              controller: _search,
+                              decoration: InputDecoration(
+                                  prefixIcon:
+                                      const Icon(Icons.search, size: 17),
+                                  hintText: '搜索节点名或服务器、地区、协议',
+                                  suffixIcon: _query.isEmpty
+                                      ? null
+                                      : IconButton(
+                                          tooltip: '清除搜索',
+                                          onPressed: () {
+                                            _search.clear();
+                                            setState(() => _query = '');
+                                          },
+                                          icon: const Icon(Icons.close,
+                                              size: 15))),
+                              onChanged: (v) => setState(
+                                  () => _query = v.trim().toLowerCase()))),
+                      const SizedBox(width: 8),
+                      IconButton(
+                          tooltip: '按延迟排序',
+                          isSelected: _sort,
+                          onPressed: () => setState(() => _sort = !_sort),
+                          icon: const Icon(Icons.sort)),
+                      IconButton(
+                          tooltip: '列表视图',
+                          isSelected: !_grid,
+                          onPressed: () => setState(() => _grid = false),
+                          icon: const Icon(Icons.view_list_outlined)),
+                      IconButton(
+                          tooltip: '卡片视图',
+                          isSelected: _grid,
+                          onPressed: () => setState(() => _grid = true),
+                          icon: const Icon(Icons.grid_view_outlined))
+                    ]),
+                  ),
+                ),
               ),
               if (indices.isEmpty)
                 SliverFillRemaining(
@@ -423,14 +435,16 @@ class _NodesPageState extends State<NodesPage> {
                               child: Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
-                                    Text(n.name,
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: TextStyle(
-                                            fontSize: 13,
-                                            fontWeight: selected
-                                                ? FontWeight.w600
-                                                : FontWeight.w400)),
+                                    Tooltip(
+                                        message: nodeDisplayName(n),
+                                        child: Text(nodeDisplayName(n),
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: TextStyle(
+                                                fontSize: 13,
+                                                fontWeight: selected
+                                                    ? FontWeight.w600
+                                                    : FontWeight.w400))),
                                     Text('${n.server}:${n.serverPort}',
                                         style: mono.copyWith(
                                             fontSize: 10,
@@ -494,10 +508,12 @@ class _NodesPageState extends State<NodesPage> {
                         RegionMark(n),
                         const SizedBox(width: 10),
                         Expanded(
-                            child: Text(n.name,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(fontSize: 13))),
+                            child: Tooltip(
+                                message: nodeDisplayName(n),
+                                child: Text(nodeDisplayName(n),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(fontSize: 13)))),
                         IconButton(
                             tooltip: '节点详情',
                             padding: EdgeInsets.zero,
