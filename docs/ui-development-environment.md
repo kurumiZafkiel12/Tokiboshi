@@ -65,7 +65,7 @@ python3 -B .agents/skills/ui-ux-pro-max/scripts/search.py "compact desktop dashb
 | [data_table_2](https://pub.dev/packages/data_table_2) | 3.0.0 | 锁定 **2.8.0**。3.0.0 可求解，但它要求 `material_ui` 的 DataRow/DataColumn，与现有 Flutter Material 类型混用时编译失败。2.8.0 在现有 Material 环境中通过渲染试验。用于固定表头、高密度连接记录。 |
 | [tray_manager](https://pub.dev/packages/tray_manager) | 0.9.0 | 已安装 0.5.3，维持现有 Windows 托盘和退出行为。 |
 
-新锁定 5 个直接依赖及 9 个传递依赖，原锁定依赖版本无变动，Flutter SDK 区间与现有锁文件一致。新库均无需注册平台原生插件，现有 Windows 窗口与托盘仍由既有代码管理。后续 Windows 的窗口、托盘、材质 API 通过桌面平台入口接线，Android 继续使用自身的窗口生命周期和导航。新库当前没有页面调用，Windows 和 Android 可先独立验证依赖、打包与字体资源，再验证实际新组件的行为。
+新锁定 5 个直接依赖及 5 个传递依赖，原锁定依赖版本无变动，Flutter SDK 区间与现有锁文件一致。新库均无需注册平台原生插件，现有 Windows 窗口与托盘仍由既有代码管理。后续 Windows 的窗口、托盘、材质 API 通过桌面平台入口接线，Android 继续使用自身的窗口生命周期和导航。新库当前没有页面调用，Windows 和 Android 可先独立验证依赖、打包与字体资源，再验证实际新组件的行为。
 
 ## 后续设计约定
 
@@ -78,8 +78,12 @@ python3 -B .agents/skills/ui-ux-pro-max/scripts/search.py "compact desktop dashb
 
 ## 验证及 Git 范围
 
-- 项目技能离线校验通过，共 24 个技能、374 个文件，另附 7 份上游许可证。UI UX Pro Max 本地 Flutter 查询与 39 个核心自测通过。
+- 项目技能离线校验通过，共 24 个技能、374 个文件，另附 7 份上游许可证。独立检出后的完整性检查及 Codex 项目技能清单识别 24 个技能。UI UX Pro Max 本地 Flutter 查询与 39 个核心自测通过。
 - `flutter pub get` 与 `flutter pub get --enforce-lockfile` 均通过。`flutter analyze --no-fatal-infos` 通过。默认 `flutter analyze` 返回 1，因为 216 条 info 参与退出码。与同一 SDK、同一命令下的基线分析逐条对照，新增诊断、warning 和 error 均为 0。
 - 临时组件试验通过 2 项，覆盖 shadcn_flutter 按钮点击，以及 fl_chart、Lucide、flutter_animate、data_table_2 在现有 Material 上下文的渲染。
-- Linux 下显式设置 sing-box 1.14.4 和 CJK 测试字体后，增加本地 TLS 测试夹具后，现有 Flutter 测试 127 项通过，3 项 Windows 原生测试跳过。Windows 原生窗口、系统代理、TUN 及 Android VPN 真机行为需分别验收。
+- Linux 下使用 sing-box 1.14.4、CJK 字体和本地 TLS 夹具，现有 Flutter 测试 127 项通过，3 项 Windows 原生测试跳过。Windows 原生窗口、系统代理、TUN 及 Android VPN 真机行为需分别验收。
+- Linux Rust 锁文件测试通过 72 项，包含使用 sing-box 1.14.4 的真实配置检查。
+- Windows CI 通过 142 项 Flutter 测试、发布模式构建、管理员清单及实际 DLL 核验，并生成测试用安装产物。[CI](https://github.com/kurumiZafkiel12/Tokiboshi/actions/runs/44971663357)
+- Android CI 通过模拟器系统 VPN、独立 UID 流量证据和停止清理检查，并通过三 ABI 签名 APK、原生库及 16 KiB 对齐验证。真机及 OEM 行为留待后续验证。[CI](https://github.com/kurumiZafkiel12/Tokiboshi/actions/runs/44971663321)
+- 平台 CI 对应配置提交 `5130916`。后续记录提交只更新本文件。
 - 变更范围为 `.agents/skills/`、`.agents/skill-licenses/`、`.agents/skills-lock.json`、`.gitattributes`、`AGENTS.md`、`tool/verify_ui_skills.py`、本报告、`pubspec.yaml` 与 `pubspec.lock`。现有页面、自定义组件、代理逻辑、核心、系统接线和发布流程均保持源文件原样。
