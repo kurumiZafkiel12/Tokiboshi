@@ -146,7 +146,62 @@ pub fn start_core(binary_path: String, config_path: String) -> Result<(), String
         }
         if ready.iter().all(|ready| *ready) { break; }
     }
+    if let Err(error) = apply_startup_selection(&config) {
+        let _ = core.stop();
+        *slot = Some(core);
+        return Err(error);
+    }
     *slot = Some(core);
+    Ok(())
+}
+
+/// sing-box restores its cached selector member before considering
+/// `default`. Reconcile the app's explicit selection before reporting
+/// readiness, including when restoring an older runtime config.
+fn apply_startup_selection(config: &serde_json::Value) -> Result<(), String> {
+    let selector = config["outbounds"].as_array().and_then(|outbounds| {
+        outbounds.iter().find(|outbound| {
+            outbound["type"] == "selector" && outbound["tag"] == "proxy"
+        })
+    });
+    let Some(target) = selector.and_then(|selector| selector["default"].as_str()) else {
+        return Ok(());
+    };
+    let api = &config["experimental"]["clash_api"];
+    let Some(address) = api["external_controller"].as_str().and_then(readiness_address) else {
+        return Ok(());
+    };
+    if !address.ip().is_loopback() {
+        return Ok(());
+    }
+    let agent = ureq::AgentBuilder::new()
+        .try_proxy_from_env(false)
+        .redirects(0)
+        .timeout(std::time::Duration::from_secs(2))
+        .build();
+    let endpoint = format!("http://{address}/proxies/proxy");
+    let request = |method: &str| {
+        let request = agent.request(method, &endpoint);
+        match api["secret"].as_str().filter(|secret| !secret.is_empty()) {
+            Some(secret) => request.set("Authorization", &format!("Bearer {secret}")),
+            None => request,
+        }
+    };
+    let selected = || -> Result<bool, String> {
+        let response = request("GET").call().map_err(|_| "无法读取内核当前出口".to_string())?;
+        let group: serde_json::Value = serde_json::from_reader(response.into_reader())
+            .map_err(|_| "内核返回的出口信息无法解析".to_string())?;
+        Ok(group["now"] == target)
+    };
+    if !selected()? {
+        request("PUT")
+            .set("Content-Type", "application/json")
+            .send_string(&serde_json::json!({"name": target}).to_string())
+            .map_err(|_| "内核未能应用已选择的出口".to_string())?;
+        if !selected()? {
+            return Err("内核出口与应用中的选择不一致".to_string());
+        }
+    }
     Ok(())
 }
 

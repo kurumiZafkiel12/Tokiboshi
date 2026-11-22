@@ -247,6 +247,41 @@ void main() {
 
   for (final reject in [false, true]) {
     testWidgets(
+        'changing standby port ${reject ? 'rolls back on restart failure' : 'applies to the listener'}',
+        (t) async {
+      t.view.physicalSize = const Size(1280, 800);
+      t.view.devicePixelRatio = 1;
+      addTearDown(t.view.reset);
+      final store = MemoryStore();
+      store.data.desktop =
+          const DesktopSettings(autoRun: true, autoCheckUpdates: false);
+      final bridge = RejectNextStartBridge();
+      final proxy = NoopSystemProxy();
+      await t.pumpWidget(TokiboshiApp(
+          bridge: bridge,
+          store: store,
+          systemProxy: proxy,
+          allocatePort: (p, r) async => p));
+      await t.pumpAndSettle();
+      await t.tap(find.text('设置').first);
+      await t.pumpAndSettle();
+      final port = find.widgetWithText(TextField, '本地端口（mixed，HTTP/SOCKS 共用）');
+      await t.ensureVisible(port);
+      await t.enterText(port, '17989');
+      final save = find.text('保存设置');
+      await t.ensureVisible(save);
+      bridge.reject = reject;
+      await t.tap(save);
+      await t.pumpAndSettle();
+      expect(store.data.mixedPort, reject ? 7890 : 17989);
+      expect(jsonDecode(store.runtimeConfig!)['inbounds'][0]['listen_port'],
+          store.data.mixedPort);
+      expect(bridge.running, true);
+      expect(proxy.calls, isEmpty);
+      await t.pumpWidget(const SizedBox());
+    });
+
+    testWidgets(
         'applying a manually imported running node ${reject ? 'restores the old core on failure' : 'switches the active core'}',
         (t) async {
       t.view.physicalSize = const Size(1280, 800);

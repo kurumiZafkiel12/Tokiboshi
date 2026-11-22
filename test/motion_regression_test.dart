@@ -3,12 +3,42 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:tokiboshi/ui/mechanical_clock.dart';
 import 'package:tokiboshi/ui/motion.dart';
 import 'package:tokiboshi/ui/preferences.dart';
 import 'package:tokiboshi/ui/traffic_chart.dart';
 import 'package:tokiboshi/ui/import_dialog.dart';
 
 void main() {
+  testWidgets('full clock motion pauses under reduced motion and window hide',
+      (t) async {
+    final dispatcher = t.platformDispatcher;
+    dispatcher.accessibilityFeaturesTestValue =
+        const FakeAccessibilityFeatures();
+    addTearDown(() => dispatcher.accessibilityFeaturesTestValue =
+        const FakeAccessibilityFeatures(disableAnimations: true));
+    final preferences = ValueNotifier(const UiPreferences(motion: 'full'));
+    addTearDown(preferences.dispose);
+    await t.pumpWidget(UiScope(
+        controller: preferences,
+        onChanged: (value) => preferences.value = value,
+        child: const MaterialApp(home: Center(child: MechanicalClock()))));
+    await t.pump(const Duration(milliseconds: 16));
+    expect(t.hasRunningAnimations, true);
+    t.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    await t.pump();
+    expect(t.hasRunningAnimations, false);
+    t.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await t.pump(const Duration(milliseconds: 16));
+    expect(t.hasRunningAnimations, true);
+    dispatcher.accessibilityFeaturesTestValue =
+        const FakeAccessibilityFeatures(disableAnimations: true);
+    await t.pumpAndSettle();
+    expect(t.hasRunningAnimations, false);
+    expect(find.text('钟面动效：整秒跳 · 齿轮静止'), findsOneWidget);
+    await t.pumpWidget(const SizedBox());
+  });
+
   testWidgets('hover remains visible above an opaque card and stops when idle',
       (t) async {
     await t.pumpWidget(const MaterialApp(

@@ -488,9 +488,10 @@ class _ShellPageState extends State<ShellPage>
 
   Future<void> _syncCoreStatus() async {
     if (_handoffInProgress || _coreBusy) return;
+    final applied = _appliedCore;
     try {
       final status = await widget.bridge.coreStatus();
-      if (!mounted) return;
+      if (!mounted || _coreBusy || _appliedCore != applied) return;
       var changed =
           status.restartCount != _restartCount || status.lastExit != _lastExit;
       if (_running && !status.running) {
@@ -532,7 +533,11 @@ class _ShellPageState extends State<ShellPage>
       if (_running && status.running) {
         try {
           final mode = await _clash.mode();
-          if (mounted && mode != null && mode != _clashMode) {
+          if (mounted &&
+              !_coreBusy &&
+              _appliedCore == applied &&
+              mode != null &&
+              mode != _clashMode) {
             setState(() => _clashMode = mode);
             _refreshTray();
           }
@@ -1061,8 +1066,8 @@ class _ShellPageState extends State<ShellPage>
     try {
       if (!await _persistImport(before)) return;
       await (_running
-          ? _restartCore(duringSelection: true)
-          : _startCore(duringSelection: true));
+          ? _restartCore(allowSettingsOperation: true)
+          : _startCore(allowSettingsOperation: true));
       if (_running && _runtimeNodes.contains(node)) {
         _setMessage('节点已应用并切换：${node.name}');
         unawaited(_refreshTray());
@@ -1075,21 +1080,9 @@ class _ShellPageState extends State<ShellPage>
         _proxyActive = wasActive;
       });
       final restoredPreference = await _persist();
-      if (!_running && applied != null) {
-        setState(() => _coreBusy = true);
-        final file = await widget.store.writeRuntimeConfig(applied.config);
-        await widget.bridge
-            .startCore(singBoxPath: applied.binary, configPath: file.path);
-        if (_systemProxyActive)
-          await widget.systemProxy.apply(true, _data.mixedPort);
-        setState(() {
-          _running = true;
-          _runtimeNodes = applied.nodes;
-          _runtimeHasRoutes = applied.hasRoutes;
-          _appliedCore = applied;
-        });
-      }
-      _setMessage('应用失败，已恢复原出口${restoredPreference ? '' : '（选择写入失败）'}'
+      final restoredCore = _running || await _restoreAppliedCore(applied);
+      _setMessage('应用失败，${restoredCore ? '已恢复原出口' : '原内核未能恢复'}'
+          '${restoredPreference ? '' : '（选择写入失败）'}'
           '${failure == null ? '' : '。$failure'}');
     } catch (error) {
       try {
@@ -1118,10 +1111,35 @@ class _ShellPageState extends State<ShellPage>
     }
   }
 
+  Future<bool> _restoreAppliedCore(
+      ({
+        String binary,
+        String config,
+        List<NodeInfo> nodes,
+        bool hasRoutes
+      })? applied) async {
+    if (applied == null) return false;
+    setState(() => _coreBusy = true);
+    final file = await widget.store.writeRuntimeConfig(applied.config);
+    await widget.bridge
+        .startCore(singBoxPath: applied.binary, configPath: file.path);
+    if (_systemProxyActive)
+      await widget.systemProxy.apply(true, _data.mixedPort);
+    setState(() {
+      _running = true;
+      _runtimeNodes = applied.nodes;
+      _runtimeHasRoutes = applied.hasRoutes;
+      _appliedCore = applied;
+    });
+    return true;
+  }
+
   Future<void> _selectNode(int index) async {
     if (_busy ||
         _profileChanging ||
         _settingsBusy ||
+        _proxySwitching ||
+        _quitting ||
         index < 0 ||
         index >= _data.nodes.length) return;
     final before = _data.copyWith();
@@ -1140,6 +1158,7 @@ class _ShellPageState extends State<ShellPage>
       return;
     }
     String? previousTag;
+    String? target;
     bool attempted = false;
     final live = _running && _runtimeHasRoutes;
     setState(() => _settingsBusy = true);
@@ -1148,6 +1167,9 @@ class _ShellPageState extends State<ShellPage>
       attempted = false;
       try {
         await _clash.select('proxy', previousTag);
+        if (await _clash.selectedOf('proxy') != previousTag) {
+          throw StateError('回滚后的内核出口不一致');
+        }
       } catch (_) {
         await widget.bridge.stopCore();
         await widget.systemProxy.apply(false, _data.mixedPort);
@@ -1160,7 +1182,7 @@ class _ShellPageState extends State<ShellPage>
       if (live) {
         previousTag = await _clash.selectedOf('proxy');
         if (previousTag == null) throw const FormatException('无法确认当前出口');
-        final target = _nodeTag(node);
+        target = _nodeTag(node);
         final group = (await _clash.proxies())['proxy'];
         if (group is Map &&
             group['all'] is List &&
@@ -1170,6 +1192,9 @@ class _ShellPageState extends State<ShellPage>
         }
         attempted = true;
         await _clash.select('proxy', target);
+        if (await _clash.selectedOf('proxy') != target) {
+          throw StateError('内核未切换到指定出口');
+        }
       }
       if (!mounted) return;
       setState(() => _data.selectedIndex = index);
@@ -1177,13 +1202,16 @@ class _ShellPageState extends State<ShellPage>
         await rollbackLive();
         return;
       }
-      if (live) {
+      if (target != null) {
+        _rememberRuntimeSelection(target);
         // sing-box 只把新连接路由到新 selector 成员；既有连接继续走
         // 旧出站（用户看到"还是上个节点"）。断开全部活动连接强制重连。
         try {
           await _clash.closeConnections();
         } catch (_) {
-          // 连接清理失败不阻断切换本身
+          _setMessage('新连接将使用 ${node.name}，部分现有连接可能继续使用原出口');
+          unawaited(_refreshTray());
+          return;
         }
       }
       _setMessage(live ? '已切换到 ${node.name}，旧连接已断开' : '已选择 ${node.name}');
@@ -1199,6 +1227,25 @@ class _ShellPageState extends State<ShellPage>
       _setMessage('切换失败，原出口保留：${redactDiagnostics('$e')}');
     } finally {
       if (mounted) setState(() => _settingsBusy = false);
+    }
+  }
+
+  void _rememberRuntimeSelection(String target) {
+    final applied = _appliedCore;
+    if (applied == null) return;
+    final config = jsonDecode(applied.config) as Map<String, dynamic>;
+    final outbounds = (config['outbounds'] as List?) ?? const [];
+    for (final outbound in outbounds.whereType<Map<String, dynamic>>()) {
+      if (outbound['type'] == 'selector' && outbound['tag'] == 'proxy') {
+        outbound['default'] = target;
+        _appliedCore = (
+          binary: applied.binary,
+          config: jsonEncode(config),
+          nodes: applied.nodes,
+          hasRoutes: applied.hasRoutes
+        );
+        return;
+      }
     }
   }
 
@@ -1565,11 +1612,11 @@ class _ShellPageState extends State<ShellPage>
     }
   }
 
-  Future<void> _startCore({bool duringSelection = false}) async {
+  Future<void> _startCore({bool allowSettingsOperation = false}) async {
     if (_running ||
         _busy ||
         _profileChanging ||
-        (_settingsBusy && !duringSelection) ||
+        (_settingsBusy && !allowSettingsOperation) ||
         _quitting) return;
     _cancelConnect = false;
     setState(() {
@@ -1757,8 +1804,8 @@ class _ShellPageState extends State<ShellPage>
     }
   }
 
-  Future<void> _restartCore({bool duringSelection = false}) async {
-    if (_busy || !_running) return;
+  Future<bool> _restartCore({bool allowSettingsOperation = false}) async {
+    if (_busy || !_running) return false;
     setState(() {
       _busy = true;
       _coreBusy = true;
@@ -1775,7 +1822,7 @@ class _ShellPageState extends State<ShellPage>
       }
     } catch (error) {
       _setMessage('重载内核失败：${redactDiagnostics('$error')}');
-      return;
+      return false;
     } finally {
       if (mounted)
         setState(() {
@@ -1783,7 +1830,7 @@ class _ShellPageState extends State<ShellPage>
           _coreBusy = false;
         });
     }
-    await _startCore(duringSelection: duringSelection);
+    await _startCore(allowSettingsOperation: allowSettingsOperation);
     if (!_running && _proxyActive) {
       if (_systemProxyActive) {
         try {
@@ -1792,6 +1839,7 @@ class _ShellPageState extends State<ShellPage>
       }
       if (mounted) setState(() => _proxyActive = false);
     }
+    return _running;
   }
 
   Future<void> _ensureFromSettings() async {
@@ -1816,13 +1864,48 @@ class _ShellPageState extends State<ShellPage>
 
   Future<void> _saveSettings(
       int port, int clashApiPort, String singBoxPath) async {
+    if (_busy || _settingsBusy || _proxySwitching || _proxyActive || _quitting)
+      return;
+    if (port == _data.mixedPort &&
+        clashApiPort == _data.clashApiPort &&
+        singBoxPath == _data.singBoxPath) {
+      return;
+    }
+    final before = _data.copyWith();
+    final applied = _appliedCore;
+    final wasRunning = _running;
     setState(() {
+      _settingsBusy = true;
       _data.mixedPort = port;
       _data.clashApiPort = clashApiPort;
       _data.singBoxPath = singBoxPath;
     });
-    final saved = await _persist();
-    _setMessage(saved ? '设置已保存' : '设置保存失败（见上方错误）');
+    try {
+      if (!await _persistImport(before)) return;
+      if (!wasRunning) {
+        _setMessage('设置已保存，下次启动内核时应用');
+        return;
+      }
+      final reloaded = await _restartCore(allowSettingsOperation: true);
+      if (reloaded) {
+        _setMessage('本地监听与内核设置已应用');
+        return;
+      }
+      final failure = _message;
+      setState(() => _data = before);
+      await _persist();
+      final restored = _running || await _restoreAppliedCore(applied);
+      _setMessage('设置应用失败，${restored ? '已恢复原监听与内核' : '原内核未能恢复'}'
+          '${failure == null ? '' : '。$failure'}');
+    } catch (e) {
+      _setMessage('设置应用失败：${redactDiagnostics('$e')}');
+    } finally {
+      if (mounted)
+        setState(() {
+          _settingsBusy = false;
+          _coreBusy = false;
+        });
+    }
   }
 
   Future<void> _setSystemProxy(bool value) async {
@@ -2467,8 +2550,8 @@ class _ShellPageState extends State<ShellPage>
                               ]))),
                   Expanded(
                       child: LayoutBuilder(builder: (context, constraints) {
-                    final collapsed =
-                        _navCollapsed || constraints.maxWidth < 1040;
+                    final forcedCompact = constraints.maxWidth < 1040;
+                    final collapsed = _navCollapsed || forcedCompact;
                     return Row(children: [
                       AnimatedContainer(
                           duration: UiScope.duration(context),
@@ -2477,151 +2560,163 @@ class _ShellPageState extends State<ShellPage>
                               color: scheme.surfaceContainerLow,
                               border: Border(
                                   right: BorderSide(color: scheme.outline))),
-                          child: Column(children: [
-                            Padding(
-                                padding: EdgeInsets.fromLTRB(
-                                    collapsed ? 14 : 18,
-                                    23,
-                                    collapsed ? 14 : 16,
-                                    24),
-                                child: Row(children: [
-                                  Container(
-                                      padding: const EdgeInsets.all(2),
-                                      decoration: BoxDecoration(
-                                          border: Border.all(
-                                              color: ui.character
-                                                  ? gold.withValues(alpha: .35)
-                                                  : scheme.outline),
-                                          borderRadius:
-                                              BorderRadius.circular(7)),
-                                      child: Image.asset('assets/icon.png',
-                                          width: 30, height: 30)),
-                                  if (!collapsed) ...[
-                                    const SizedBox(width: 8),
-                                    const Expanded(
-                                        child: Text('Tokiboshi',
-                                            style: TextStyle(
-                                                fontSize: 19,
-                                                fontWeight: FontWeight.w700,
-                                                letterSpacing: -.7)))
-                                  ]
-                                ])),
-                            if (!collapsed)
+                          child: LayoutBuilder(builder: (context, sidebar) {
+                            final compact = sidebar.maxWidth < 165;
+                            return Column(children: [
                               Padding(
-                                  padding:
-                                      const EdgeInsets.fromLTRB(22, 0, 0, 8),
-                                  child: Align(
-                                      alignment: Alignment.centerLeft,
-                                      child: Text('WORKSPACE',
-                                          style: mono.copyWith(
-                                              fontSize: 9,
-                                              color:
-                                                  scheme.onSurfaceVariant)))),
-                            Expanded(
-                                child: SingleChildScrollView(
-                                    child: Column(children: [
-                              _navItem(
-                                  0, Icons.grid_view_outlined, '连接', collapsed),
-                              _navItem(2, Icons.dns_outlined, '节点', collapsed,
-                                  count: _data.nodes
-                                      .where((n) => !n.isPolicy)
-                                      .length),
-                              _navItem(3, Icons.inventory_2_outlined, '订阅',
-                                  collapsed),
-                              _navItem(
-                                  6, Icons.route_outlined, '分流规则', collapsed),
-                              _navItem(7, Icons.monitor_heart_outlined, '请求',
-                                  collapsed),
-                              _navItem(8, Icons.construction_outlined, '工具箱',
-                                  collapsed),
-                              _navItem(4, Icons.terminal_outlined, '运行日志',
-                                  collapsed),
-                              _navItem(
-                                  1, Icons.web_asset_outlined, '面板', collapsed),
-                              _navItem(
-                                  5, Icons.settings_outlined, '设置', collapsed),
-                            ]))),
-                            if (!collapsed)
+                                  padding: EdgeInsets.fromLTRB(
+                                      compact ? 14 : 18,
+                                      23,
+                                      compact ? 14 : 16,
+                                      24),
+                                  child: Row(children: [
+                                    Container(
+                                        padding: const EdgeInsets.all(2),
+                                        decoration: BoxDecoration(
+                                            border: Border.all(
+                                                color: ui.character
+                                                    ? gold.withValues(
+                                                        alpha: .35)
+                                                    : scheme.outline),
+                                            borderRadius:
+                                                BorderRadius.circular(7)),
+                                        child: Image.asset('assets/icon.png',
+                                            width: 30, height: 30)),
+                                    if (!compact) ...[
+                                      const SizedBox(width: 8),
+                                      const Expanded(
+                                          child: Text('Tokiboshi',
+                                              style: TextStyle(
+                                                  fontSize: 19,
+                                                  fontWeight: FontWeight.w700,
+                                                  letterSpacing: -.7)))
+                                    ]
+                                  ])),
+                              if (!compact)
+                                Padding(
+                                    padding:
+                                        const EdgeInsets.fromLTRB(22, 0, 0, 8),
+                                    child: Align(
+                                        alignment: Alignment.centerLeft,
+                                        child: Text('WORKSPACE',
+                                            style: mono.copyWith(
+                                                fontSize: 9,
+                                                color:
+                                                    scheme.onSurfaceVariant)))),
+                              Expanded(
+                                  child: SingleChildScrollView(
+                                      child: Column(children: [
+                                _navItem(
+                                    0, Icons.grid_view_outlined, '连接', compact),
+                                _navItem(2, Icons.dns_outlined, '节点', compact,
+                                    count: _data.nodes
+                                        .where((n) => !n.isPolicy)
+                                        .length),
+                                _navItem(3, Icons.inventory_2_outlined, '订阅',
+                                    compact),
+                                _navItem(
+                                    6, Icons.route_outlined, '分流规则', compact),
+                                _navItem(7, Icons.monitor_heart_outlined, '请求',
+                                    compact),
+                                _navItem(8, Icons.construction_outlined, '工具箱',
+                                    compact),
+                                _navItem(4, Icons.terminal_outlined, '运行日志',
+                                    compact),
+                                _navItem(
+                                    1, Icons.web_asset_outlined, '面板', compact),
+                                _navItem(
+                                    5, Icons.settings_outlined, '设置', compact),
+                              ]))),
+                              if (!compact)
+                                Padding(
+                                    padding: const EdgeInsets.all(11),
+                                    child: Panel(
+                                        padding: const EdgeInsets.all(11),
+                                        child: Column(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
+                                            children: [
+                                              StatusDot('当前配置',
+                                                  color: scheme.primary),
+                                              const SizedBox(height: 8),
+                                              Text(_profileName,
+                                                  maxLines: 1,
+                                                  overflow:
+                                                      TextOverflow.ellipsis,
+                                                  style: const TextStyle(
+                                                      fontSize: 12)),
+                                              const SizedBox(height: 8),
+                                              Row(children: [
+                                                Text(
+                                                    _data.subscriptions.any(
+                                                            (s) =>
+                                                                s.profileJson !=
+                                                                null)
+                                                        ? '订阅规则'
+                                                        : '内置模板',
+                                                    style: const TextStyle(
+                                                        fontSize: 10)),
+                                                const Spacer(),
+                                                Text(_running ? '运行中' : '未运行',
+                                                    style: const TextStyle(
+                                                        fontSize: 10))
+                                              ])
+                                            ]))),
                               Padding(
-                                  padding: const EdgeInsets.all(11),
-                                  child: Panel(
-                                      padding: const EdgeInsets.all(11),
-                                      child: Column(
-                                          crossAxisAlignment:
-                                              CrossAxisAlignment.start,
-                                          children: [
-                                            StatusDot('当前配置',
-                                                color: scheme.primary),
-                                            const SizedBox(height: 8),
-                                            Text(_profileName,
-                                                maxLines: 1,
-                                                overflow: TextOverflow.ellipsis,
-                                                style: const TextStyle(
-                                                    fontSize: 12)),
-                                            const SizedBox(height: 8),
-                                            Row(children: [
-                                              Text(
-                                                  _data.subscriptions.any((s) =>
-                                                          s.profileJson != null)
-                                                      ? '订阅规则'
-                                                      : '内置模板',
-                                                  style: const TextStyle(
-                                                      fontSize: 10)),
-                                              const Spacer(),
-                                              Text(_running ? '运行中' : '未运行',
-                                                  style: const TextStyle(
-                                                      fontSize: 10))
-                                            ])
-                                          ]))),
-                            Padding(
-                                padding: EdgeInsets.fromLTRB(collapsed ? 4 : 10,
-                                    1, collapsed ? 4 : 10, 12),
-                                child: Row(
-                                    mainAxisAlignment: MainAxisAlignment.center,
-                                    children: [
-                                      if (!collapsed) ...[
-                                        Container(
-                                            width: 28,
-                                            height: 28,
-                                            alignment: Alignment.center,
-                                            decoration: BoxDecoration(
-                                                border: Border.all(
-                                                    color: scheme.primary
-                                                        .withValues(alpha: .3)),
-                                                borderRadius:
-                                                    BorderRadius.circular(5)),
-                                            child: const Text('K',
-                                                style:
-                                                    TextStyle(fontSize: 11))),
-                                        const SizedBox(width: 8),
-                                        Expanded(
-                                            child: Column(
-                                                crossAxisAlignment:
-                                                    CrossAxisAlignment.start,
-                                                children: [
-                                              const Text('本地空间',
+                                  padding: EdgeInsets.fromLTRB(compact ? 4 : 10,
+                                      1, compact ? 4 : 10, 12),
+                                  child: Row(
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.center,
+                                      children: [
+                                        if (!compact) ...[
+                                          Container(
+                                              width: 28,
+                                              height: 28,
+                                              alignment: Alignment.center,
+                                              decoration: BoxDecoration(
+                                                  border: Border.all(
+                                                      color: scheme.primary
+                                                          .withValues(
+                                                              alpha: .3)),
+                                                  borderRadius:
+                                                      BorderRadius.circular(5)),
+                                              child: const Text('K',
                                                   style:
-                                                      TextStyle(fontSize: 11)),
-                                              Text('v$kAppVersion',
-                                                  style: mono.copyWith(
-                                                      fontSize: 9,
-                                                      color: scheme
-                                                          .onSurfaceVariant))
-                                            ]))
-                                      ],
-                                      IconButton(
-                                          tooltip: collapsed ? '展开侧栏' : '收起侧栏',
-                                          onPressed: () => setState(() =>
-                                              _navCollapsed = !_navCollapsed),
-                                          icon: Icon(
-                                              collapsed
-                                                  ? Icons
-                                                      .keyboard_double_arrow_right
-                                                  : Icons
-                                                      .space_dashboard_outlined,
-                                              size: 17))
-                                    ])),
-                          ])),
+                                                      TextStyle(fontSize: 11))),
+                                          const SizedBox(width: 8),
+                                          Expanded(
+                                              child: Column(
+                                                  crossAxisAlignment:
+                                                      CrossAxisAlignment.start,
+                                                  children: [
+                                                const Text('本地空间',
+                                                    style: TextStyle(
+                                                        fontSize: 11)),
+                                                Text('v$kAppVersion',
+                                                    style: mono.copyWith(
+                                                        fontSize: 9,
+                                                        color: scheme
+                                                            .onSurfaceVariant))
+                                              ]))
+                                        ],
+                                        if (!forcedCompact)
+                                          IconButton(
+                                              tooltip:
+                                                  collapsed ? '展开侧栏' : '收起侧栏',
+                                              onPressed: () => setState(() =>
+                                                  _navCollapsed =
+                                                      !_navCollapsed),
+                                              icon: Icon(
+                                                  collapsed
+                                                      ? Icons
+                                                          .keyboard_double_arrow_right
+                                                      : Icons
+                                                          .space_dashboard_outlined,
+                                                  size: 17))
+                                      ])),
+                            ]);
+                          })),
                       Expanded(
                           child: Column(
                               crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -2649,7 +2744,13 @@ class _ShellPageState extends State<ShellPage>
                                                 label: const Text(
                                                     '查找节点    Ctrl K',
                                                     style: TextStyle(
-                                                        fontSize: 10))),
+                                                        fontSize: 10)))
+                                          else
+                                            IconButton(
+                                                tooltip: '查找节点 (Ctrl+K)',
+                                                onPressed: _showNodePicker,
+                                                icon: const Icon(Icons.search,
+                                                    size: 17)),
                                           const SizedBox(width: 10),
                                           if (constraints.maxWidth > 1100)
                                             OutlinedButton.icon(

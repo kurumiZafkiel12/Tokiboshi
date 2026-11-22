@@ -44,14 +44,16 @@ void main() {
   Future<MemoryStore> mount(WidgetTester t,
       {Size size = const Size(1440, 900),
       bool light = false,
+      String motion = 'reduced',
+      double dpr = 1,
       bool twoProfiles = false,
       MemoryStore? withStore}) async {
-    t.view.physicalSize = size;
-    t.view.devicePixelRatio = 1;
+    t.view.physicalSize = size * dpr;
+    t.view.devicePixelRatio = dpr;
     addTearDown(t.view.reset);
     final store = withStore ?? MemoryStore();
     store.data.autoConnect = false;
-    store.data.ui = UiPreferences(light: light, motion: 'reduced');
+    store.data.ui = UiPreferences(light: light, motion: motion);
     store.data.nodes = const [
       NodeInfo(
           name: '东京 · Sakura 01',
@@ -248,6 +250,51 @@ void main() {
     expect(find.text('停止代理'), findsOneWidget);
     expect(t.takeException(), isNull);
     await screenshot(t, 'dashboard-800-running-light-125percent');
+    await t.pumpWidget(const SizedBox());
+  });
+  testWidgets('sidebar stays within its animated width while expanding',
+      (t) async {
+    t.platformDispatcher.accessibilityFeaturesTestValue =
+        const FakeAccessibilityFeatures();
+    addTearDown(() => t.platformDispatcher.accessibilityFeaturesTestValue =
+        const FakeAccessibilityFeatures(disableAnimations: true));
+    await mount(t, motion: 'standard');
+    await t.tap(find.byTooltip('收起侧栏'));
+    await t.pumpAndSettle();
+    await t.tap(find.byTooltip('展开侧栏'));
+    await t.pump();
+    expect(t.takeException(), isNull);
+    await t.pumpAndSettle();
+    t.view.physicalSize = const Size(800, 600);
+    await t.pump();
+    await t.pump(const Duration(milliseconds: 80));
+    t.view.physicalSize = const Size(1440, 900);
+    await t.pump();
+    expect(t.takeException(), isNull);
+    await t.pumpAndSettle();
+    expect(find.text('Tokiboshi'), findsOneWidget);
+    await t.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('compact workbench navigation at high DPI and 150% text',
+      (t) async {
+    t.platformDispatcher.textScaleFactorTestValue = 1.5;
+    addTearDown(t.platformDispatcher.clearTextScaleFactorTestValue);
+    await mount(t, size: const Size(800, 600), dpr: 1.5);
+    expect(t.takeException(), isNull, reason: '连接');
+    await t.tap(find.byTooltip('查找节点 (Ctrl+K)'));
+    await t.pumpAndSettle();
+    expect(find.byType(NodePicker), findsOneWidget);
+    Navigator.of(t.element(find.byType(NodePicker))).pop();
+    await t.pumpAndSettle();
+    for (final name in ['节点', '订阅', '分流规则', '请求', '工具箱', '运行日志', '面板', '设置']) {
+      final route = find.byTooltip(name).first;
+      await t.ensureVisible(route);
+      await t.tap(route);
+      await t.pumpAndSettle();
+      expect(t.takeException(), isNull, reason: name);
+      await screenshot(t, 'dpi-150-$name');
+    }
     await t.pumpWidget(const SizedBox());
   });
   testWidgets(

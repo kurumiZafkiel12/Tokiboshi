@@ -254,10 +254,9 @@ void main() {
     expect(store.data.client.rules.single.target, 'reject');
     await t.pumpWidget(const SizedBox());
   });
-  for (final diskFailure in [false, true]) {
-    testWidgets(
-        'live selection rolls back on ${diskFailure ? 'disk' : 'controller'} failure',
-        (t) async {
+  for (final failure in ['controller', 'disk', 'unapplied acknowledgement']) {
+    final diskFailure = failure == 'disk';
+    testWidgets('live selection rolls back on $failure failure', (t) async {
       desktop(t);
       final oldOverrides = HttpOverrides.current;
       HttpOverrides.global = _NativeHttp();
@@ -280,11 +279,13 @@ void main() {
               .join()) as Map;
           final name = data['name'] as String;
           puts.add(name);
-          if (!diskFailure && name == 'new-node') {
+          if (failure == 'controller' && name == 'new-node') {
             request.response.statusCode = 500;
             request.response.write('{}');
           } else {
-            active = name;
+            if (failure != 'unapplied acknowledgement' || name != 'new-node') {
+              active = name;
+            }
             request.response.statusCode = 204;
           }
         } else {

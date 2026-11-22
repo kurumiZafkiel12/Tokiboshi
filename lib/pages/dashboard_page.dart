@@ -271,8 +271,8 @@ class _DashboardPageState extends State<DashboardPage> {
     }
     final ranked = totals.entries.toList()
       ..sort((a, b) => b.value.compareTo(a.value));
-    return SizedBox(
-        height: 168,
+    return ConstrainedBox(
+        constraints: const BoxConstraints(minHeight: 168),
         child: Panel(
             child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -653,8 +653,8 @@ class _DashboardPageState extends State<DashboardPage> {
             ])));
   }
 
-  Widget _runtime(BuildContext context) => SizedBox(
-      height: 200,
+  Widget _runtime(BuildContext context) => ConstrainedBox(
+      constraints: const BoxConstraints(minHeight: 200),
       child: Panel(
           child: Column(children: [
         _title('运行详情', _link('日志 ↗', widget.onLogs)),

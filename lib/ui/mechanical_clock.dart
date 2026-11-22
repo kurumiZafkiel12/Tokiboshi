@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io' show Platform;
 import 'dart:math' as math;
 import 'dart:ui' show FontFeature;
 import 'package:flutter/material.dart';
@@ -36,12 +35,15 @@ class _MechanicalClockState extends State<MechanicalClock>
   Ticker? _ticker;
   Timer? _secondTimer;
   bool _visible = true;
-  int _tick = 0;
+  bool _movementOpen = false;
+  final _frames = ValueNotifier(0);
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    final lifecycle = WidgetsBinding.instance.lifecycleState;
+    _visible = lifecycle == null || lifecycle == AppLifecycleState.resumed;
     // 首次启动放到 didChangeDependencies：_tier() 读取 UiScope / MediaQuery
     // 等 inherited widget，不能在 initState 里 dependOnInheritedElement。
   }
@@ -51,35 +53,39 @@ class _MechanicalClockState extends State<MechanicalClock>
     // 最小化 / 失焦时停绘；恢复时对齐本机时间。
     _visible = state == AppLifecycleState.resumed;
     if (_visible) {
-      _start();
+      setState(_start);
     } else {
       _stop();
     }
   }
 
   String _tier(BuildContext context) {
-    final reduce = MediaQuery.maybeReduceMotionOf(context) ?? false;
+    final reduce = UiScope.duration(context) == Duration.zero ||
+        (MediaQuery.maybeReduceMotionOf(context) ?? false);
     if (reduce) return 'reduced';
     return UiScope.of(context).motion;
   }
 
   void _start() {
     _stop();
-    if ((!_open && !widget.dashboard) || !_visible || !TickerMode.of(context))
+    if ((!_open && !widget.dashboard) ||
+        !_visible ||
+        _movementOpen ||
+        !TickerMode.of(context)) {
       return;
-    // 滑动秒针的连续 ticker 会让 widget 测试的 pumpAndSettle 永不收敛；
-    // 测试环境（FLUTTER_TEST）自动降级为整秒跳，视觉行为等价。
-    final isTest = Platform.environment.containsKey('FLUTTER_TEST');
-    if (_tier(context) == 'full' && !isTest && !widget.dashboard) {
-      _ticker = createTicker((_) {
-        if (mounted) setState(() => _tick++);
-      })
-        ..start();
-    } else {
-      _secondTimer = Timer.periodic(const Duration(seconds: 1), (_) {
-        if (mounted) setState(() => _tick++);
-      });
     }
+    if (_tier(context) == 'full' && !widget.dashboard) {
+      _ticker = createTicker((_) => _frames.value++)..start();
+    }
+    _nextSecond();
+  }
+
+  void _nextSecond() {
+    _secondTimer =
+        Timer(Duration(milliseconds: 1000 - DateTime.now().millisecond), () {
+      setState(() {});
+      _nextSecond();
+    });
   }
 
   void _stop() {
@@ -106,17 +112,16 @@ class _MechanicalClockState extends State<MechanicalClock>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _stop();
+    _frames.dispose();
     super.dispose();
   }
 
-  String _textTime() {
-    final now = DateTime.now();
+  String _textTime(DateTime now) {
     String two(int v) => v.toString().padLeft(2, '0');
     return '${two(now.hour)}:${two(now.minute)}:${two(now.second)}';
   }
 
-  String _textDate() {
-    final now = DateTime.now();
+  String _textDate(DateTime now) {
     const wd = ['一', '二', '三', '四', '五', '六', '日'];
     return '${now.month}月${now.day}日 星期${wd[now.weekday - 1]}';
   }
@@ -131,21 +136,22 @@ class _MechanicalClockState extends State<MechanicalClock>
           RepaintBoundary(
             child: CustomPaint(
                 painter: _ClockPainter(
-                    tier: tier,
-                    now: now,
-                    tick: _tick,
-                    compact: compact,
-                    staticLayer: true)),
+                    tier: tier, now: now, compact: compact, staticLayer: true)),
           ),
           RepaintBoundary(
             child: CustomPaint(
                 painter: _ClockPainter(
-                    tier: tier, now: now, tick: _tick, compact: compact)),
+                    tier: tier,
+                    now: now,
+                    compact: compact,
+                    frames: tier == 'full' ? _frames : null)),
           ),
         ])),
       );
 
   Future<void> _showMovement() async {
+    if (_movementOpen) return;
+    _movementOpen = true;
     _stop();
     try {
       await showDialog<void>(
@@ -177,7 +183,8 @@ class _MechanicalClockState extends State<MechanicalClock>
         ),
       );
     } finally {
-      if (mounted) _start();
+      _movementOpen = false;
+      if (mounted) setState(_start);
     }
   }
 
@@ -214,14 +221,14 @@ class _MechanicalClockState extends State<MechanicalClock>
                           mainAxisAlignment: MainAxisAlignment.center,
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(_textTime(),
+                            Text(_textTime(now),
                                 style: Theme.of(context)
                                     .textTheme
                                     .titleLarge
                                     ?.copyWith(fontFeatures: const [
                                   FontFeature.tabularFigures()
                                 ])),
-                            Text(_textDate(),
+                            Text(_textDate(now),
                                 maxLines: 2,
                                 overflow: TextOverflow.ellipsis,
                                 style: Theme.of(context).textTheme.bodySmall),
@@ -267,14 +274,14 @@ class _MechanicalClockState extends State<MechanicalClock>
         if (_open) ...[
           Center(child: _dial(widget.size, tier, now)),
           const SizedBox(height: 6),
-          Text(_textTime(),
+          Text(_textTime(now),
               style: const TextStyle(
                   fontSize: 20,
                   fontWeight: FontWeight.w700,
                   color: Color(0xFFF8EFF5),
                   fontFeatures: [FontFeature.tabularFigures()])),
           if (!widget.dashboard)
-            Text(_textDate(),
+            Text(_textDate(now),
                 style:
                     const TextStyle(fontSize: 10.5, color: Color(0xFFBDB0BD))),
         ] else ...[
@@ -282,13 +289,13 @@ class _MechanicalClockState extends State<MechanicalClock>
             _dial(64, tier, now, compact: true),
             const SizedBox(width: 10),
             Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(_textTime(),
+              Text(_textTime(now),
                   style: const TextStyle(
                       fontSize: 16,
                       fontWeight: FontWeight.w700,
                       color: Color(0xFFF8EFF5),
                       fontFeatures: [FontFeature.tabularFigures()])),
-              Text(_textDate(),
+              Text(_textDate(now),
                   style:
                       const TextStyle(fontSize: 10, color: Color(0xFFBDB0BD))),
             ]),
@@ -312,12 +319,13 @@ class _ClockPainter extends CustomPainter {
   _ClockPainter(
       {required this.tier,
       required this.now,
-      required this.tick,
       required this.compact,
-      this.staticLayer = false});
+      this.frames,
+      this.staticLayer = false})
+      : super(repaint: frames);
   final String tier;
   final DateTime now;
-  final int tick;
+  final Listenable? frames;
   final bool compact;
   final bool staticLayer;
 
@@ -329,6 +337,7 @@ class _ClockPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final c = Offset(size.width / 2, size.height / 2);
     final R = math.min(size.width, size.height) / 2 - 2;
+    final now = frames == null ? this.now : DateTime.now();
     final t = now.millisecond / 1000.0;
     final sec = now.second + (tier == 'full' ? t : 0.0);
     final minute = now.minute + sec / 60;
@@ -593,5 +602,5 @@ class _ClockPainter extends CustomPainter {
   bool shouldRepaint(covariant _ClockPainter old) =>
       old.staticLayer != staticLayer ||
       old.compact != compact ||
-      (!staticLayer && (old.tick != tick || old.tier != tier));
+      (!staticLayer && (old.now != now || old.tier != tier));
 }

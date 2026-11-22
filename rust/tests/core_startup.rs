@@ -121,6 +121,28 @@ fn occupied_port_is_reported_and_real_core_forwards_after_reconfiguration() {
     entry_thread.join().unwrap();
     exit_thread.join().unwrap();
     drop(chain_guard);
+    // A previous selector choice in cache.db must never win over the
+    // endpoint explicitly selected in the new application config.
+    let agent = ureq::AgentBuilder::new().try_proxy_from_env(false)
+        .timeout(Duration::from_secs(3)).build();
+    let endpoint = format!("http://127.0.0.1:{}/proxies/proxy", settings.clash_api_port);
+    config["outbounds"][0]["outbounds"] = serde_json::json!(["proxy-2", "exit"]);
+    config["experimental"]["clash_api"]["secret"] = serde_json::json!("fixture-selector-secret");
+    std::fs::write(&path, config.to_string()).unwrap();
+    let binary = std::env::var("SING_BOX").unwrap();
+    core::start_core(binary.clone(), path.to_string_lossy().into()).unwrap();
+    let selection_guard = Stop;
+    agent.put(&endpoint).set("Authorization", "Bearer fixture-selector-secret")
+        .set("Content-Type", "application/json")
+        .send_string(r#"{"name":"proxy-2"}"#).unwrap();
+    drop(selection_guard);
+    core::start_core(binary, path.to_string_lossy().into()).unwrap();
+    let selection_guard = Stop;
+    let actual: serde_json::Value = serde_json::from_reader(
+        agent.get(&endpoint).set("Authorization", "Bearer fixture-selector-secret")
+            .call().unwrap().into_reader()).unwrap();
+    assert_eq!(actual["now"], "exit");
+    drop(selection_guard);
     // Windows can briefly hold files of a freshly exited process
     // (e.g. Defender scanning cache.db), making remove_dir_all fail
     // with DirectoryNotEmpty. Cleanup is best-effort for the runner.

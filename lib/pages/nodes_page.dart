@@ -276,6 +276,11 @@ class _NodesPageState extends State<NodesPage> {
   }
 
   Widget _grouped(List<int> indices) {
+    final scaler = MediaQuery.textScalerOf(context);
+    final rowHeight = (UiScope.of(context).compact ? 52.0 : 68.0) +
+        (scaler.scale(36) - 36).clamp(0.0, double.infinity);
+    final cardHeight =
+        124.0 + (scaler.scale(54) - 54).clamp(0.0, double.infinity);
     final groups = <String, List<int>>{};
     final labels = <String, String>{};
     for (final i in indices) {
@@ -329,20 +334,18 @@ class _NodesPageState extends State<NodesPage> {
             SliverPadding(
                 padding: const EdgeInsets.symmetric(vertical: 10),
                 sliver: SliverGrid.builder(
-                    gridDelegate:
-                        const SliverGridDelegateWithMaxCrossAxisExtent(
-                            maxCrossAxisExtent: 320,
-                            mainAxisExtent: 124,
-                            crossAxisSpacing: 10,
-                            mainAxisSpacing: 10),
+                    gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
+                        maxCrossAxisExtent: 320,
+                        mainAxisExtent: cardHeight,
+                        crossAxisSpacing: 10,
+                        mainAxisSpacing: 10),
                     itemCount: groups[key]!.length,
                     itemBuilder: (_, position) => MotionHover(
                         lift: true, child: _card(groups[key]![position]))))
           else if (groups[key]!.length <= 80)
             SliverToBoxAdapter(
                 child: SizedBox(
-                    height: groups[key]!.length *
-                        (UiScope.of(context).compact ? 52.0 : 68.0),
+                    height: groups[key]!.length * rowHeight,
                     child: Stack(children: [
                       for (var position = 0;
                           position < groups[key]!.length;
@@ -351,11 +354,10 @@ class _NodesPageState extends State<NodesPage> {
                             key: ValueKey('node-${groups[key]![position]}'),
                             duration: UiScope.duration(context, 280),
                             curve: Curves.easeOutCubic,
-                            top: position *
-                                (UiScope.of(context).compact ? 52.0 : 68.0),
+                            top: position * rowHeight,
                             left: 0,
                             right: 0,
-                            height: UiScope.of(context).compact ? 52 : 68,
+                            height: rowHeight,
                             child: MotionHover(
                                 child: _row(groups[key]![position])))
                     ])))

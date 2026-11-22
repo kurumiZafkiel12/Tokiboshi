@@ -104,115 +104,132 @@ class _SubscriptionsPageState extends State<SubscriptionsPage> {
         Icons.update
       )
     ];
-    return Padding(
-        padding: const EdgeInsets.all(22),
-        child:
-            Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-          PageHeading('订阅管理', '每条订阅独立保存节点与更新计划。',
-              eyebrow: 'SOURCES / PROFILES',
-              actions: [
-                OutlinedButton.icon(
-                    onPressed: locked || widget.subscriptions.isEmpty
-                        ? null
-                        : widget.onUpdateAll,
-                    icon: const Icon(Icons.sync, size: 16),
-                    label: const Text('更新全部')),
-                ImportMenuButton(
-                    label: '添加订阅',
-                    enabled: !widget.busy,
-                    onSelected: (method) => widget.onImportMethod == null
-                        ? widget.onAdd()
-                        : widget.onImportMethod!(method))
-              ]),
-          LayoutBuilder(
-              builder: (c, size) =>
-                  Wrap(spacing: 12, runSpacing: 12, children: [
-                    for (final item in counts)
-                      SizedBox(
-                          width: (size.maxWidth -
-                                  12 * (size.maxWidth < 560 ? 1 : 3)) /
-                              (size.maxWidth < 560 ? 2 : 4),
-                          child: MotionEntrance(
-                              order: counts.indexOf(item),
-                              child: Panel(
-                                  padding: const EdgeInsets.all(16),
-                                  child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Row(children: [
-                                          Expanded(
-                                              child: Text(item.$1,
-                                                  style: Theme.of(c)
-                                                      .textTheme
-                                                      .bodySmall)),
-                                          Icon(item.$4,
-                                              size: 17,
-                                              color: Theme.of(c)
-                                                  .colorScheme
-                                                  .primary)
-                                        ]),
-                                        const SizedBox(height: 10),
-                                        Text(item.$2,
-                                            style: const TextStyle(
-                                                fontSize: 26,
-                                                fontWeight: FontWeight.w600)),
-                                        const SizedBox(height: 5),
-                                        Text(item.$3,
-                                            maxLines: 1,
-                                            overflow: TextOverflow.ellipsis,
-                                            style:
-                                                Theme.of(c).textTheme.bodySmall)
-                                      ]))))
-                  ])),
-          const SizedBox(height: 16),
-          Row(children: [
-            Expanded(
-                child: TextField(
-                    decoration: const InputDecoration(
-                        prefixIcon: Icon(Icons.search, size: 18),
-                        hintText: '搜索订阅名称'),
-                    onChanged: (v) =>
-                        setState(() => query = v.trim().toLowerCase()))),
-            const SizedBox(width: 12),
-            for (final entry in {
-              'all': '全部',
-              'remote': '远程',
-              'local': '本地',
-              'failed': '更新失败'
-            }.entries)
-              Padding(
-                  padding: const EdgeInsets.only(left: 6),
-                  child: ChoiceChip(
-                      label: Text(entry.value),
-                      selected: filter == entry.key,
-                      onSelected: (_) => setState(() => filter = entry.key)))
-          ]),
-          const SizedBox(height: 16),
-          Expanded(
-              child: widget.subscriptions.isEmpty
-                  ? EmptyView('还没有订阅', '添加一个订阅源，集中管理节点与规则。',
-                      icon: Icons.inventory_2_outlined,
-                      action: FilledButton(
-                          onPressed: widget.busy ? null : widget.onAdd,
-                          child: const Text('添加第一个订阅')))
-                  : sources.isEmpty
-                      ? const EmptyView('没有匹配的来源', '请调整名称或更新状态筛选。')
-                      : ListView.separated(
-                          itemCount: sources.length,
-                          separatorBuilder: (_, __) =>
-                              const SizedBox(height: 12),
-                          itemBuilder: (c, i) => MotionEntrance(
-                              order: i,
-                              child: MotionHover(
-                                  child: sourceCard(c, sources[i]))))),
-          const SizedBox(height: 12),
-          Text(
-              widget.running
-                  ? '运行中可添加来源。新节点下次启动或应用配置后进入内核，现有连接继续运行。'
-                  : '更新失败保留上次有效数据。订阅地址和凭据默认隐藏。',
-              style: Theme.of(context).textTheme.bodySmall)
-        ]));
+    return CustomScrollView(
+      key: const PageStorageKey('subscription-list'),
+      slivers: [
+        SliverPadding(
+          padding: const EdgeInsets.fromLTRB(22, 22, 22, 16),
+          sliver: SliverToBoxAdapter(
+            child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  PageHeading('订阅管理', '每条订阅独立保存节点与更新计划。',
+                      eyebrow: 'SOURCES / PROFILES',
+                      actions: [
+                        OutlinedButton.icon(
+                            onPressed: locked || widget.subscriptions.isEmpty
+                                ? null
+                                : widget.onUpdateAll,
+                            icon: const Icon(Icons.sync, size: 16),
+                            label: const Text('更新全部')),
+                        ImportMenuButton(
+                            label: '添加订阅',
+                            enabled: !widget.busy,
+                            onSelected: (method) =>
+                                widget.onImportMethod == null
+                                    ? widget.onAdd()
+                                    : widget.onImportMethod!(method))
+                      ]),
+                  LayoutBuilder(
+                      builder: (c, size) =>
+                          Wrap(spacing: 12, runSpacing: 12, children: [
+                            for (final item in counts)
+                              SizedBox(
+                                  width: (size.maxWidth -
+                                          12 * (size.maxWidth < 560 ? 1 : 3)) /
+                                      (size.maxWidth < 560 ? 2 : 4),
+                                  child: MotionEntrance(
+                                      order: counts.indexOf(item),
+                                      child: Panel(
+                                          padding: const EdgeInsets.all(16),
+                                          child: Column(
+                                              crossAxisAlignment:
+                                                  CrossAxisAlignment.start,
+                                              children: [
+                                                Row(children: [
+                                                  Expanded(
+                                                      child: Text(item.$1,
+                                                          style: Theme.of(c)
+                                                              .textTheme
+                                                              .bodySmall)),
+                                                  Icon(item.$4,
+                                                      size: 17,
+                                                      color: Theme.of(c)
+                                                          .colorScheme
+                                                          .primary)
+                                                ]),
+                                                const SizedBox(height: 10),
+                                                Text(item.$2,
+                                                    style: const TextStyle(
+                                                        fontSize: 26,
+                                                        fontWeight:
+                                                            FontWeight.w600)),
+                                                const SizedBox(height: 5),
+                                                Text(item.$3,
+                                                    maxLines: 1,
+                                                    overflow:
+                                                        TextOverflow.ellipsis,
+                                                    style: Theme.of(c)
+                                                        .textTheme
+                                                        .bodySmall)
+                                              ]))))
+                          ])),
+                  const SizedBox(height: 16),
+                  Row(children: [
+                    Expanded(
+                        child: TextField(
+                            decoration: const InputDecoration(
+                                prefixIcon: Icon(Icons.search, size: 18),
+                                hintText: '搜索订阅名称'),
+                            onChanged: (v) => setState(
+                                () => query = v.trim().toLowerCase()))),
+                    const SizedBox(width: 12),
+                    for (final entry in {
+                      'all': '全部',
+                      'remote': '远程',
+                      'local': '本地',
+                      'failed': '更新失败'
+                    }.entries)
+                      Padding(
+                          padding: const EdgeInsets.only(left: 6),
+                          child: ChoiceChip(
+                              label: Text(entry.value),
+                              selected: filter == entry.key,
+                              onSelected: (_) =>
+                                  setState(() => filter = entry.key)))
+                  ]),
+                ]),
+          ),
+        ),
+        SliverPadding(
+          padding: const EdgeInsets.symmetric(horizontal: 22),
+          sliver: sources.isEmpty
+              ? SliverToBoxAdapter(
+                  child: widget.subscriptions.isEmpty
+                      ? EmptyView('还没有订阅', '添加一个订阅源，集中管理节点与规则。',
+                          icon: Icons.inventory_2_outlined,
+                          action: FilledButton(
+                              onPressed: widget.busy ? null : widget.onAdd,
+                              child: const Text('添加第一个订阅')))
+                      : const EmptyView('没有匹配的来源', '请调整名称或更新状态筛选。'))
+              : SliverList.separated(
+                  itemCount: sources.length,
+                  separatorBuilder: (_, __) => const SizedBox(height: 12),
+                  itemBuilder: (c, i) => MotionEntrance(
+                      order: i,
+                      child: MotionHover(child: sourceCard(c, sources[i])))),
+        ),
+        SliverPadding(
+          padding: const EdgeInsets.fromLTRB(22, 12, 22, 22),
+          sliver: SliverToBoxAdapter(
+              child: Text(
+                  widget.running
+                      ? '运行中可添加来源。新节点下次启动或应用配置后进入内核，现有连接继续运行。'
+                      : '更新失败保留上次有效数据。订阅地址和凭据默认隐藏。',
+                  style: Theme.of(context).textTheme.bodySmall)),
+        ),
+      ],
+    );
   }
 
   Widget sourceCard(BuildContext context, Subscription sub) {
