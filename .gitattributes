@@ -1,0 +1,3 @@
+# Preserve upstream file bytes for the skill integrity check on each platform.
+.agents/skills/** -text
+.agents/skill-licenses/** -text
