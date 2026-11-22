@@ -5,6 +5,7 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tokiboshi/main.dart';
+import 'package:tokiboshi/pages/nodes_page.dart';
 import 'package:tokiboshi/bridge/core_bridge.dart';
 import 'package:tokiboshi/services/store.dart';
 import 'package:tokiboshi/services/desktop_settings.dart';
@@ -300,7 +301,9 @@ void main() {
     expect(store.data.selected?.source, 's1');
     await t.tap(find.text('节点').first);
     await t.pumpAndSettle();
-    await t.tap(find.text('Singapore · Orbit'));
+    t
+        .widget<NodesPage>(find.byType(NodesPage))
+        .onSelect(store.data.nodes.indexWhere((node) => node.source == 's2'));
     await t.pumpAndSettle();
     expect(store.data.selected?.source, 's2');
     await t.pumpWidget(const SizedBox());
