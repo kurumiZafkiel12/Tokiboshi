@@ -14,6 +14,7 @@ class DashboardPage extends StatefulWidget {
   const DashboardPage(
       {super.key,
       required this.running,
+      this.proxyActive,
       required this.busy,
       required this.selected,
       required this.nodeCount,
@@ -46,6 +47,7 @@ class DashboardPage extends StatefulWidget {
       this.activeProfileId,
       this.onActivateProfile,
       this.profileBusy = false});
+  final bool? proxyActive;
   final bool running, busy, systemProxy, selectedMeasured, tun;
   final NodeInfo? selected;
   final int nodeCount, subscriptionCount, mixedPort, restartCount;
@@ -184,7 +186,7 @@ class _DashboardPageState extends State<DashboardPage> {
     final title = widget.busy
         ? '正在准备代理'
         : widget.running
-            ? '内核已运行'
+            ? ((widget.proxyActive ?? widget.running) ? '代理接管中' : '内核待命')
             : error
                 ? '连接失败'
                 : '代理已停止';
@@ -197,7 +199,7 @@ class _DashboardPageState extends State<DashboardPage> {
                     ? 'TUN 网卡已启用'
                     : widget.systemProxy
                         ? '系统代理已启用'
-                        : '按应用代理设置接入')
+                        : '开启代理前，系统流量照常连接')
                 : widget.selected == null
                     ? '导入订阅后选择出口'
                     : '当前出口已保留';
@@ -230,7 +232,17 @@ class _DashboardPageState extends State<DashboardPage> {
               final status = Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    StatusDot('代理状态', color: color),
+                    Wrap(spacing: 10, runSpacing: 5, children: [
+                      StatusDot(widget.running ? '内核已就绪' : '内核未就绪',
+                          color: color),
+                      StatusDot(
+                          (widget.proxyActive ?? widget.running)
+                              ? '代理已开启'
+                              : '代理已关闭',
+                          color: (widget.proxyActive ?? widget.running)
+                              ? good
+                              : colors.onSurfaceVariant),
+                    ]),
                     const SizedBox(height: 4),
                     Text(title,
                         style: Theme.of(context).textTheme.headlineSmall),
@@ -247,7 +259,7 @@ class _DashboardPageState extends State<DashboardPage> {
                                 : widget.onToggle,
                         child: Text(widget.busy
                             ? '取消连接'
-                            : widget.running
+                            : (widget.proxyActive ?? widget.running)
                                 ? '停止代理'
                                 : '启动代理')),
                   ]);

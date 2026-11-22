@@ -161,6 +161,10 @@ jobs:
         run: |
           Copy-Item "$env:SING_BOX_DIR\*" 'build/windows/x64/runner/Release/' -Recurse -Force
 
+      - name: Verify the elevated Windows executable starts the core in standby
+        shell: pwsh
+        run: tool/v013/windows_standby.ps1 build/windows/x64/runner/Release
+
       - name: Record owned installation files
         shell: pwsh
         run: |
@@ -181,6 +185,19 @@ jobs:
           if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress }
           & $iscc "/DAppVersion=$ver" installer\tokiboshi.iss
           if ($LASTEXITCODE -ne 0) { throw "ISCC failed with exit code $LASTEXITCODE" }
+
+      - name: Verify unattended upgrade from the published Windows installer
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $assets = Join-Path $env:RUNNER_TEMP 'tokiboshi-upgrade-previous'
+          gh release download v0.1.2 --repo $env:GITHUB_REPOSITORY --pattern 'Tokiboshi-Setup-0.1.2.exe' --dir $assets
+          if ($LASTEXITCODE -ne 0) { throw 'Could not download the previous installer' }
+          $setup = (Get-ChildItem -Filter 'Tokiboshi-Setup-*.exe' | Select-Object -First 1).FullName
+          $payload = (Resolve-Path 'build/windows/x64/runner/Release').Path
+          $proof = Join-Path $env:RUNNER_TEMP 'tokiboshi-release-audit/installer-upgrade'
+          & installer/tests/upgrade-install.ps1 $setup (Join-Path $assets 'Tokiboshi-Setup-0.1.2.exe') $payload $proof
 
       - uses: actions/upload-artifact@v4
         with:

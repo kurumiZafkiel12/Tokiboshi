@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/material.dart';
 
 import 'dart:async';
@@ -69,10 +70,6 @@ void _releaseInstanceLock() {
   } catch (_) {}
   _instanceLock = null;
 }
-
-/// Actions offered when the user enables/starts with TUN while the
-/// app is not elevated.
-enum _TunAction { relaunch, disableTun, cancel }
 
 /// Windows elevation check: `net session` requires an elevated token
 /// (exit 0 = admin). Cheap, no extra dependencies. Non-Windows is
@@ -318,8 +315,16 @@ class _ShellPageState extends State<ShellPage>
   String? _updateStatus;
   ReleaseUpdate? _update;
   Timer? _demandTimer;
-  late final WindowsStartup _startup = widget.startup ?? WindowsStartup(requestElevation: true);
+  late final WindowsStartup _startup =
+      widget.startup ?? WindowsStartup(requestElevation: true);
   bool _running = false;
+  bool _proxyActive = false;
+  bool _runtimeHasRoutes = false;
+  bool _proxySwitching = false;
+  List<NodeInfo> _runtimeNodes = const [];
+
+  bool get _systemProxyActive =>
+      _proxyActive && (_data.systemProxy || !_data.enableTun);
   bool _busy = false;
   bool _measuring = false;
   int _page = 0;
@@ -426,7 +431,9 @@ class _ShellPageState extends State<ShellPage>
       _loaded = true;
     });
     widget.appearance.value = data.ui;
-    if (data.desktop.launchAtLogin && Platform.isWindows && widget.startup == null) {
+    if (data.desktop.launchAtLogin &&
+        Platform.isWindows &&
+        widget.startup == null) {
       unawaited(_migrateLoginStartup());
     }
     unawaited(_loadRuleResources());
@@ -435,31 +442,14 @@ class _ShellPageState extends State<ShellPage>
     // side reports progress through the Logs page.
     unawaited(_ensureCoreAndRules());
     await _refreshCoreVersion();
-    // 自动连接 = 上一次正常退出且内核在运行（崩溃后不自启，HV001-01）。
-    // TUN 开着但应用非管理员时跳过自动连接：提权需要用户在点「启动」
-    // 时确认（启动时弹 UAC 不适合在自动连接里静默触发）。
-    // resumeConnect 是提权重启的一次性意图（CV007-01）：无视
-    // autoConnect 偏好恢复连接，用后即清。
-    final tunBlocked = _data.enableTun && !await _isElevated();
-    final resumeRequested = _data.resumeConnect;
+    // Windows starts its local core without taking over traffic.
+    // Legacy one-shot elevation flags must not enable proxying on launch.
     if (_data.resumeConnect) {
       _data.resumeConnect = false;
-      if (!await _persist()) return;
+      await _persist();
     }
-    if (mounted &&
-        !_running &&
-        _data.nodes.isNotEmpty &&
-        (_data.desktop.autoRun ||
-            (previousCleanExit && _data.autoConnect && _data.runningAtExit) ||
-            resumeRequested)) {
-      if (tunBlocked) {
-        _setMessage('自动连接已跳过：虚拟网卡需要管理员权限，请点「启动」并选择「以管理员身份重启」');
-        // Persist the consumption so the next load does not retry the
-        // same blocked auto-connect (CV007-01 remainder).
-        await _persist();
-      } else {
-        await _toggleCore();
-      }
+    if (mounted && !_running && _data.desktop.autoRun) {
+      unawaited(_startCore());
     }
     _configureDemand();
     _hideForSilentStartup();
@@ -484,7 +474,7 @@ class _ShellPageState extends State<ShellPage>
   bool _handoffInProgress = false;
 
   Future<void> _syncCoreStatus() async {
-    if (_handoffInProgress) return;
+    if (_handoffInProgress || _coreBusy) return;
     try {
       final status = await widget.bridge.coreStatus();
       if (!mounted) return;
@@ -501,7 +491,8 @@ class _ShellPageState extends State<ShellPage>
           _clashMode = null;
           _coreDownSince = null;
           changed = true;
-          await widget.systemProxy.apply(false, _data.mixedPort);
+          if (_systemProxyActive)
+            await widget.systemProxy.apply(false, _data.mixedPort);
           _message = _compose(
               status.lastExit != null ? '内核已退出：${status.lastExit}' : '内核已停止');
         }
@@ -511,10 +502,10 @@ class _ShellPageState extends State<ShellPage>
         _running = true;
         _coreDownSince = null;
         changed = true;
-        if (_data.systemProxy) {
+        if (_systemProxyActive) {
           await widget.systemProxy.apply(true, _data.mixedPort);
         }
-        _message = _compose('内核已自动重启，代理已恢复');
+        _message = _compose(_proxyActive ? '内核已自动重启，代理已恢复' : '内核已恢复待命');
       } else if (status.running && _running) {
         _coreDownSince = null;
       }
@@ -598,18 +589,21 @@ class _ShellPageState extends State<ShellPage>
     return names.toList()..sort();
   }
 
-  Future<void> _addProcessRule(String process, String target) async {
+  Future<void> _addProcessRule(String process, String target) =>
+      _setProcessRoutes([process.trim()], target);
+
+  Future<void> _setProcessRoutes(List<String> processes, String target) async {
     if (_busy || _profileChanging || _settingsBusy) return;
     final before = _data.copyWith();
-    final name = process.trim();
+    final keys = processes.map((name) => name.toLowerCase()).toSet();
     try {
-      final rule = RoutingRule(kind: 'process_name', value: name, target: target);
-      if (target.isNotEmpty) rule.validate();
       final updated = _data.client.withRules([
         ..._data.client.rules.where((current) =>
             current.kind != 'process_name' ||
-            current.value.toLowerCase() != name.toLowerCase()),
-        if (target.isNotEmpty) rule,
+            !keys.contains(current.value.toLowerCase())),
+        if (target.isNotEmpty)
+          for (final name in processes)
+            RoutingRule(kind: 'process_name', value: name, target: target),
       ]);
       updated.validate();
       setState(() {
@@ -617,7 +611,7 @@ class _ShellPageState extends State<ShellPage>
         _data.client = updated;
       });
       if (await _persistImport(before)) {
-        _setMessage('「$name」分流已保存，${_running ? '应用配置后生效' : '下次启动生效'}');
+        _setMessage('软件分流已保存，${_running ? '应用配置后生效' : '下次启动生效'}');
       }
     } catch (e) {
       _setMessage('保存分流失败：${redactDiagnostics('$e')}');
@@ -651,7 +645,11 @@ class _ShellPageState extends State<ShellPage>
         context: context,
         builder: (context) =>
             ImportDialog(io: widget.importIo, initialMethod: initialMethod));
-    if (request == null || !mounted || _busy || _settingsBusy || _profileChanging) return;
+    if (request == null ||
+        !mounted ||
+        _busy ||
+        _settingsBusy ||
+        _profileChanging) return;
     final text = normalizeImportText(request.text);
     final lines = text
         .split('\n')
@@ -673,13 +671,10 @@ class _ShellPageState extends State<ShellPage>
       }
       if (remaining.isNotEmpty)
         await _addSubscription(request.name.isEmpty ? '本地导入' : request.name, '',
-            content: remaining.join('\n'),
-            manual: true);
+            content: remaining.join('\n'), manual: true);
     } else {
       await _addSubscription(request.name.isEmpty ? '本地导入' : request.name, '',
-          content: text,
-          localPath: request.localPath,
-          manual: request.manual);
+          content: text, localPath: request.localPath, manual: request.manual);
     }
   }
 
@@ -738,7 +733,7 @@ class _ShellPageState extends State<ShellPage>
   }
 
   Future<void> _createChainDialog() async {
-    if (_running || _busy || _data.nodes.length < 2) return;
+    if (_proxyActive || _busy || _data.nodes.length < 2) return;
     var entry = 0;
     var exit = 1;
     String? error;
@@ -931,7 +926,7 @@ class _ShellPageState extends State<ShellPage>
 
   Future<void> _updateSubscription(Subscription sub,
       {bool retryFull = false, bool automatic = false}) async {
-    if (_busy || _profileChanging || _settingsBusy || _running) return;
+    if (_busy || _profileChanging || _settingsBusy || _proxyActive) return;
     _lastSourceAttempt[sub.id] = DateTime.now();
     final before = _data.copyWith();
     setState(() {
@@ -1039,7 +1034,7 @@ class _ShellPageState extends State<ShellPage>
   }
 
   Future<void> _deleteSubscription(Subscription sub) async {
-    if (_busy || _running || _profileChanging || _settingsBusy) return;
+    if (_busy || _proxyActive || _profileChanging || _settingsBusy) return;
     final before = _data.copyWith();
     final selected = _data.selected;
     setState(() {
@@ -1087,7 +1082,9 @@ class _ShellPageState extends State<ShellPage>
     }
     String? previousTag;
     bool attempted = false;
-    final live = _running;
+    final live = _running &&
+        _runtimeHasRoutes &&
+        (_proxyActive || _runtimeNodes.contains(node));
     setState(() => _settingsBusy = true);
     Future<void> rollbackLive() async {
       if (!live || !attempted || previousTag == null) return;
@@ -1108,7 +1105,9 @@ class _ShellPageState extends State<ShellPage>
         if (previousTag == null) throw const FormatException('无法确认当前出口');
         final target = _nodeTag(node);
         final group = (await _clash.proxies())['proxy'];
-        if (group is Map && group['all'] is List && !(group['all'] as List).contains(target)) {
+        if (group is Map &&
+            group['all'] is List &&
+            !(group['all'] as List).contains(target)) {
           _setMessage('此节点已保存。请在分流页应用配置后再切换。');
           return;
         }
@@ -1130,8 +1129,7 @@ class _ShellPageState extends State<ShellPage>
           // 连接清理失败不阻断切换本身
         }
       }
-      _setMessage(
-          live ? '已切换到 ${node.name}，旧连接已断开' : '已选择 ${node.name}');
+      _setMessage(live ? '已切换到 ${node.name}，旧连接已断开' : '已选择 ${node.name}');
       _refreshTray();
     } catch (e) {
       if (mounted) setState(() => _data = before);
@@ -1189,7 +1187,9 @@ class _ShellPageState extends State<ShellPage>
     final generation = _monitor.startedAt;
     final ms = await _clash.delay(_nodeTag(node),
         url: _data.client.testUrl, timeoutMs: _data.client.testTimeoutMs);
-    if (!mounted || !_running || port != _data.clashApiPort ||
+    if (!mounted ||
+        !_running ||
+        port != _data.clashApiPort ||
         generation != _monitor.startedAt) return null;
     return ms;
   }
@@ -1290,7 +1290,7 @@ class _ShellPageState extends State<ShellPage>
           disabled: true,
         ),
         MenuItem.separator(),
-        MenuItem(key: 'toggle', label: _running ? '停止内核' : '启动内核'),
+        MenuItem(key: 'toggle', label: _proxyActive ? '关闭代理' : '开启代理'),
         MenuItem.separator(),
         MenuItem(
             key: 'mode_rule',
@@ -1315,7 +1315,7 @@ class _ShellPageState extends State<ShellPage>
             checked: i == _data.selectedIndex,
           ),
         if (_data.nodes.isNotEmpty) MenuItem.separator(),
-        MenuItem(key: 'sysproxy', label: '系统代理', checked: _data.systemProxy),
+        MenuItem(key: 'sysproxy', label: '系统代理', checked: _systemProxyActive),
         MenuItem.separator(),
         MenuItem(key: 'show', label: '显示主窗口'),
         MenuItem(key: 'quit', label: '退出 Tokiboshi'),
@@ -1339,7 +1339,7 @@ class _ShellPageState extends State<ShellPage>
   void onTrayMenuItemClick(MenuItem menuItem) {
     final key = menuItem.key ?? '';
     if (key == 'toggle') {
-      _toggleCore();
+      _toggleProxy();
     } else if (key == 'mode_rule') {
       _setMode('Rule');
     } else if (key == 'mode_global') {
@@ -1350,7 +1350,7 @@ class _ShellPageState extends State<ShellPage>
       final i = int.tryParse(key.substring(5));
       if (i != null && i >= 0 && i < _data.nodes.length) _selectNode(i);
     } else if (key == 'sysproxy') {
-      _setSystemProxy(!_data.systemProxy);
+      _setSystemProxy(!_systemProxyActive);
     } else if (key == 'show') {
       windowManager.show();
       windowManager.focus();
@@ -1379,7 +1379,7 @@ class _ShellPageState extends State<ShellPage>
       _releaseInstanceLock();
       if (_running) {
         await widget.bridge.stopCore();
-        if (_data.systemProxy) {
+        if (_systemProxyActive) {
           await widget.systemProxy.apply(false, _data.mixedPort);
         }
       }
@@ -1444,14 +1444,73 @@ class _ShellPageState extends State<ShellPage>
     }
   }
 
-  Future<void> _toggleCore({bool automaticDemand = false}) async {
-    if (_busy || _profileChanging || _settingsBusy || _quitting) return;
+  Future<void> _toggleProxy({bool automaticDemand = false}) async {
+    if (_busy ||
+        _proxySwitching ||
+        _profileChanging ||
+        _settingsBusy ||
+        _quitting) return;
+    final wasActive = _proxyActive;
+    var routesChanged = false;
+    if (!wasActive) {
+      final selected = _data.selected;
+      if (selected == null) {
+        _setMessage('先导入节点并选择出口；本地内核仍可待命');
+        return;
+      }
+      try {
+        final configured = profileNodes(_data);
+        if (!configured.contains(selected)) {
+          _setMessage('请选择当前规则配置中的出口节点');
+          return;
+        }
+        routesChanged = !listEquals(_runtimeNodes, configured);
+      } on FormatException catch (error) {
+        _setMessage(error.message);
+        return;
+      }
+    }
     if (!automaticDemand) {
       _demandOwned = false;
-      if (_running && _data.desktop.onDemand)
-        _demandSuppressed = true;
-      else if (!_running) _demandSuppressed = false;
+      _demandSuppressed = wasActive && _data.desktop.onDemand;
     }
+    final needsReload = !_running ||
+        _data.enableTun ||
+        (!wasActive && (!_runtimeHasRoutes || routesChanged));
+    _proxySwitching = true;
+    setState(() => _proxyActive = !wasActive);
+    try {
+      if (needsReload && wasActive && !_systemProxyActive) {
+        await widget.systemProxy.apply(false, _data.mixedPort);
+      }
+      if (needsReload) {
+        await (_running ? _restartCore() : _startCore());
+        if (!_running) {
+          if (mounted) setState(() => _proxyActive = false);
+          return;
+        }
+      } else {
+        await widget.systemProxy.apply(_systemProxyActive, _data.mixedPort);
+        if (wasActive) {
+          try {
+            await _clash.closeConnections();
+          } catch (_) {}
+        }
+        _setMessage(wasActive ? '代理已关闭，内核继续运行' : '代理接管已开启');
+      }
+      _demandOwned = automaticDemand && _proxyActive;
+      _refreshTray();
+    } catch (error) {
+      if (mounted) setState(() => _proxyActive = wasActive && _running);
+      _setMessage('切换代理失败：${redactDiagnostics('$error')}');
+    } finally {
+      _proxySwitching = false;
+    }
+  }
+
+  Future<void> _startCore() async {
+    if (_running || _busy || _profileChanging || _settingsBusy || _quitting)
+      return;
     _cancelConnect = false;
     setState(() {
       _busy = true;
@@ -1459,61 +1518,6 @@ class _ShellPageState extends State<ShellPage>
     });
     var started = false;
     try {
-      if (_running) {
-        _userStopped = true;
-        _coreDownSince = null;
-        await widget.bridge.stopCore();
-        await widget.systemProxy.apply(false, _data.mixedPort);
-        setState(() {
-          _running = false;
-          _latency.clear();
-          _clashMode = null;
-          _message = '已停止';
-        });
-        return;
-      }
-      if (_data.nodes.isEmpty) {
-        _setMessage('先导入节点');
-        return;
-      }
-      // TUN needs an elevated token; offer a one-click elevated
-      // restart instead of letting the core FATAL later (user
-      // request: 不能启动默认请求管理员吗 → 按需 UAC).
-      if (_data.enableTun && !await _isElevated()) {
-        final action = await showDialog<_TunAction>(
-          context: context,
-          builder: (context) => AlertDialog(
-            title: const Text('需要管理员权限'),
-            content: const Text('虚拟网卡（TUN）需要以管理员身份运行才能接管全局流量。\n\n'
-                '「以管理员身份重启」会弹出 UAC 授权并重启应用，重启后自动连接并启用 TUN。'),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context, _TunAction.cancel),
-                child: const Text('取消'),
-              ),
-              TextButton(
-                onPressed: () => Navigator.pop(context, _TunAction.disableTun),
-                child: const Text('关闭虚拟网卡并继续'),
-              ),
-              FilledButton(
-                onPressed: () => Navigator.pop(context, _TunAction.relaunch),
-                child: const Text('以管理员身份重启'),
-              ),
-            ],
-          ),
-        );
-        if (!mounted) return;
-        if (action == _TunAction.relaunch) {
-          await _relaunchElevated();
-          return;
-        }
-        if (action == _TunAction.disableTun) {
-          setState(() => _data.enableTun = false);
-          await _persist();
-        } else {
-          return; // cancel
-        }
-      }
       // A stop may have silently failed or the supervisor may have
       // just revived the core: adopt it instead of failing later with
       // "already running".
@@ -1538,48 +1542,89 @@ class _ShellPageState extends State<ShellPage>
       await _persist();
       final portsChanged = mixedPort != oldMixedPort || apiPort != oldApiPort;
       final selected = _data.selected;
-      final profile = activeProfile(_data);
-      final configNodes = profileNodes(_data);
-      if (selected == null) {
+      Subscription? profile;
+      List<NodeInfo> configNodes = const [];
+      try {
+        profile = activeProfile(_data);
+        configNodes = profileNodes(_data);
+      } on FormatException {
+        if (_proxyActive) rethrow;
+      }
+      final hasRoutes = selected != null && configNodes.contains(selected);
+      if (_proxyActive && !hasRoutes) {
         throw const FormatException('请先选择激活配置中的出口节点');
       }
-      if (profile != null && selected.source != profile.id) {
+      if (hasRoutes && profile != null && selected.source != profile.id) {
         throw const FormatException('当前节点不属于规则订阅，请选择该订阅的节点或策略组');
       }
       final nodeTags = assignNodeTags(configNodes.map((n) => n.name));
       final routeTargets = RoutingTargets(configNodes).resolved;
-      final config = await widget.bridge.buildConfig(
-        nodes: configNodes
-            .map((n) => NodeSpec(name: n.name, outboundJson: n.outboundJson))
-            .toList(),
-        mixedPort: _data.mixedPort,
-        clashApiPort: _data.clashApiPort,
-        enableTun: _data.enableTun,
-        blockAds: switch (_data.templateRouting['ads']) {
-          'off' => false, null => _data.blockAds, _ => true,
-        },
-        bypassCn: switch (_data.templateRouting['cn']) {
-          'off' => false, null => _data.bypassCn, _ => true,
-        },
-        dataDir: _dataDir,
-        selectedName:
-            nodeTags[configNodes.indexOf(selected)],
-        profileJson: profile?.profileJson ?? '',
-      );
-      if ((_data.routingPreset != 'balanced' || _data.templateRouting.keys.any(serviceRuleNames.containsKey)) && _ruleResources.isEmpty) {
-        await _loadRuleResources();
-        _checkConnectCancelled();
+      final config = hasRoutes
+          ? await widget.bridge.buildConfig(
+              nodes: configNodes
+                  .map((n) =>
+                      NodeSpec(name: n.name, outboundJson: n.outboundJson))
+                  .toList(),
+              mixedPort: _data.mixedPort,
+              clashApiPort: _data.clashApiPort,
+              enableTun: _proxyActive && _data.enableTun,
+              blockAds: switch (_data.templateRouting['ads']) {
+                'off' => false,
+                null => _data.blockAds,
+                _ => true,
+              },
+              bypassCn: switch (_data.templateRouting['cn']) {
+                'off' => false,
+                null => _data.bypassCn,
+                _ => true,
+              },
+              dataDir: _dataDir,
+              selectedName: nodeTags[configNodes.indexOf(selected)],
+              profileJson: profile?.profileJson ?? '',
+            )
+          : jsonEncode({
+              'inbounds': [
+                {
+                  'type': 'mixed',
+                  'tag': 'mixed-in',
+                  'listen': '127.0.0.1',
+                  'listen_port': mixedPort
+                },
+              ],
+              'outbounds': [
+                {'type': 'direct', 'tag': 'direct'}
+              ],
+              'route': {
+                'rules': [
+                  {'action': 'reject'}
+                ],
+                'final': 'direct'
+              },
+              'experimental': {
+                'clash_api': {'external_controller': '127.0.0.1:$apiPort'}
+              },
+            });
+      var runtimeConfig = injectClashSecret(config, _data.clashApiSecret);
+      if (hasRoutes) {
+        if ((_data.routingPreset != 'balanced' ||
+                _data.templateRouting.keys.any(serviceRuleNames.containsKey)) &&
+            _ruleResources.isEmpty) {
+          await _loadRuleResources();
+          _checkConnectCancelled();
+        }
+        final preset = applyResourcePreset(
+            runtimeConfig, _data.routingPreset, _ruleResources, _dataDir);
+        final template = applyTemplateRouting(preset,
+            profile == null ? _data.templateRouting : const {}, routeTargets);
+        final services = applyServiceRouting(template, _data.templateRouting,
+            routeTargets, _ruleResources, _dataDir);
+        runtimeConfig = applyClientPreferences(
+            applyNetworkSettings(services, _data.desktop), _data.client,
+            hasProfile: profile != null,
+            tagByName: routeTargets,
+            lookupProcesses: Platform.isWindows);
       }
-      final preset = applyResourcePreset(config, _data.routingPreset, _ruleResources, _dataDir);
-      final template = applyTemplateRouting(preset,
-          profile == null ? _data.templateRouting : const {}, routeTargets);
-      final services = applyServiceRouting(
-          template, _data.templateRouting, routeTargets, _ruleResources, _dataDir);
-      final network = applyNetworkSettings(
-          injectClashSecret(services, _data.clashApiSecret), _data.desktop);
-      final configFile = await widget.store.writeRuntimeConfig(
-          applyClientPreferences(network, _data.client, hasProfile: profile != null,
-            tagByName: routeTargets, lookupProcesses: Platform.isWindows));
+      final configFile = await widget.store.writeRuntimeConfig(runtimeConfig);
       _checkConnectCancelled();
       // Rule-set downloads run in the background after app start; if
       // they have not landed yet this config carries no 分流 rules.
@@ -1597,25 +1642,26 @@ class _ShellPageState extends State<ShellPage>
       );
       started = true;
       _checkConnectCancelled();
-      _demandOwned = automaticDemand;
       // A fresh start invalidates the stop flag: without this, the
       // next supervisor restart blip would tear the proxy down again
       // (HF053-05 remainder).
       _userStopped = false;
       _coreDownSince = null;
-      if (_data.systemProxy) {
+      if (_systemProxyActive) {
         await widget.systemProxy.apply(true, _data.mixedPort);
       }
       setState(() {
         _running = true;
+        _runtimeHasRoutes = hasRoutes;
+        _runtimeNodes = hasRoutes ? List.of(configNodes) : const [];
         _latency.clear();
         _restartCount = 0;
         _lastExit = null;
         _message = _compose(
-            '运行中：${_data.nodes.where((n) => !n.isPolicy).length} 个节点 · mixed 127.0.0.1:${_data.mixedPort}'
+            '${_proxyActive ? '代理接管已开启' : '内核待命 · 系统流量未接管'}：${_data.nodes.where((n) => !n.isPolicy).length} 个节点 · mixed 127.0.0.1:${_data.mixedPort}'
             ' · 面板 127.0.0.1:${_data.clashApiPort}/ui'
             ' · 分流：${profile == null ? '仅节点订阅/内置模板' : '订阅自带规则'}'
-            '${_data.systemProxy ? ' · 系统代理已开启' : ''}'
+            '${_systemProxyActive ? ' · 系统代理已开启' : ''}'
             '${portsChanged ? ' · 原端口被占用，已自动更换并保存端口' : ''}'
             '${profile == null && rulesPending ? ' · ⚠ 规则集未就绪，重启内核后分流生效' : ''}');
       });
@@ -1627,9 +1673,11 @@ class _ShellPageState extends State<ShellPage>
         try {
           await widget.bridge.stopCore();
         } catch (_) {}
-        try {
-          await widget.systemProxy.apply(false, _data.mixedPort);
-        } catch (_) {}
+        if (_systemProxyActive) {
+          try {
+            await widget.systemProxy.apply(false, _data.mixedPort);
+          } catch (_) {}
+        }
         if (mounted) setState(() => _running = false);
       }
       _setMessage(e is _ConnectCancelled ? '已取消连接，节点选择已保留' : '启动失败：$e');
@@ -1644,15 +1692,39 @@ class _ShellPageState extends State<ShellPage>
 
   Future<void> _restartCore() async {
     if (_busy || !_running) return;
-    await widget.bridge.stopCore();
-    await widget.systemProxy.apply(false, _data.mixedPort);
-    if (mounted) {
-      setState(() {
-        _running = false;
-        _clashMode = null;
-      });
+    setState(() {
+      _busy = true;
+      _coreBusy = true;
+    });
+    try {
+      await widget.bridge.stopCore();
+      if (mounted) {
+        setState(() {
+          _running = false;
+          _runtimeHasRoutes = false;
+          _runtimeNodes = const [];
+          _clashMode = null;
+        });
+      }
+    } catch (error) {
+      _setMessage('重载内核失败：${redactDiagnostics('$error')}');
+      return;
+    } finally {
+      if (mounted)
+        setState(() {
+          _busy = false;
+          _coreBusy = false;
+        });
     }
-    await _toggleCore(automaticDemand: _demandOwned);
+    await _startCore();
+    if (!_running && _proxyActive) {
+      if (_systemProxyActive) {
+        try {
+          await widget.systemProxy.apply(false, _data.mixedPort);
+        } catch (_) {}
+      }
+      if (mounted) setState(() => _proxyActive = false);
+    }
   }
 
   Future<void> _ensureFromSettings() async {
@@ -1691,12 +1763,16 @@ class _ShellPageState extends State<ShellPage>
       _data.systemProxy = value;
     });
     final saved = await _persist();
-    if (_running) {
-      await widget.systemProxy.apply(value, _data.mixedPort);
-      // 运行时已应用 ≠ 已持久化：分开呈现（HV003-01）。
-      _setMessage(
-          '${value ? '系统代理已开启' : '系统代理已关闭'}${saved ? '' : '（⚠ 配置未保存）'}');
+    if (_running && _proxyActive) {
+      if (!value && !_data.enableTun) {
+        await _toggleProxy();
+      } else {
+        await widget.systemProxy.apply(_systemProxyActive, _data.mixedPort);
+      }
+    } else if (value) {
+      await _toggleProxy();
     }
+    if (!saved) _setMessage('系统代理偏好未保存');
   }
 
   Future<void> _setTun(bool value) async {
@@ -1707,7 +1783,7 @@ class _ShellPageState extends State<ShellPage>
     });
     // Enabling TUN while the core is running requires an elevated
     // restart — offer it instead of restarting into a FATAL.
-    if (value && _running && !await _isElevated()) {
+    if (value && _proxyActive && !await _isElevated()) {
       final relaunch = await showDialog<bool>(
         context: context,
         builder: (context) => AlertDialog(
@@ -1738,7 +1814,10 @@ class _ShellPageState extends State<ShellPage>
       return;
     }
     final saved = await _persist();
-    if (_running) {
+    if (value && !_proxyActive && _data.selected != null) {
+      await _toggleProxy();
+    } else if (_running && _proxyActive) {
+      if (!value && !_data.systemProxy) setState(() => _proxyActive = false);
       _setMessage(
           '${value ? '虚拟网卡已开启，正在重启内核…' : '虚拟网卡已关闭，正在重启内核…'}${saved ? '' : '（⚠ 配置保存失败）'}');
       await _restartCore();
@@ -1794,7 +1873,7 @@ class _ShellPageState extends State<ShellPage>
       _releaseInstanceLock();
       if (_running) {
         await widget.bridge.stopCore();
-        if (_data.systemProxy) {
+        if (_systemProxyActive) {
           await widget.systemProxy.apply(false, _data.mixedPort);
         }
       }
@@ -1981,18 +2060,19 @@ class _ShellPageState extends State<ShellPage>
       _demandMatch = matchesDemandProcesses(_data.desktop.processes, names);
       if (!_demandMatch) {
         _demandSuppressed = false;
-        if (_demandOwned && _running) await _toggleCore(automaticDemand: true);
+        if (_demandOwned && _proxyActive)
+          await _toggleProxy(automaticDemand: true);
         _demandOwned = false;
         return;
       }
-      if (!_running && !_demandSuppressed && _data.selected != null) {
+      if (!_proxyActive && !_demandSuppressed && _data.selected != null) {
         if (_data.enableTun && !await _isElevated()) {
           _demandSuppressed = true;
           _setMessage('按需连接等待管理员权限，请手动启动并授权');
           return;
         }
-        await _toggleCore(automaticDemand: true);
-        if (!_running) _demandSuppressed = true;
+        await _toggleProxy(automaticDemand: true);
+        if (!_proxyActive) _demandSuppressed = true;
       }
     } catch (_) {
       /* Keep current connection on process probe failures. */
@@ -2039,7 +2119,7 @@ class _ShellPageState extends State<ShellPage>
           running: _running,
           clashApiPort: _data.clashApiPort,
           clashApiSecret: _data.clashApiSecret,
-          onStart: _toggleCore,
+          onStart: _startCore,
           onOpenExternal: _openExternalPanel,
         );
       case 2:
@@ -2063,7 +2143,7 @@ class _ShellPageState extends State<ShellPage>
         page = SubscriptionsPage(
           subscriptions: _data.subscriptions,
           nodeCounts: nodeCounts,
-          running: _running,
+          running: _proxyActive,
           busy: _busy || _profileChanging || _settingsBusy,
           onAdd: _addSubscriptionDialog,
           onImportMethod: (method) => _importDialog(initialMethod: method),
@@ -2100,7 +2180,7 @@ class _ShellPageState extends State<ShellPage>
             busy: _busy || _profileChanging || _settingsBusy,
             api: _clash,
             dataDir: _dataDir,
-            onApply: _running ? _restartCore : _toggleCore,
+            onApply: _running ? _restartCore : _startCore,
             onSources: () => setState(() => _page = 3),
             blockAds: _data.blockAds,
             bypassCn: _data.bypassCn,
@@ -2110,13 +2190,14 @@ class _ShellPageState extends State<ShellPage>
             onResources: () => setState(() => _page = 8),
             onTemplateRouting: _setTemplateRouting,
             activeProcesses: _activeProcesses(),
-            onAddProcessRule: _addProcessRule);
+            onAddProcessRule: _addProcessRule,
+            onAppRoute: _setProcessRoutes);
       case 8:
         page = ToolboxPage(
           running: _running,
           mixedPort: _data.mixedPort,
           session: selected,
-          onStart: _toggleCore,
+          onStart: _startCore,
           systemProxy: widget.systemProxy,
           proxyCredentials: _data.desktop.proxyAuth
               ? (_data.desktop.proxyUser, _data.desktop.proxyPassword)
@@ -2154,7 +2235,7 @@ class _ShellPageState extends State<ShellPage>
             setState(() => _data.autoConnect = value);
             _persist();
           },
-          running: _running,
+          running: _proxyActive,
           dataFilePath: widget.store.file.path,
           coreVersion: _coreVersion,
           onSave: _saveSettings,
@@ -2195,19 +2276,21 @@ class _ShellPageState extends State<ShellPage>
           nodeCount: _data.nodes.where((n) => !n.isPolicy).length,
           subscriptionCount: _data.subscriptions.length,
           mixedPort: _data.mixedPort,
-          systemProxy: _data.systemProxy,
+          systemProxy: _systemProxyActive,
+          proxyActive: _proxyActive,
           selectedLatency: selected == null ? null : _latency[selected],
           selectedMeasured: selected != null && _latency.containsKey(selected),
           coreVersion: _coreVersion,
           restartCount: _restartCount,
           lastExit: _lastExit,
           clashMode: _clashMode,
-          tun: _data.enableTun,
-          onToggle: _toggleCore,
+          tun: _proxyActive && _data.enableTun,
+          onToggle: _toggleProxy,
           onRestart: _restartCore,
           onPickNode: _showNodePicker,
           onCancelConnect: _requestCancelConnect,
-          controlsBlocked: _profileChanging || _settingsBusy || (_busy && !_coreBusy),
+          controlsBlocked:
+              _profileChanging || _settingsBusy || (_busy && !_coreBusy),
           onOpenPanel: () => setState(() => _page = 1),
           onTunChanged: _setTun,
           onSystemProxyChanged: _busy ? null : _setSystemProxy,
@@ -2575,7 +2658,9 @@ class _ShellPageState extends State<ShellPage>
                                               Icons.notifications_none_outlined,
                                               size: 17)))
                                 ])),
-                            if (_message != null && !_message!.startsWith('运行中：')) _messageBanner(context),
+                            if (_message != null &&
+                                !_message!.startsWith('运行中：'))
+                              _messageBanner(context),
                             if (_busy || _profileChanging || _settingsBusy)
                               const LinearProgressIndicator(minHeight: 2),
                             Expanded(
@@ -2604,34 +2689,59 @@ class _ShellPageState extends State<ShellPage>
                                                 child: child)),
                                     child: KeyedSubtree(
                                         key: ValueKey(_loaded ? _page : -1),
-                                        child: _loaded ? page : Center(
-                                          child: Panel(accent: true,
-                                            child: Column(mainAxisSize: MainAxisSize.min, children: [
-                                              const Icon(Icons.hourglass_top_rounded, size: 30),
-                                              const SizedBox(height: 10),
-                                              Text('正在恢复工作区', style: Theme.of(context).textTheme.titleLarge),
-                                              const SizedBox(height: 8),
-                                              if (UiScope.duration(context) != Duration.zero)
-                                                const SizedBox(width: 158, child: LinearProgressIndicator(minHeight: 2)),
-                                            ])),
-                                        )))),
-                            if (_page != 0) ConnectionDock(
-                                node: selected,
-                                subscriptions: _data.subscriptions,
-                                latency: _latency,
-                                running: _running,
-                                busy: _coreBusy,
-                                blocked: _profileChanging ||
-                                    _settingsBusy ||
-                                    (_busy && !_coreBusy),
-                                onPick: _showNodePicker,
-                                onCancel: _requestCancelConnect,
-                                onToggle: _toggleCore,
-                                onProbe: () {
-                                  if (selected != null) _measureNode(selected);
-                                },
-                                onRestart: _restartCore,
-                                monitor: _monitor),
+                                        child: _loaded
+                                            ? page
+                                            : Center(
+                                                child: Panel(
+                                                    accent: true,
+                                                    child: Column(
+                                                        mainAxisSize:
+                                                            MainAxisSize.min,
+                                                        children: [
+                                                          const Icon(
+                                                              Icons
+                                                                  .hourglass_top_rounded,
+                                                              size: 30),
+                                                          const SizedBox(
+                                                              height: 10),
+                                                          Text('正在恢复工作区',
+                                                              style: Theme.of(
+                                                                      context)
+                                                                  .textTheme
+                                                                  .titleLarge),
+                                                          const SizedBox(
+                                                              height: 8),
+                                                          if (UiScope.duration(
+                                                                  context) !=
+                                                              Duration.zero)
+                                                            const SizedBox(
+                                                                width: 158,
+                                                                child:
+                                                                    LinearProgressIndicator(
+                                                                        minHeight:
+                                                                            2)),
+                                                        ])),
+                                              )))),
+                            if (_page != 0)
+                              ConnectionDock(
+                                  node: selected,
+                                  subscriptions: _data.subscriptions,
+                                  latency: _latency,
+                                  running: _running,
+                                  proxyActive: _proxyActive,
+                                  busy: _coreBusy,
+                                  blocked: _profileChanging ||
+                                      _settingsBusy ||
+                                      (_busy && !_coreBusy),
+                                  onPick: _showNodePicker,
+                                  onCancel: _requestCancelConnect,
+                                  onToggle: _toggleProxy,
+                                  onProbe: () {
+                                    if (selected != null)
+                                      _measureNode(selected);
+                                  },
+                                  onRestart: _restartCore,
+                                  monitor: _monitor),
                           ]))
                     ]);
                   })),
@@ -2655,7 +2765,7 @@ class _ShellPageState extends State<ShellPage>
   }
 
   Future<void> _activateProfile(String id) async {
-    if (_busy || _running || _profileChanging || _settingsBusy) {
+    if (_busy || _proxyActive || _profileChanging || _settingsBusy) {
       return;
     }
     final snapshot = _data.copyWith();
@@ -2764,15 +2874,18 @@ class _ShellPageState extends State<ShellPage>
         !mounted ||
         _scheduledBusy ||
         _busy ||
-        _running ||
+        _proxyActive ||
         _settingsBusy ||
         _profileChanging ||
         _quitting) return;
     _scheduledBusy = true;
     try {
       for (final source in List.of(_data.subscriptions)) {
-        if (!mounted || _running || _busy || _settingsBusy || _profileChanging)
-          break;
+        if (!mounted ||
+            _proxyActive ||
+            _busy ||
+            _settingsBusy ||
+            _profileChanging) break;
         if (source.refreshMinutes <= 0) continue;
         final last = _lastSourceAttempt[source.id] ??
             DateTime.tryParse(source.lastAttemptAt ?? '') ??
@@ -2788,7 +2901,7 @@ class _ShellPageState extends State<ShellPage>
   }
 
   Future<void> _editSubscription(Subscription source) async {
-    if (_busy || _running || _settingsBusy || _profileChanging) return;
+    if (_busy || _proxyActive || _settingsBusy || _profileChanging) return;
     setState(() => _profileChanging = true);
     try {
       await editSubscription(context, source, onSave: (next) async {
@@ -2975,7 +3088,7 @@ class _ShellPageState extends State<ShellPage>
   }
 
   Future<void> _restoreBackup() async {
-    if (_running ||
+    if (_proxyActive ||
         _busy ||
         _profileChanging ||
         _settingsBusy ||
@@ -3019,7 +3132,7 @@ class _ShellPageState extends State<ShellPage>
   }
 
   Future<void> _updateAllSubscriptions() async {
-    if (_busy || _running || _updatingAll) return;
+    if (_busy || _proxyActive || _updatingAll) return;
     _updatingAll = true;
     try {
       for (final sub in List<Subscription>.of(_data.subscriptions)) {

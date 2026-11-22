@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -7,6 +8,7 @@ import 'package:tokiboshi/main.dart';
 import 'package:tokiboshi/ui/import_dialog.dart';
 import 'package:tokiboshi/bridge/core_bridge.dart';
 import 'package:tokiboshi/services/store.dart';
+import 'package:tokiboshi/services/desktop_settings.dart';
 import 'package:tokiboshi/services/subscription_fetcher.dart';
 import 'package:tokiboshi/services/system_proxy.dart';
 
@@ -73,9 +75,13 @@ void main() {
     await t.pumpWidget(const SizedBox());
   });
 
-  testWidgets('opening app connects saved node by default and can be disabled',
+  testWidgets(
+      'opening app prepares the selected node without engaging the proxy',
       (tester) async {
     final store = MemoryStore();
+    store.data.desktop = const DesktopSettings(autoRun: true);
+    store.data.enableTun = true;
+    final proxy = NoopSystemProxy();
     store.data.nodes = const [
       NodeInfo(
           name: 'saved',
@@ -89,14 +95,16 @@ void main() {
     await tester.pumpWidget(TokiboshiApp(
       bridge: bridge,
       store: store,
-      systemProxy: NoopSystemProxy(),
+      systemProxy: proxy,
       allocatePort: (port, reserved) async => port,
     ));
     await tester.pumpAndSettle();
     expect(bridge.running, isTrue);
     expect(store.runtimeConfig, isNotNull);
+    expect(bridge.lastTunEnabled, isFalse);
+    expect(proxy.calls, isEmpty);
     await tester.pumpWidget(const SizedBox());
-    store.data.autoConnect = false;
+    store.data.desktop = const DesktopSettings(autoRun: false);
     final stoppedBridge = FakeBridge();
     await tester.pumpWidget(TokiboshiApp(
       bridge: stoppedBridge,
@@ -106,6 +114,45 @@ void main() {
     ));
     await tester.pumpAndSettle();
     expect(stoppedBridge.running, isFalse);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('first open with no nodes keeps a loopback-only core available',
+      (tester) async {
+    final store = MemoryStore();
+    store.data.desktop = const DesktopSettings(autoRun: true, allowLan: true);
+    store.data.systemProxy = true;
+    store.data.enableTun = true;
+    final bridge = FakeBridge();
+    final proxy = NoopSystemProxy();
+    await tester.pumpWidget(TokiboshiApp(
+      bridge: bridge,
+      store: store,
+      systemProxy: proxy,
+      allocatePort: (port, reserved) async => port,
+    ));
+    await tester.pumpAndSettle();
+    final config = jsonDecode(store.runtimeConfig!) as Map<String, dynamic>;
+    final inbound = (config['inbounds'] as List).single as Map;
+    expect(inbound['listen'], '127.0.0.1');
+    expect(inbound['type'], 'mixed');
+    expect(bridge.running, isTrue);
+    expect(proxy.calls, isEmpty);
+    final binary = Platform.environment['SING_BOX'];
+    if (binary != null) {
+      await tester.runAsync(() async {
+        final sandbox =
+            await Directory.systemTemp.createTemp('tkb-standby-check-');
+        try {
+          final file = await File('${sandbox.path}/config.json')
+              .writeAsString(store.runtimeConfig!);
+          final result = await Process.run(binary, ['check', '-c', file.path]);
+          expect(result.exitCode, 0, reason: '${result.stderr}');
+        } finally {
+          await sandbox.delete(recursive: true);
+        }
+      });
+    }
     await tester.pumpWidget(const SizedBox());
   });
 
@@ -185,15 +232,16 @@ void main() {
     // Back on the dashboard: inspect the current session and stop.
     await tester.tap(find.text('连接').first);
     await tester.pumpAndSettle();
-    expect(find.text('内核已运行'), findsOneWidget);
+    expect(find.text('代理接管中'), findsOneWidget);
     expect(bridge.running, isTrue);
     expect(store.runtimeConfig, isNotNull);
     expect(proxy.calls, [(enable: true, port: 7890)]);
 
     await tester.tap(find.text('停止代理'));
     await tester.pumpAndSettle();
-    expect(find.text('未连接'), findsWidgets);
-    expect(bridge.running, isFalse);
+    expect(find.text('内核待命'), findsOneWidget);
+    expect(bridge.running, isTrue);
+    expect(bridge.startCount, 1);
     expect(proxy.calls.last, (enable: false, port: 7890));
   });
 

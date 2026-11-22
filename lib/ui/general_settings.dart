@@ -215,11 +215,7 @@ class GeneralSettings extends StatelessWidget {
         Panel(
             padding: EdgeInsets.zero,
             child: Column(children: [
-              _toggle(
-                  context,
-                  '开机自启',
-                  '当前 Windows 用户登录后启动，不需要管理员权限。',
-                  value.launchAtLogin,
+              _toggle(context, '开机自启', '登录后通过管理员权限启动。', value.launchAtLogin,
                   (v) => onChanged(value.copyWith(launchAtLogin: v))),
               const Divider(height: 1),
               _toggle(
@@ -229,11 +225,8 @@ class GeneralSettings extends StatelessWidget {
                   value.silentStart,
                   (v) => onChanged(value.copyWith(silentStart: v))),
               const Divider(height: 1),
-              _toggle(context, '打开应用自动连接', '每次打开尝试连接已选节点；虚拟网卡仍遵守管理员授权。',
+              _toggle(context, '打开应用启动内核', '启动本地内核并保持待命。系统代理和 TUN 默认关闭。',
                   value.autoRun, (v) => onChanged(value.copyWith(autoRun: v))),
-              const Divider(height: 1),
-              _toggle(context, '恢复上次运行状态', '未开启上方自动连接时，仅恢复正常退出前的运行状态。',
-                  autoConnect, (v) => onAutoConnectChanged?.call(v)),
               const Divider(height: 1),
               _row(
                   context,

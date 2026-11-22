@@ -15,24 +15,24 @@ const mono = TextStyle(
 ThemeData workbenchTheme(UiPreferences ui) {
   final light = ui.light;
   final character = ui.character;
-  // Clash Party 语言：深色近黑底 + 中性层次面 + 大圆角；品牌粉更饱和。
+  // 深绿工作区与暖粉主操作，状态色独立于品牌色。
   final bg = light
-      ? (character ? const Color(0xFFF6F2F5) : const Color(0xFFF2F3F6))
-      : (character ? const Color(0xFF121016) : const Color(0xFF0F1014));
+      ? (character ? const Color(0xFFF0F6F2) : const Color(0xFFF2F3F6))
+      : (character ? const Color(0xFF101A17) : const Color(0xFF0F1014));
   final surface = light
       ? const Color(0xFFFFFFFF)
-      : (character ? const Color(0xFF1C1A22) : const Color(0xFF181A20));
+      : (character ? const Color(0xFF1A2823) : const Color(0xFF181A20));
   final surfaceLow = light
-      ? const Color(0xFFFBF8FA)
-      : (character ? const Color(0xFF16141B) : const Color(0xFF121318));
+      ? const Color(0xFFF5F9F6)
+      : (character ? const Color(0xFF15221D) : const Color(0xFF121318));
   final surfaceHigh = light
-      ? const Color(0xFFF3E8EE)
-      : (character ? const Color(0xFF262430) : const Color(0xFF24272F));
+      ? const Color(0xFFE4EFE8)
+      : (character ? const Color(0xFF23352D) : const Color(0xFF24272F));
   final line = light
-      ? const Color(0xFFE4D3DC)
-      : (character ? const Color(0xFF2E2A38) : const Color(0xFF262A33));
+      ? const Color(0xFFCDDCD2)
+      : (character ? const Color(0xFF304238) : const Color(0xFF262A33));
   final ink = light ? const Color(0xFF2E2027) : const Color(0xFFF4F1F4);
-  final sub = light ? const Color(0xFF7A5F6E) : const Color(0xFF9C93A3);
+  final sub = light ? const Color(0xFF506659) : const Color(0xFFABBDB2);
   final accent = light ? const Color(0xFFC23A66) : const Color(0xFFFF8FA8);
   final scheme = ColorScheme.fromSeed(
           seedColor: wine,
@@ -111,12 +111,8 @@ ThemeData workbenchTheme(UiPreferences ui) {
               padding:
                   const EdgeInsets.symmetric(horizontal: 16, vertical: 10))),
       outlinedButtonTheme: OutlinedButtonThemeData(
-          style: OutlinedButton.styleFrom(
-              foregroundColor: ink,
-              textStyle: const TextStyle(fontFamily: 'Segoe UI', fontSize: 12),
-              minimumSize: const Size(36, 36),
-              side: BorderSide(color: line),
-              shape: RoundedRectangleBorder(borderRadius: radius))),
+          style:
+              OutlinedButton.styleFrom(foregroundColor: ink, textStyle: const TextStyle(fontFamily: 'Segoe UI', fontSize: 12), minimumSize: const Size(36, 36), side: BorderSide(color: line), shape: RoundedRectangleBorder(borderRadius: radius))),
       textButtonTheme: TextButtonThemeData(style: TextButton.styleFrom(foregroundColor: accent, textStyle: const TextStyle(fontFamily: 'Segoe UI', fontSize: 12))),
       iconButtonTheme: IconButtonThemeData(style: IconButton.styleFrom(foregroundColor: sub, iconSize: 18, shape: RoundedRectangleBorder(borderRadius: radius))),
       switchTheme: SwitchThemeData(thumbColor: WidgetStateProperty.resolveWith((s) => s.contains(WidgetState.selected) ? Colors.white : sub), trackColor: WidgetStateProperty.resolveWith((s) => s.contains(WidgetState.selected) ? (light ? wine : const Color(0xFFF45B87)) : line)),
@@ -143,9 +139,7 @@ class Panel extends StatelessWidget {
           border: Border.all(
               color: accent
                   ? Theme.of(context).colorScheme.primary.withValues(alpha: .38)
-                  : Theme.of(context)
-                      .dividerColor
-                      .withValues(alpha: .55)),
+                  : Theme.of(context).dividerColor.withValues(alpha: .55)),
           boxShadow: accent
               ? [BoxShadow(color: wine.withValues(alpha: .04), blurRadius: 24)]
               : null),

@@ -10,7 +10,7 @@ import 'fake_bridge.dart';
 import 'widget_test.dart' show MemoryStore;
 
 void main() {
-  Future<(MemoryStore, FakeBridge)> mount(WidgetTester t,
+  Future<(MemoryStore, FakeBridge, NoopSystemProxy)> mount(WidgetTester t,
       {required DesktopSettings settings,
       Future<Set<String>> Function()? probe}) async {
     t.view.physicalSize = const Size(1280, 900);
@@ -27,28 +27,30 @@ void main() {
     ];
     store.data.selectedIndex = 0;
     final bridge = FakeBridge();
+    final proxy = NoopSystemProxy();
     await t.pumpWidget(TokiboshiApp(
         bridge: bridge,
         store: store,
-        systemProxy: NoopSystemProxy(),
+        systemProxy: proxy,
         allocatePort: (p, r) async => p,
         processProbe: probe));
     await t.pumpAndSettle();
-    return (store, bridge);
+    return (store, bridge, proxy);
   }
 
   testWidgets(
-      'always-connect starts selected node even when prior-state restore is off',
+      'standby starts selected node while leaving the system proxy alone',
       (t) async {
-    final (_, bridge) =
+    final (_, bridge, proxy) =
         await mount(t, settings: const DesktopSettings(autoRun: true));
     expect(bridge.running, true);
+    expect(proxy.calls, isEmpty);
     await t.pumpWidget(const SizedBox());
   });
   testWidgets('on-demand owns only its own session and respects manual stop',
       (t) async {
     var processes = <String>{'example'};
-    final (_, bridge) = await mount(t,
+    final (_, bridge, proxy) = await mount(t,
         settings:
             const DesktopSettings(onDemand: true, processes: ['example.exe']),
         probe: () async => processes);
@@ -56,17 +58,20 @@ void main() {
     processes = {};
     await t.pump(const Duration(seconds: 8));
     await t.pumpAndSettle();
-    expect(bridge.running, false);
+    expect(bridge.running, true);
+    expect(proxy.calls.last.enable, false);
     processes = {'example'};
     await t.pump(const Duration(seconds: 8));
     await t.pumpAndSettle();
     expect(bridge.running, true);
     await t.tap(find.text('停止代理'));
     await t.pumpAndSettle();
-    expect(bridge.running, false);
+    expect(bridge.running, true);
+    expect(proxy.calls.last.enable, false);
     await t.pump(const Duration(seconds: 16));
     await t.pumpAndSettle();
-    expect(bridge.running, false);
+    expect(bridge.running, true);
+    expect(proxy.calls.last.enable, false);
     processes = {};
     await t.pump(const Duration(seconds: 8));
     await t.pumpAndSettle();
@@ -77,7 +82,7 @@ void main() {
     await t.pumpWidget(const SizedBox());
   });
   testWidgets('on-demand never stops a manually started session', (t) async {
-    final (_, bridge) = await mount(t,
+    final (_, bridge, proxy) = await mount(t,
         settings:
             const DesktopSettings(onDemand: true, processes: ['example.exe']),
         probe: () async => <String>{});
@@ -88,6 +93,7 @@ void main() {
     await t.pump(const Duration(seconds: 16));
     await t.pumpAndSettle();
     expect(bridge.running, true);
+    expect(proxy.calls.last.enable, true);
     await t.pumpWidget(const SizedBox());
   });
 }

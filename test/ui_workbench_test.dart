@@ -8,6 +8,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:tokiboshi/main.dart';
 import 'package:tokiboshi/bridge/core_bridge.dart';
 import 'package:tokiboshi/services/store.dart';
+import 'package:tokiboshi/services/desktop_settings.dart';
 import 'package:tokiboshi/services/system_proxy.dart';
 import 'package:tokiboshi/ui/preferences.dart';
 import 'package:tokiboshi/ui/node_widgets.dart';
@@ -20,6 +21,10 @@ void main() {
   setUpAll(() async {
     await (FontLoader('MaterialIcons')
           ..addFont(rootBundle.load('fonts/MaterialIcons-Regular.otf')))
+        .load();
+    await (FontLoader('packages/lucide_icons_flutter/Lucide')
+          ..addFont(rootBundle
+              .load('packages/lucide_icons_flutter/assets/lucide.ttf')))
         .load();
     final font = Platform.environment['TOKIBOSHI_UI_FONT'];
     if (font != null) {
@@ -114,6 +119,40 @@ void main() {
       await Directory(capture).create(recursive: true);
       await File('$capture/$name.png').writeAsBytes(data!.buffer.asUint8List());
       image.dispose();
+    });
+  }
+
+  for (final size in [const Size(1440, 900), const Size(800, 600)]) {
+    testWidgets('software routing selects independent targets at ${size.width}',
+        (t) async {
+      final fixture = MemoryStore();
+      fixture.data.desktop =
+          const DesktopSettings(autoRun: true, autoCheckUpdates: false);
+      final store = await mount(t,
+          size: size, light: size.width < 900, withStore: fixture);
+      expect(find.text('内核待命'), findsOneWidget);
+      await screenshot(t, 'dashboard-v013-${size.width.toInt()}');
+      await t.tap(size.width < 900
+          ? find.byTooltip('分流规则').first
+          : find.text('分流规则').first);
+      await t.pumpAndSettle();
+      expect(t.takeException(), isNull);
+      await screenshot(t, 'routing-v013-${size.width.toInt()}');
+      await t.tap(find.text('通讯'));
+      await t.pumpAndSettle();
+      await t.ensureVisible(find.text('微信'));
+      await t.tap(find.text('微信'));
+      await t.pumpAndSettle();
+      await screenshot(t, 'route-picker-v013-${size.width.toInt()}');
+      await t.tap(find.text('直连').last);
+      await t.pumpAndSettle();
+      final rules =
+          store.data.client.rules.where((r) => r.kind == 'process_name');
+      expect(rules.map((r) => r.value),
+          ['WeChat.exe', 'Weixin.exe', 'WeChatAppEx.exe']);
+      expect(rules.map((r) => r.target).toSet(), {'direct'});
+      expect(t.takeException(), isNull);
+      await t.pumpWidget(const SizedBox());
     });
   }
 

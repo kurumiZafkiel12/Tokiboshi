@@ -13,6 +13,7 @@ class ConnectionDock extends StatelessWidget {
       required this.subscriptions,
       required this.latency,
       required this.running,
+      this.proxyActive,
       required this.busy,
       required this.onPick,
       required this.onToggle,
@@ -24,12 +25,14 @@ class ConnectionDock extends StatelessWidget {
   final NodeInfo? node;
   final List<Subscription> subscriptions;
   final Map<NodeInfo, int?> latency;
+  final bool? proxyActive;
   final bool running, busy, blocked;
   final VoidCallback onPick, onToggle, onProbe, onRestart;
   final VoidCallback? onCancel;
   final RuntimeMonitor? monitor;
   @override
   Widget build(BuildContext context) {
+    final active = proxyActive ?? running;
     Widget content() => LayoutBuilder(builder: (context, c) {
           final compact = c.maxWidth < 680;
           return Container(
@@ -78,7 +81,14 @@ class ConnectionDock extends StatelessWidget {
                           : '↑ —',
                       style: mono.copyWith(color: brand)),
                 ],
-                const SizedBox(width: 20),
+                if (!compact) ...[
+                  const SizedBox(width: 12),
+                  StatusDot(running ? '内核就绪' : '内核停止',
+                      color: running
+                          ? good
+                          : Theme.of(context).colorScheme.onSurfaceVariant),
+                ],
+                const SizedBox(width: 12),
                 if (!compact && node != null) ...[
                   LatencyText(node!, latency),
                   const SizedBox(width: 8)
@@ -90,7 +100,7 @@ class ConnectionDock extends StatelessWidget {
                           busy || blocked || node == null ? null : onProbe,
                       icon: const Icon(Icons.speed_outlined)),
                   IconButton(
-                      tooltip: '重新连接',
+                      tooltip: '重载内核配置',
                       onPressed:
                           running && !busy && !blocked ? onRestart : null,
                       icon: const Icon(Icons.refresh)),
@@ -112,13 +122,13 @@ class ConnectionDock extends StatelessWidget {
                                 child: CircularProgressIndicator(
                                     strokeWidth: 1.5, color: Colors.white))
                             : Icon(
-                                running
+                                active
                                     ? Icons.stop_circle_outlined
                                     : Icons.power_settings_new,
                                 size: 19),
                         label: Text(busy
                             ? (running ? '正在停止' : '取消连接')
-                            : running
+                            : active
                                 ? '停止代理'
                                 : '启动代理'))),
               ]));

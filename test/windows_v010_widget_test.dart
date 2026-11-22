@@ -63,8 +63,8 @@ void main() {
       expect(fetcher.requested, hasLength(1));
       // Nodes-only by design (2026-11-21): incompatible rule payloads
       // no longer fail the refresh - fresh nodes still commit.
-      expect(store.data.nodes.single.name,
-          incompatible ? 'usable' : 'fresh-node');
+      expect(
+          store.data.nodes.single.name, incompatible ? 'usable' : 'fresh-node');
       expect(find.byType(AlertDialog), findsNothing);
       await t.pump(const Duration(seconds: 31));
       await t.pumpAndSettle();
@@ -103,7 +103,7 @@ void main() {
     expect(store.data.subscriptions.single.lastError, 'synthetic failure');
     await t.pumpWidget(const SizedBox());
   });
-  testWidgets('live core defers scheduled subscriptions', (t) async {
+  testWidgets('active proxy defers scheduled subscriptions', (t) async {
     desktop(t);
     final store = MemoryStore();
     store.data.autoConnect = false;
@@ -116,13 +116,22 @@ void main() {
           updatedAt: '2020-01-01',
           refreshMinutes: 60)
     ];
+    store.data.nodes = const [
+      NodeInfo(
+          name: 'fixture',
+          outboundJson:
+              '{"type":"socks","server":"127.0.0.1","server_port":1}'),
+    ];
+    store.data.selectedIndex = 0;
     final fetcher = FakeFetcher({});
     await t.pumpWidget(TokiboshiApp(
-        bridge: FakeBridge()..running = true,
+        bridge: FakeBridge(),
         store: store,
         fetcher: fetcher,
         systemProxy: NoopSystemProxy(),
         allocatePort: (p, r) async => p));
+    await t.pumpAndSettle();
+    await t.tap(find.text('启动代理'));
     await t.pumpAndSettle();
     await t.pump(const Duration(seconds: 61));
     await t.pumpAndSettle();
@@ -286,7 +295,8 @@ void main() {
       });
       final store = _FailingStore();
       store.data.autoConnect = false;
-      store.data.desktop = store.data.desktop.copyWith(autoCheckUpdates: false);
+      store.data.desktop =
+          store.data.desktop.copyWith(autoCheckUpdates: false, autoRun: true);
       store.data.clashApiSecret = 'synthetic-only';
       store.data.clashApiPort = server.port;
       store.data.nodes = const [
@@ -302,7 +312,7 @@ void main() {
       store.data.selectedIndex = 0;
       try {
         await t.pumpWidget(TokiboshiApp(
-            bridge: FakeBridge()..running = true,
+            bridge: FakeBridge(),
             store: store,
             systemProxy: NoopSystemProxy(),
             allocatePort: (p, r) async => p));

@@ -4,9 +4,14 @@ import 'package:tokiboshi/bridge/core_bridge.dart';
 /// links below; the authoritative parser is the Rust layer.
 class FakeBridge implements CoreBridge {
   @override
-  Future<String> convertRuleProvider({required String text, required String behavior, required String format}) async =>
+  Future<String> convertRuleProvider(
+          {required String text,
+          required String behavior,
+          required String format}) async =>
       throw UnsupportedError('No provider conversion fixture');
   bool running = false;
+  bool? lastTunEnabled;
+  int startCount = 0;
   String? lastConfig;
 
   @override
@@ -66,6 +71,7 @@ class FakeBridge implements CoreBridge {
     if (nodes.isEmpty) {
       throw const FormatException('no nodes to build a config from');
     }
+    lastTunEnabled = enableTun;
     lastConfig = '{"outbounds":[${nodes.map((n) => n.outboundJson).join(',')}]'
         ',"listen_port":$mixedPort,"clash_api_port":$clashApiPort}';
     return lastConfig!;
@@ -77,6 +83,7 @@ class FakeBridge implements CoreBridge {
     required String configPath,
   }) async {
     if (running) throw StateError('already running');
+    startCount++;
     running = true;
   }
 

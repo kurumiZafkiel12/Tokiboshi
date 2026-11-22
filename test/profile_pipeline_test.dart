@@ -175,7 +175,7 @@ void main() {
     await t.pumpAndSettle();
     expect(store.data.subscriptions.single.profileJson, isNull);
     expect(store.data.subscriptions.single.profileState, 'nodes-only');
-    expect(bridge.running, false);
+    expect(bridge.running, true);
     await t.pumpWidget(const SizedBox());
   });
 }

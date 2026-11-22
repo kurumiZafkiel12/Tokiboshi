@@ -14,6 +14,11 @@ $code='using System.Threading; class OldGui { static void Main(){Thread.Sleep(60
 $stub=Join-Path $root 'stub.exe';Add-Type -TypeDefinition $code -OutputAssembly $stub -OutputType ConsoleApplication
 Copy-Item $stub "$app/tokiboshi.exe" -Force
 $gui=Start-Process "$app/tokiboshi.exe" -PassThru
+Copy-Item $stub "$app/sing-box.exe" -Force
+$core=Start-Process "$app/sing-box.exe" -PassThru
+$otherDir=Join-Path $root 'other-client';New-Item $otherDir -ItemType Directory | Out-Null
+Copy-Item $stub "$otherDir/sing-box.exe"
+$unrelated=Start-Process "$otherDir/sing-box.exe" -PassThru
 $oldFiles=Get-Content (Join-Path $PSScriptRoot '../legacy-v005-files.json') -Raw | ConvertFrom-Json
 $oldFiles+=@('retired-plugin.dll','data/retired.asset')
 ConvertTo-Json -InputObject $oldFiles | Set-Content "$app/installer-files.json"
@@ -30,6 +35,8 @@ $result=@{}
 try {
  Install $Installer (Join-Path $OutputDir 'chinese-upgrade.log')
  $gui.Refresh();$result.oldProcessClosed=$gui.HasExited
+ $core.Refresh();$result.oldCoreClosed=$core.HasExited
+ $unrelated.Refresh();$result.unrelatedCorePreserved=-not $unrelated.HasExited
  $result.retiredFilesRemoved=(-not(Test-Path "$app/retired-plugin.dll")) -and (-not(Test-Path "$app/data/retired.asset"))
  $result.unknownUserFilePreserved=Test-Path "$app/user-notes.txt"
  $result.dataAndRecoveryFilesPreserved=$true
@@ -46,7 +53,9 @@ try {
  $result | ConvertTo-Json
  if(-not $result.allPassed){throw 'Installer upgrade assertion failed'}
 } finally {
- if(-not $gui.HasExited){Stop-Process $gui.Id -Force -ErrorAction SilentlyContinue}
+ foreach($process in $gui,$core,$unrelated) {
+  if(-not $process.HasExited){Stop-Process $process.Id -Force -ErrorAction SilentlyContinue}
+ }
  $uninstall=Join-Path $app 'unins000.exe'
  if(Test-Path $uninstall){Start-Process $uninstall -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -Wait | Out-Null}
  Remove-Item $data -Recurse -Force -ErrorAction SilentlyContinue

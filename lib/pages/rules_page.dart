@@ -2,11 +2,14 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter_animate/flutter_animate.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 import '../services/clash_api.dart';
 import '../services/store.dart';
 import '../services/client_preferences.dart';
 import '../services/rule_resources.dart';
 import '../ui/design.dart';
+import '../ui/preferences.dart';
 
 class RulesPage extends StatefulWidget {
   const RulesPage(
@@ -26,6 +29,7 @@ class RulesPage extends StatefulWidget {
       this.onTemplateRouting,
       this.activeProcesses = const [],
       this.onAddProcessRule,
+      this.onAppRoute,
       this.dataDir,
       this.activeProfileId,
       this.customRules = const [],
@@ -49,6 +53,7 @@ class RulesPage extends StatefulWidget {
   /// 活跃进程（来自内核连接元数据；内核未启用进程识别时为空）。
   final List<String> activeProcesses;
   final void Function(String process, String target)? onAddProcessRule;
+  final void Function(List<String> processes, String target)? onAppRoute;
   @override
   State<RulesPage> createState() => _RulesPageState();
 }
@@ -205,31 +210,18 @@ class _RulesPageState extends State<RulesPage> {
                 label: const Text('查看来源')),
             FilledButton(
                 onPressed: widget.busy || conflict ? null : widget.onApply,
-                child: Text(widget.running ? '重启并应用配置' : '启动并应用配置'))
+                child: const Text('应用配置'))
           ]),
-          LayoutBuilder(
-              builder: (context, c) =>
-                  Wrap(spacing: 12, runSpacing: 12, children: [
-                    _meta(
-                        '规则来源',
-                        conflict
-                            ? '请选择配置'
-                            : profiles.firstOrNull?.name ?? '内置分流模板',
-                        profiles.isEmpty ? '仅节点订阅使用应用模板' : '订阅携带规则与 DNS',
-                        c),
-                    _meta('本地规则集', _ready == null ? '尚未读取' : '$_ready / 3 已缓存',
-                        '文件已落盘；是否生效以下方运行规则为准', c),
-                    _meta(
-                        '应用状态',
-                        live
-                            ? '运行内核规则'
-                            : widget.running
-                                ? '尚未确认'
-                                : '未运行',
-                        live ? '已从当前控制器读取' : '下方为已保存配置预览，不代表已生效',
-                        c),
-                  ])),
-          const SizedBox(height: 16),
+          Wrap(spacing: 16, runSpacing: 8, children: [
+            StatusDot(
+                conflict ? '请选择规则配置' : (profiles.firstOrNull?.name ?? '内置分流模板'),
+                color: Theme.of(context).colorScheme.primary),
+            StatusDot(_ready == null ? '规则缓存未读取' : '规则缓存 $_ready / 3',
+                color: _ready == 3 ? good : gold),
+            StatusDot(live ? '已读取内核运行规则' : '已保存规则预览',
+                color: live ? good : gold),
+          ]),
+          const SizedBox(height: 14),
           if (widget.onAddProcessRule != null)
             Padding(
                 padding: const EdgeInsets.only(bottom: 14),
@@ -241,6 +233,7 @@ class _RulesPageState extends State<RulesPage> {
                       .toList(),
                   busy: widget.busy,
                   onAdd: widget.onAddProcessRule!,
+                  onAppRoute: widget.onAppRoute,
                 )),
           if (widget.onTemplateRouting != null && profiles.isEmpty && !conflict)
             Panel(
@@ -411,27 +404,6 @@ class _RulesPageState extends State<RulesPage> {
               style: Theme.of(context).textTheme.bodySmall)
         ]));
   }
-
-  Widget _meta(String title, String value, String hint, BoxConstraints c) =>
-      SizedBox(
-          width: c.maxWidth < 530 ||
-                  MediaQuery.textScalerOf(context).scale(14) > 17
-              ? c.maxWidth
-              : (c.maxWidth - 24) / 3,
-          child: Panel(
-              child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                Text(title, style: Theme.of(context).textTheme.bodySmall),
-                const SizedBox(height: 5),
-                Text(value,
-                    style: const TextStyle(
-                        fontSize: 16, fontWeight: FontWeight.w500),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis),
-                const SizedBox(height: 6),
-                Text(hint, style: Theme.of(context).textTheme.bodySmall)
-              ])));
 }
 
 /// 内置模板规则的可配置行：开关 + 出站选择。
@@ -510,32 +482,56 @@ class _TemplateRuleRow extends StatelessWidget {
   }
 }
 
-const _apps = <String, String>{
-  'Chrome': 'chrome.exe',
-  'Edge': 'msedge.exe',
-  'Firefox': 'firefox.exe',
-  'Brave': 'brave.exe',
-  'Vivaldi': 'vivaldi.exe',
-  'Discord': 'Discord.exe',
-  'Telegram': 'Telegram.exe',
-  '微信': 'WeChat.exe',
-  'QQ': 'QQ.exe',
-  'Slack': 'slack.exe',
-  'Signal': 'Signal.exe',
-  'Teams': 'ms-teams.exe',
-  'VS Code': 'Code.exe',
-  'Git': 'git.exe',
-  'GitHub Desktop': 'GitHubDesktop.exe',
-  'OneDrive': 'OneDrive.exe',
-  'Dropbox': 'Dropbox.exe',
-  'Postman': 'Postman.exe',
-  'Spotify': 'Spotify.exe',
-  'Steam': 'steam.exe',
-  'Epic Games': 'EpicGamesLauncher.exe',
-  'Battle.net': 'Battle.net.exe',
-  'EA App': 'EADesktop.exe',
-  'qBittorrent': 'qbittorrent.exe',
-  'aria2': 'aria2c.exe',
+typedef _App = ({String name, List<String> processes});
+
+const _apps = <String, List<_App>>{
+  '浏览器': [
+    (name: 'Chrome', processes: ['chrome.exe']),
+    (name: 'Edge', processes: ['msedge.exe']),
+    (name: 'Firefox', processes: ['firefox.exe']),
+    (name: 'Brave', processes: ['brave.exe']),
+    (name: 'Vivaldi', processes: ['vivaldi.exe']),
+    (name: 'Opera', processes: ['opera.exe']),
+  ],
+  '通讯': [
+    (name: 'Telegram', processes: ['Telegram.exe']),
+    (
+      name: 'Discord',
+      processes: ['Discord.exe', 'DiscordCanary.exe', 'DiscordPTB.exe']
+    ),
+    (name: '微信', processes: ['WeChat.exe', 'Weixin.exe', 'WeChatAppEx.exe']),
+    (name: 'QQ', processes: ['QQ.exe', 'QQNT.exe']),
+    (name: 'Teams', processes: ['ms-teams.exe', 'Teams.exe']),
+    (name: '飞书', processes: ['Feishu.exe', 'Lark.exe']),
+    (name: '钉钉', processes: ['DingTalk.exe']),
+    (name: 'Slack', processes: ['slack.exe']),
+    (name: 'Signal', processes: ['Signal.exe']),
+    (name: 'WhatsApp', processes: ['WhatsApp.exe', 'WhatsApp.Root.exe']),
+  ],
+  '游戏与影音': [
+    (name: 'Steam', processes: ['steam.exe', 'steamwebhelper.exe']),
+    (
+      name: 'Epic Games',
+      processes: ['EpicGamesLauncher.exe', 'EpicWebHelper.exe']
+    ),
+    (name: 'Battle.net', processes: ['Battle.net.exe']),
+    (name: 'EA App', processes: ['EADesktop.exe', 'EABackgroundService.exe']),
+    (name: 'Xbox', processes: ['XboxPcApp.exe', 'GamingServices.exe']),
+    (name: 'Spotify', processes: ['Spotify.exe']),
+  ],
+  '开发与下载': [
+    (name: 'VS Code', processes: ['Code.exe', 'Code - Insiders.exe']),
+    (
+      name: 'Git',
+      processes: ['git.exe', 'git-remote-http.exe', 'git-remote-https.exe']
+    ),
+    (name: 'GitHub Desktop', processes: ['GitHubDesktop.exe']),
+    (name: 'OneDrive', processes: ['OneDrive.exe']),
+    (name: 'Dropbox', processes: ['Dropbox.exe']),
+    (name: 'Postman', processes: ['Postman.exe']),
+    (name: 'qBittorrent', processes: ['qbittorrent.exe']),
+    (name: 'aria2', processes: ['aria2c.exe']),
+  ],
 };
 
 class _PerAppRoutingCard extends StatefulWidget {
@@ -544,6 +540,7 @@ class _PerAppRoutingCard extends StatefulWidget {
     required this.activeProcesses,
     required this.existing,
     required this.onAdd,
+    required this.onAppRoute,
     required this.busy,
   });
   final Map<String, String> targets;
@@ -551,6 +548,7 @@ class _PerAppRoutingCard extends StatefulWidget {
   final List<RoutingRule> existing;
   final bool busy;
   final void Function(String process, String target) onAdd;
+  final void Function(List<String> processes, String target)? onAppRoute;
   @override
   State<_PerAppRoutingCard> createState() => _PerAppRoutingCardState();
 }
@@ -558,7 +556,127 @@ class _PerAppRoutingCard extends StatefulWidget {
 class _PerAppRoutingCardState extends State<_PerAppRoutingCard> {
   final _process = TextEditingController();
   String _target = 'proxy';
-  bool _catalog = false;
+  String _category = _apps.keys.first;
+  bool _custom = false;
+
+  String _assigned(_App app) {
+    final byName = {
+      for (final rule in widget.existing) rule.value.toLowerCase(): rule.target
+    };
+    final targets = {
+      for (final name in app.processes) byName[name.toLowerCase()] ?? ''
+    };
+    return targets.length == 1 ? targets.first : 'mixed';
+  }
+
+  Future<void> _editApp(_App app, Map<String, String> options) async {
+    final selected = await showDialog<String>(
+      context: context,
+      builder: (context) => SimpleDialog(
+        title: Text('${app.name} · 选择出口'),
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(24, 0, 24, 8),
+            child: Text(app.processes.join(' · ')),
+          ),
+          SizedBox(
+            width: 420,
+            height: 280,
+            child: ListView(
+              children: [
+                for (final option in {'': '跟随全局规则', ...options}.entries)
+                  ListTile(
+                    title: Text(option.value),
+                    selected: _assigned(app) == option.key,
+                    onTap: () => Navigator.pop(context, option.key),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+    if (mounted && !widget.busy && selected != null) {
+      widget.onAppRoute?.call(app.processes, selected);
+    }
+  }
+
+  Widget _catalog(Map<String, String> options) => Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Wrap(
+            spacing: 8,
+            runSpacing: 6,
+            children: [
+              for (final category in _apps.keys)
+                ChoiceChip(
+                  label: Text(category),
+                  selected: category == _category,
+                  onSelected: (_) => setState(() => _category = category),
+                ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          LayoutBuilder(builder: (context, bounds) {
+            final columns = bounds.maxWidth >= 840
+                ? 3
+                : bounds.maxWidth >= 530
+                    ? 2
+                    : 1;
+            final width = (bounds.maxWidth - 8 * (columns - 1)) / columns;
+            final colors = Theme.of(context).colorScheme;
+            final apps = Wrap(
+              key: ValueKey(_category),
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (final app in _apps[_category]!)
+                  SizedBox(
+                    width: width,
+                    child: OutlinedButton(
+                      onPressed:
+                          widget.busy ? null : () => _editApp(app, options),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 8),
+                        child: Row(children: [
+                          Icon(LucideIcons.appWindow,
+                              size: 18, color: colors.primary),
+                          const SizedBox(width: 10),
+                          Expanded(
+                              child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(app.name,
+                                  style:
+                                      Theme.of(context).textTheme.titleMedium),
+                              Text(
+                                  options[_assigned(app)] ??
+                                      (_assigned(app) == 'mixed'
+                                          ? '多个出口'
+                                          : _assigned(app).isEmpty
+                                              ? '跟随全局规则'
+                                              : '出口需要重选'),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: Theme.of(context).textTheme.bodySmall),
+                            ],
+                          )),
+                          const Icon(LucideIcons.chevronDown, size: 15),
+                        ]),
+                      ),
+                    ),
+                  ),
+              ],
+            );
+            final duration = UiScope.duration(context);
+            return duration == Duration.zero
+                ? apps
+                : apps
+                    .animate(key: ValueKey(_category))
+                    .fadeIn(duration: duration);
+          }),
+        ],
+      );
 
   @override
   void dispose() {
@@ -585,81 +703,83 @@ class _PerAppRoutingCardState extends State<_PerAppRoutingCard> {
             children: [
               Text('按软件分流', style: Theme.of(context).textTheme.titleMedium),
               TextButton.icon(
-                  onPressed: () => setState(() => _catalog = !_catalog),
-                  icon: Icon(_catalog ? Icons.expand_less : Icons.expand_more),
-                  label: Text(_catalog ? '收起更多应用' : '查看全部 25 个内置应用')),
+                  onPressed: () => setState(() => _custom = !_custom),
+                  icon:
+                      Icon(_custom ? LucideIcons.chevronUp : LucideIcons.plus),
+                  label: Text(_custom ? '收起手动规则' : '手动添加')),
             ]),
-        Wrap(spacing: 7, runSpacing: 7, children: [
-          for (final app in _apps.entries.take(_catalog ? _apps.length : 8))
-            ActionChip(
-                label: Text(app.key),
+        if (widget.onAppRoute != null) ...[
+          const Text('为常用软件选择独立出口。规则模式下应用配置后生效。'),
+          const SizedBox(height: 12),
+          _catalog(options),
+        ],
+        if (_custom || widget.onAppRoute == null) ...[
+          const SizedBox(height: 12),
+          if (widget.activeProcesses.isNotEmpty)
+            Wrap(spacing: 7, children: [
+              for (final proc in widget.activeProcesses.take(12))
+                ActionChip(
+                    avatar: const Icon(Icons.monitor_heart_outlined, size: 14),
+                    label: Text(proc),
+                    onPressed: widget.busy
+                        ? null
+                        : () => setState(() => _process.text = proc)),
+            ]),
+          Row(children: [
+            Expanded(
+                child: TextField(
+                    controller: _process,
+                    decoration: const InputDecoration(
+                        labelText: '软件进程（exe）', hintText: '从上方选择或手工填写'))),
+            const SizedBox(width: 10),
+            Expanded(
+                child: DropdownButton<String>(
+                    value: selected,
+                    isExpanded: true,
+                    items: [
+                      for (final option in options.entries)
+                        DropdownMenuItem(
+                            value: option.key,
+                            child: Text(option.value,
+                                overflow: TextOverflow.ellipsis)),
+                    ],
+                    onChanged: widget.busy
+                        ? null
+                        : (value) =>
+                            setState(() => _target = value ?? 'proxy'))),
+            const SizedBox(width: 10),
+            FilledButton(
                 onPressed: widget.busy
                     ? null
-                    : () => setState(() => _process.text = app.value)),
-        ]),
-        const SizedBox(height: 12),
-        if (widget.activeProcesses.isNotEmpty)
-          Wrap(spacing: 7, children: [
-            for (final proc in widget.activeProcesses.take(12))
-              ActionChip(
-                  avatar: const Icon(Icons.monitor_heart_outlined, size: 14),
-                  label: Text(proc),
-                  onPressed: widget.busy
-                      ? null
-                      : () => setState(() => _process.text = proc)),
+                    : () {
+                        if (_process.text.trim().isNotEmpty)
+                          widget.onAdd(_process.text.trim(), selected);
+                      },
+                child: const Text('保存分流')),
           ]),
-        Row(children: [
-          Expanded(
-              child: TextField(
-                  controller: _process,
-                  decoration: const InputDecoration(
-                      labelText: '软件进程（exe）', hintText: '从上方选择或手工填写'))),
-          const SizedBox(width: 10),
-          Expanded(
-              child: DropdownButton<String>(
-                  value: selected,
-                  isExpanded: true,
-                  items: [
-                    for (final option in options.entries)
-                      DropdownMenuItem(
-                          value: option.key,
-                          child: Text(option.value,
-                              overflow: TextOverflow.ellipsis)),
-                  ],
-                  onChanged: widget.busy
-                      ? null
-                      : (value) => setState(() => _target = value ?? 'proxy'))),
-          const SizedBox(width: 10),
-          FilledButton(
-              onPressed: widget.busy
-                  ? null
-                  : () {
-                      if (_process.text.trim().isNotEmpty)
-                        widget.onAdd(_process.text.trim(), selected);
-                    },
-              child: const Text('保存分流')),
-        ]),
-        const SizedBox(height: 8),
-        const Text('在规则模式和可识别进程的流量上匹配。保存后点「应用配置」，跟随常规规则可删除单项。'),
-        for (final rule in widget.existing)
-          ListTile(
-              contentPadding: EdgeInsets.zero,
-              title: Text(rule.value),
-              subtitle: Text(options[rule.target] ??
-                  (rule.target.startsWith('node:')
-                      ? '出口已缺失或歧义，重新选择'
-                      : rule.target)),
-              onTap: widget.busy
-                  ? null
-                  : () => setState(() {
-                        _process.text = rule.value;
-                        _target = rule.target;
-                      }),
-              trailing: IconButton(
-                  tooltip: '移除软件规则',
-                  icon: const Icon(Icons.delete_outline),
-                  onPressed:
-                      widget.busy ? null : () => widget.onAdd(rule.value, ''))),
+          const SizedBox(height: 8),
+          const Text('保存后点击「应用配置」。未采用系统代理的软件应使用 TUN。'),
+          for (final rule in widget.existing)
+            ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: Text(rule.value),
+                subtitle: Text(options[rule.target] ??
+                    (rule.target.startsWith('node:')
+                        ? '出口已缺失或歧义，重新选择'
+                        : rule.target)),
+                onTap: widget.busy
+                    ? null
+                    : () => setState(() {
+                          _process.text = rule.value;
+                          _target = rule.target;
+                        }),
+                trailing: IconButton(
+                    tooltip: '移除软件规则',
+                    icon: const Icon(Icons.delete_outline),
+                    onPressed: widget.busy
+                        ? null
+                        : () => widget.onAdd(rule.value, ''))),
+        ],
       ],
     ));
   }

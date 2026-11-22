@@ -70,9 +70,16 @@ begin
     ExpandConstant('{tmp}\prepare-upgrade.ps1') + '" -Mode ' + Mode +
     ' -InstallDir "' + ExpandConstant('{app}') + '" -DataDir "' +
     ExpandConstant('{userappdata}\Tokiboshi') + '" -Snapshot "' +
-    UpgradeSnapshot + '" -LegacyManifest "' + ExpandConstant('{tmp}\legacy-v005-files.json') + '"';
+    UpgradeSnapshot + '" -LegacyManifest "' + ExpandConstant('{tmp}\legacy-v005-files.json') +
+    '" -OriginalSidFile "' + ExpandConstant('{tmp}\tokiboshi-upgrade-sid.txt') + '"';
   Result := Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
     Parameters, '', SW_HIDE, ewWaitUntilTerminated, Code) and (Code = 0);
+  if not Result and (Mode = 'Prepare') then begin
+    Log('Retrying path-scoped process shutdown with administrator rights.');
+    Result := ShellExec('runas', ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
+      Parameters, '', SW_HIDE, ewWaitUntilTerminated, Code) and (Code = 0);
+  end;
+  Log('Upgrade helper ' + Mode + ' exit code: ' + IntToStr(Code));
 end;
 
 function PrepareToInstall(var NeedsRestart: Boolean): String;
@@ -82,7 +89,7 @@ begin
   ExtractTemporaryFile('legacy-v005-files.json');
   UpgradeSnapshot := ExpandConstant('{tmp}\tokiboshi-previous-files.json');
   if not RunUpgradeHelper('Prepare') then
-    Result := '无法关闭旧版进程或读取旧版文件清单。请关闭 Tokiboshi 后重试。'
+    Result := '无法自动关闭旧版 Tokiboshi，或无法读取旧版文件清单。若系统提示授权，请允许后重试。'
   else
     Result := '';
 end;
