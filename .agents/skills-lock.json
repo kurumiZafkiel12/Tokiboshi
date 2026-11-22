@@ -1,0 +1,192 @@
+{
+  "sources": {
+    "ui-ux-pro-max": {
+      "url": "https://github.com/nextlevelbuilder/ui-ux-pro-max-skill",
+      "revision": "f76d1653d7467fc11fb9d9d79295a421c92ab958",
+      "license": "skill-licenses/ui-ux-pro-max.txt",
+      "license_sha256": "738f69dfa83db5c347c678fb9d90e560877059f0de93a327c39001bff92dc014"
+    },
+    "flutter-current": {
+      "url": "https://github.com/flutter/agent-plugins",
+      "revision": "ff6d472ee66dbed566c4500edee460c94fde0a02",
+      "license": "skill-licenses/flutter-current.txt",
+      "license_sha256": "5b95696b504e162bcf775060ec416005df9969a95cda6f7d4ddb57327dd74d35"
+    },
+    "flutter-archive": {
+      "url": "https://github.com/flutter/agent-plugins",
+      "revision": "44685e80869e5e0304075974c7f9c598f5a3a967",
+      "license": "skill-licenses/flutter-archive.txt",
+      "license_sha256": "5b95696b504e162bcf775060ec416005df9969a95cda6f7d4ddb57327dd74d35"
+    },
+    "flutter-design-engineer": {
+      "url": "https://github.com/musabekisakov-imj/flutter-design-engineer",
+      "revision": "9355c1ab90ed870250fb3ba979321456ff7addda",
+      "license": "skill-licenses/flutter-design-engineer.txt",
+      "license_sha256": "ceac476cde0427f90505ba15460e398e866f4a1cea9d11ee6fb6a80711b4801b"
+    },
+    "shadcn-flutter": {
+      "url": "https://github.com/sunarya-thito/shadcn_flutter",
+      "revision": "611caafcdfa0da659924c7a7679083714b917d17",
+      "license": "skill-licenses/shadcn-flutter.txt",
+      "license_sha256": "1dd3e2243babb14501e4ec5188fe548f5e9a285ec79180133c416f851fd0ed47"
+    },
+    "shadcn-ui-flutter": {
+      "url": "https://github.com/nank1ro/flutter-shadcn-ui",
+      "revision": "548324d212834fae8955bcef16fb889bc0a66b63",
+      "license": "skill-licenses/shadcn-ui-flutter.txt",
+      "license_sha256": "466a3e8cee1b8ecfb44b51340e2fceb218955320955c334ad98a2cd4c40893dd"
+    },
+    "shad-overview": {
+      "url": "https://github.com/serverpod/shad",
+      "revision": "f122003f3a4a4056f5cda2141f2eafbeb932c5b0",
+      "license": "skill-licenses/shad-overview.txt",
+      "license_sha256": "bb0919dbf976854b451d44196ce0a6f12c6deb8ed6c7140bf35adecf1d7e9b90"
+    }
+  },
+  "skills": {
+    "ui-ux-pro-max": {
+      "source": "ui-ux-pro-max",
+      "upstream_path": ".claude/skills/ui-ux-pro-max",
+      "files": 81,
+      "tree_sha256": "84bd5c95ac1aa8838dbfd1ebcfb6cd6621dffa3caae82308a44437cfbe0d7216"
+    },
+    "flutter-build-responsive-layout": {
+      "source": "flutter-current",
+      "upstream_path": "skills/flutter-build-responsive-layout",
+      "files": 1,
+      "tree_sha256": "c61e018a2f75420df862953aedd033992285dcef2424ffef1840b9760232ed2a"
+    },
+    "flutter-fix-layout-issues": {
+      "source": "flutter-current",
+      "upstream_path": "skills/flutter-fix-layout-issues",
+      "files": 1,
+      "tree_sha256": "256bea4118c871fc97cf1f740e2317dc11c61c7cfe99c902f68e0897e320b044"
+    },
+    "flutter-add-widget-preview": {
+      "source": "flutter-current",
+      "upstream_path": "skills/flutter-add-widget-preview",
+      "files": 1,
+      "tree_sha256": "30df9411ab2e0652fbbc1aa9c2e295b9b378565840da3f530944dda13b1834ce"
+    },
+    "flutter-add-widget-test": {
+      "source": "flutter-current",
+      "upstream_path": "skills/flutter-add-widget-test",
+      "files": 1,
+      "tree_sha256": "b6fb8377960e67284c077d55bda439c5837dd97e84f4bd3e02ed7526b3b86b67"
+    },
+    "flutter-add-integration-test": {
+      "source": "flutter-current",
+      "upstream_path": "skills/flutter-add-integration-test",
+      "files": 1,
+      "tree_sha256": "ba73b98ebd70f8647bc7480a50dbf31a59844cd6d88c1d6b6a2c6e1d79703511"
+    },
+    "dart-run-static-analysis": {
+      "source": "flutter-current",
+      "upstream_path": "skills/dart-run-static-analysis",
+      "files": 1,
+      "tree_sha256": "39d79a0ef5521ec1d7e0fa10a728a5b6af76d0f80352c2a9910fa13863e616df"
+    },
+    "dart-resolve-package-conflicts": {
+      "source": "flutter-current",
+      "upstream_path": "skills/dart-resolve-package-conflicts",
+      "files": 1,
+      "tree_sha256": "f62a4a4e0e1ab753cef565a9962d32ca75179040b01faf09ff57d50ca18062d1"
+    },
+    "flutter-theming-apps": {
+      "source": "flutter-archive",
+      "upstream_path": "skills/flutter-theming-apps",
+      "files": 1,
+      "tree_sha256": "a961f4be7476cdabe7997e44b8242b89b94cd68be3c04ea0d849828126d7ca7e"
+    },
+    "flutter-animating-apps": {
+      "source": "flutter-archive",
+      "upstream_path": "skills/flutter-animating-apps",
+      "files": 1,
+      "tree_sha256": "cb8d2719c652a06cd827686182b2c972051411dae52a31aaf6d8b9e8a172e4f4"
+    },
+    "flutter-building-layouts": {
+      "source": "flutter-archive",
+      "upstream_path": "skills/flutter-building-layouts",
+      "files": 1,
+      "tree_sha256": "0d7a7727de5f694888a368bf3385d56470d250e0dd096b37b345f2745f29b9ca"
+    },
+    "flutter-improving-accessibility": {
+      "source": "flutter-archive",
+      "upstream_path": "skills/flutter-improving-accessibility",
+      "files": 1,
+      "tree_sha256": "ba0d404e3330f63641a4a4fa5fef59264dfaf4ddb98de19094d593fed5982550"
+    },
+    "flutter-testing-apps": {
+      "source": "flutter-archive",
+      "upstream_path": "skills/flutter-testing-apps",
+      "files": 1,
+      "tree_sha256": "4198384ca696580b81b3742cc9a256ffe617eab02aef8b70d0f60d923ac31461"
+    },
+    "flutter-reducing-app-size": {
+      "source": "flutter-archive",
+      "upstream_path": "skills/flutter-reducing-app-size",
+      "files": 1,
+      "tree_sha256": "1bddede15a4dbcbe776a015563292cf03658cc7074d98cb077ccd8510f0ee0d1"
+    },
+    "flutter-design": {
+      "source": "flutter-design-engineer",
+      "upstream_path": "skills/flutter-design",
+      "files": 5,
+      "tree_sha256": "1fcbff65f8f46c7da60127f2124171632c3985aaa5c9ab4843fb85f16d1c9513"
+    },
+    "flutter-audit": {
+      "source": "flutter-design-engineer",
+      "upstream_path": "skills/flutter-audit",
+      "files": 6,
+      "tree_sha256": "9e34eadd60c9bc5a689cbd307d55d26c2017978e881998406c4df8a859f4bd9b"
+    },
+    "flutter-design-system": {
+      "source": "flutter-design-engineer",
+      "upstream_path": "skills/flutter-design-system",
+      "files": 9,
+      "tree_sha256": "4ce48f0a482496c52d2030c6452c92e3c75dabdcd6d13213c5c31c18dc116468"
+    },
+    "flutter-implementation": {
+      "source": "flutter-design-engineer",
+      "upstream_path": "skills/flutter-implementation",
+      "files": 7,
+      "tree_sha256": "af2e06eabeed6e6b58b0f0c0ed203d2b51141b243330253d76a83276100c2bd2"
+    },
+    "flutter-motion": {
+      "source": "flutter-design-engineer",
+      "upstream_path": "skills/flutter-motion",
+      "files": 4,
+      "tree_sha256": "e1849d533b40348d658eff8b5d1df5592733ecf3df06a8bd3a670666890f1a8c"
+    },
+    "flutter-accessibility": {
+      "source": "flutter-design-engineer",
+      "upstream_path": "skills/flutter-accessibility",
+      "files": 4,
+      "tree_sha256": "26aa8004ac5fef124a20d650df189b9f53f5151cde1a3a6ada8a24d23f8b7e5c"
+    },
+    "flutter-visual-qa": {
+      "source": "flutter-design-engineer",
+      "upstream_path": "skills/flutter-visual-qa",
+      "files": 4,
+      "tree_sha256": "b610b8d3a415513711a4297ed880f0f059d81a6c7393b55f097e0ca118af4c06"
+    },
+    "shadcn-flutter": {
+      "source": "shadcn-flutter",
+      "upstream_path": "packages/shadcn_flutter/skills/shadcn-flutter",
+      "files": 143,
+      "tree_sha256": "b868dd95c25381b0ac34840ee4df13eeef0b45a119f0f3f509a344d86c44afd5"
+    },
+    "shadcn-ui-flutter": {
+      "source": "shadcn-ui-flutter",
+      "upstream_path": "skills/shadcn-ui-flutter",
+      "files": 42,
+      "tree_sha256": "0454a7bb8d21f1bc47dd88d0615911529ca7a5fe8d14f3aedc44b564fca20f5d"
+    },
+    "shad-overview": {
+      "source": "shad-overview",
+      "upstream_path": "skills/shad-overview",
+      "files": 56,
+      "tree_sha256": "d96729e7657daaaf9ee6f16a4fefcabc49a501c54a2b57cef6d66a378fa30150"
+    }
+  }
+}

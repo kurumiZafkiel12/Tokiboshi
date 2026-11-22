@@ -22,6 +22,14 @@ dependencies:
   image: ^4.5.4
   zxing2: ^0.2.4
 
+  # Shared UI foundation for subsequent Windows and Android work.
+  shadcn_flutter: ^0.0.55
+  fl_chart: ^1.3.1
+  lucide_icons_flutter: ^4.0.3
+  flutter_animate: ^4.5.2
+  # 2.x uses the same Flutter Material types as the existing pages.
+  data_table_2: ^2.8.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
