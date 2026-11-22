@@ -20,6 +20,7 @@ class NodesPage extends StatefulWidget {
       required this.latency,
       required this.onSelect,
       required this.onDelete,
+      this.onEdit,
       required this.onImport,
       required this.onMeasureAll,
       this.onCreateChain,
@@ -34,6 +35,7 @@ class NodesPage extends StatefulWidget {
   final Map<NodeInfo, int?> latency;
   final Set<NodeInfo> pendingNodes;
   final ValueChanged<int> onSelect, onDelete;
+  final void Function(int index, NodeInfo updated)? onEdit;
   final VoidCallback onImport, onMeasureAll;
   final VoidCallback? onCreateChain;
   final ValueChanged<NodeInfo>? onMeasureNode;
@@ -478,10 +480,32 @@ class _NodesPageState extends State<NodesPage> {
                               child: widget.pendingNodes.contains(n)
                                   ? const Tag('待应用', color: gold)
                                   : LatencyText(n, widget.latency)),
-                          IconButton(
-                              tooltip: '节点详情',
-                              onPressed: () => _details(i),
-                              icon: const Icon(Icons.more_horiz, size: 17)),
+                          PopupMenuButton<String>(
+                              tooltip: '节点操作',
+                              icon: const Icon(Icons.more_horiz, size: 17),
+                              onSelected: (v) {
+                                if (v == 'details') return _details(i);
+                                if (v == 'edit') return _edit(i);
+                                if (v == 'delete') {
+                                  widget.running || widget.busy
+                                      ? toastBlocked(context)
+                                      : _delete(i);
+                                }
+                              },
+                              itemBuilder: (_) => [
+                                    const PopupMenuItem(
+                                        value: 'details', child: Text('查看详情')),
+                                    if (n.source.isEmpty &&
+                                        !widget.busy)
+                                      const PopupMenuItem(
+                                          value: 'edit', child: Text('编辑节点')),
+                                    if (!widget.running && !widget.busy)
+                                      const PopupMenuItem(
+                                          value: 'delete',
+                                          child: Text('删除节点',
+                                              style: TextStyle(
+                                                  color: Colors.redAccent))),
+                                  ]),
                           SizedBox(
                               width: 20,
                               child: selected
@@ -489,6 +513,18 @@ class _NodesPageState extends State<NodesPage> {
                                       color: scheme.primary, size: 17)
                                   : const SizedBox())
                         ])))));
+  }
+
+  void toastBlocked(BuildContext context) {
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('内核运行中：先停止代理再删除节点'),
+        duration: Duration(seconds: 2)));
+  }
+
+  Future<void> _edit(int index) async {
+    final updated = await showNodeEditor(context, widget.nodes[index]);
+    if (updated == null) return;
+    widget.onEdit?.call(index, updated);
   }
 
   Widget _card(int i) {

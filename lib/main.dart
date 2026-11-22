@@ -1029,6 +1029,21 @@ class _ShellPageState extends State<ShellPage>
 
   // ---- nodes ----
 
+  /// 编辑手动导入节点（订阅节点随订阅更新，不允许本地编辑）。
+  void _editNode(int index, NodeInfo updated) {
+    if (index < 0 || index >= _data.nodes.length) return;
+    final before = _data.copyWith();
+    setState(() {
+      _data.nodes = [
+        for (var i = 0; i < _data.nodes.length; i++)
+          if (i == index) updated else _data.nodes[i]
+      ];
+    });
+    unawaited(_persistImport(before));
+    _setMessage('节点「${updated.name}」已更新，重启内核后生效');
+  }
+
+
   String _nodeTag(NodeInfo node) {
     final nodes = _running ? _runtimeNodes : profileNodes(_data);
     final index = nodes.indexOf(node);
@@ -2363,6 +2378,7 @@ class _ShellPageState extends State<ShellPage>
               ? _data.nodes.toSet().difference(_runtimeNodes.toSet())
               : const {},
           onDelete: _deleteNode,
+          onEdit: _editNode,
           onImport: _importDialog,
           onImportMethod: (method) => _importDialog(initialMethod: method),
           onMeasureAll: _measureAll,

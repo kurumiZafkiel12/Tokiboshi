@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import '../bridge/core_bridge.dart';
 import '../services/store.dart';
@@ -251,6 +252,126 @@ Future<void> showNodeDetails(BuildContext context, NodeInfo node,
                                                   .error))),
                               ]))
                         ]))))));
+
+
+/// 编辑手动导入的节点（订阅节点随订阅更新，不允许本地编辑）。
+/// 返回更新后的 NodeInfo；取消返回 null。
+Future<NodeInfo?> showNodeEditor(BuildContext context, NodeInfo node) async {
+  Map<String, dynamic> ob;
+  try {
+    ob = jsonDecode(node.outboundJson) as Map<String, dynamic>;
+  } catch (_) {
+    await showDialog<void>(
+        context: context,
+        builder: (_) => AlertDialog(
+            title: const Text('无法编辑'),
+            content: const Text('该节点的出站配置无法解析（非 JSON）。'),
+            actions: [
+              TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('关闭'))
+            ]));
+    return null;
+  }
+  final name = TextEditingController(text: nodeDisplayName(node));
+  final server = TextEditingController(text: '${ob['server'] ?? ''}');
+  final port = TextEditingController(text: '${ob['server_port'] ?? ''}');
+  final secret = TextEditingController(
+      text: '${ob['password'] ?? ob['uuid'] ?? ob['psk'] ?? ''}');
+  final sniKey = ob['tls'] is Map && (ob['tls'] as Map)['sni'] != null
+      ? 'sni'
+      : (ob['tls'] is Map && (ob['tls'] as Map)['server_name'] != null
+          ? 'server_name'
+          : null);
+  final sni = TextEditingController(
+      text: sniKey == null ? '' : '${(ob['tls'] as Map)[sniKey]}');
+  final hasSecret =
+      ob.containsKey('password') || ob.containsKey('uuid') || ob.containsKey('psk');
+  final secretLabel = ob.containsKey('uuid')
+      ? 'UUID'
+      : ob.containsKey('psk')
+          ? 'PSK'
+          : '密码';
+  String? error;
+
+  return showDialog<NodeInfo>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialog) => StatefulBuilder(builder: (dialog, setState) {
+            Widget field(String label, TextEditingController c,
+                    {bool obscure = false}) =>
+                Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: TextField(
+                        controller: c,
+                        obscureText: obscure,
+                        decoration: InputDecoration(
+                            labelText: label,
+                            border: const OutlineInputBorder(),
+                            isDense: true)));
+            return AlertDialog(
+                title: const Text('编辑节点'),
+                content: SingleChildScrollView(
+                    child: Column(mainAxisSize: MainAxisSize.min, children: [
+                  field('名称', name),
+                  Row(children: [
+                    Expanded(flex: 3, child: field('服务器', server)),
+                    const SizedBox(width: 10),
+                    Expanded(child: field('端口', port)),
+                  ]),
+                  if (hasSecret) field(secretLabel, secret, obscure: true),
+                  if (sniKey != null) field('SNI', sni),
+                  if (error != null)
+                    Text(error,
+                        style: TextStyle(
+                            color: Theme.of(context).colorScheme.error,
+                            fontSize: 12)),
+                  const Text('仅手动导入的节点可编辑；订阅节点随订阅更新。',
+                      style: TextStyle(fontSize: 11)),
+                ])),
+                actions: [
+                  TextButton(
+                      onPressed: () => Navigator.pop(dialog),
+                      child: const Text('取消')),
+                  FilledButton(
+                      onPressed: () {
+                        final sv = server.text.trim();
+                        final pt = int.tryParse(port.text.trim());
+                        if (sv.isEmpty || pt == null || pt <= 0 || pt > 65535) {
+                          setState(() =>
+                              error = '服务器与端口无效（端口 1–65535）');
+                          return;
+                        }
+                        if (name.text.trim().isEmpty) {
+                          setState(() => error = '名称不能为空');
+                          return;
+                        }
+                        ob['server'] = sv;
+                        ob['server_port'] = pt;
+                        if (hasSecret && secret.text.isNotEmpty) {
+                          final key = ob.containsKey('uuid')
+                              ? 'uuid'
+                              : ob.containsKey('psk')
+                                  ? 'psk'
+                                  : 'password';
+                          ob[key] = secret.text.trim();
+                        }
+                        if (sniKey != null && sni.text.trim().isNotEmpty) {
+                          (ob['tls'] as Map)[sniKey] = sni.text.trim();
+                        }
+                        if (ob.containsKey('tag')) ob['tag'] = name.text.trim();
+                        Navigator.pop(
+                            dialog,
+                            NodeInfo(
+                                name: name.text.trim(),
+                                outboundJson: jsonEncode(ob),
+                                source: node.source,
+                                group: node.group));
+                      },
+                      child: const Text('保存')),
+                ]);
+          }));
+}
 
 class NodePicker extends StatefulWidget {
   const NodePicker(
