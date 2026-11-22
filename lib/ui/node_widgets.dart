@@ -294,7 +294,7 @@ Future<NodeInfo?> showNodeEditor(BuildContext context, NodeInfo node) async {
       : ob.containsKey('psk')
           ? 'PSK'
           : '密码';
-  String? error;
+  String error = '';
 
   return showDialog<NodeInfo>(
       context: context,
@@ -323,7 +323,7 @@ Future<NodeInfo?> showNodeEditor(BuildContext context, NodeInfo node) async {
                   ]),
                   if (hasSecret) field(secretLabel, secret, obscure: true),
                   if (sniKey != null) field('SNI', sni),
-                  if (error != null)
+                  if (error.isNotEmpty)
                     Text(error,
                         style: TextStyle(
                             color: Theme.of(context).colorScheme.error,
@@ -340,12 +340,11 @@ Future<NodeInfo?> showNodeEditor(BuildContext context, NodeInfo node) async {
                         final sv = server.text.trim();
                         final pt = int.tryParse(port.text.trim());
                         if (sv.isEmpty || pt == null || pt <= 0 || pt > 65535) {
-                          setState(() =>
-                              error = '服务器与端口无效（端口 1–65535）');
+                          error = '服务器与端口无效（端口 1–65535）');
                           return;
                         }
                         if (name.text.trim().isEmpty) {
-                          setState(() => error = '名称不能为空');
+                          error = '名称不能为空';
                           return;
                         }
                         ob['server'] = sv;
