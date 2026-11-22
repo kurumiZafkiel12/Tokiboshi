@@ -324,10 +324,12 @@ Future<NodeInfo?> showNodeEditor(BuildContext context, NodeInfo node) async {
                   if (hasSecret) field(secretLabel, secret, obscure: true),
                   if (sniKey != null) field('SNI', sni),
                   if (error.isNotEmpty)
-                    Text(error,
-                        style: TextStyle(
-                            color: Theme.of(context).colorScheme.error,
-                            fontSize: 12)),
+                    Padding(
+                        padding: const EdgeInsets.only(bottom: 10),
+                        child: Text(error,
+                            style: TextStyle(
+                                color: Theme.of(context).colorScheme.error,
+                                fontSize: 12))),
                   const Text('仅手动导入的节点可编辑；订阅节点随订阅更新。',
                       style: TextStyle(fontSize: 11)),
                 ])),
@@ -340,11 +342,11 @@ Future<NodeInfo?> showNodeEditor(BuildContext context, NodeInfo node) async {
                         final sv = server.text.trim();
                         final pt = int.tryParse(port.text.trim());
                         if (sv.isEmpty || pt == null || pt <= 0 || pt > 65535) {
-                          error = '服务器与端口无效（端口 1–65535）');
+                          setState(() => error = '服务器与端口无效（端口 1–65535）');
                           return;
                         }
                         if (name.text.trim().isEmpty) {
-                          error = '名称不能为空';
+                          setState(() => error = '名称不能为空');
                           return;
                         }
                         ob['server'] = sv;
