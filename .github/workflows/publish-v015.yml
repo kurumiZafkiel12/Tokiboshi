@@ -1,0 +1,79 @@
+name: Publish verified v0.1.5 Windows
+on:
+  push:
+    branches: ['release/v0.1.5-windows']
+    paths: ['.github/workflows/publish-v015.yml']
+permissions:
+  actions: read
+  contents: write
+concurrency:
+  group: publish-v015
+  cancel-in-progress: false
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      VERIFIED_SOURCE: 232c32bb6abf5e863b1b2e5331f1aa0127a4fc1c
+      BUILD_RUN: '45080585932'
+      BUILD_ARTIFACT: '14777039897'
+      RELEASE_ID: '454812319'
+    steps:
+      - name: Verify Windows build and check payload hashes
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/proof"
+          gh run view "$BUILD_RUN" --json status,conclusion,headSha,workflowName > "$RUNNER_TEMP/proof/build.json"
+          jq -e --arg sha "$VERIFIED_SOURCE" '.status == "completed" and .conclusion == "success" and .headSha == $sha and .workflowName == "windows"' "$RUNNER_TEMP/proof/build.json"
+          gh api "repos/$GH_REPO/actions/runs/$BUILD_RUN/artifacts" | jq -e --arg id "$BUILD_ARTIFACT" '.artifacts | any((.id | tostring) == $id and .expired == false and .name == "Tokiboshi-windows")'
+          gh run download "$BUILD_RUN" --name Tokiboshi-windows --dir "$RUNNER_TEMP/assets"
+          cd "$RUNNER_TEMP/assets"
+          printf '%s  %s\n' \
+            9cfa72a420bff72ef91e40e9112d711a608782558a7bfd8de24649a5009912d5 Tokiboshi-Setup-0.1.5.exe \
+            8f5165e9af6e21208f49c5be89ede4f23e6ded3ae4aba0a0903cc0b2f1186294 Tokiboshi-windows.zip > "$RUNNER_TEMP/expected.txt"
+          tr -d '\r' < SHA256SUMS.txt | cmp - "$RUNNER_TEMP/expected.txt"
+          sha256sum --check SHA256SUMS.txt
+          unzip -tq Tokiboshi-windows.zip
+      - name: Verify draft target and upload missing assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh api "repos/$GH_REPO/releases/$RELEASE_ID" > "$RUNNER_TEMP/draft.json"
+          jq -e --arg sha "$VERIFIED_SOURCE" '.draft == true and .prerelease == false and .tag_name == "v0.1.5" and .target_commitish == $sha' "$RUNNER_TEMP/draft.json"
+          cd "$RUNNER_TEMP/assets"
+          for name in Tokiboshi-Setup-0.1.5.exe Tokiboshi-windows.zip SHA256SUMS.txt; do
+            if ! jq -e --arg name "$name" '.assets | any(.name == $name)' "$RUNNER_TEMP/draft.json" > /dev/null; then
+              gh release upload v0.1.5 "$name"
+            fi
+          done
+          gh api "repos/$GH_REPO/releases/$RELEASE_ID" | jq -e '.draft == true and ([.assets[].name] | sort) == ["SHA256SUMS.txt", "Tokiboshi-Setup-0.1.5.exe", "Tokiboshi-windows.zip"]'
+          gh release download v0.1.5 --dir "$RUNNER_TEMP/roundtrip"
+          cd "$RUNNER_TEMP/roundtrip"
+          cmp SHA256SUMS.txt "$RUNNER_TEMP/assets/SHA256SUMS.txt"
+          sha256sum --check SHA256SUMS.txt
+      - name: Publish official v0.1.5
+        run: gh release edit v0.1.5 --draft=false --latest
+      - name: Verify direct public downloads, release tag and Latest
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/public"
+          cd "$RUNNER_TEMP/public"
+          for name in Tokiboshi-Setup-0.1.5.exe Tokiboshi-windows.zip SHA256SUMS.txt; do
+            curl --fail --location --retry 3 --retry-delay 3 --output "$name" "https://github.com/$GH_REPO/releases/download/v0.1.5/$name"
+          done
+          cmp SHA256SUMS.txt "$RUNNER_TEMP/assets/SHA256SUMS.txt"
+          sha256sum --check SHA256SUMS.txt
+          cp SHA256SUMS.txt "$RUNNER_TEMP/proof/"
+          gh api "repos/$GH_REPO/releases/latest" > "$RUNNER_TEMP/proof/release.json"
+          jq -e '.tag_name == "v0.1.5" and .draft == false and .prerelease == false and (.assets | length) == 3' "$RUNNER_TEMP/proof/release.json"
+          gh api "repos/$GH_REPO/git/ref/tags/v0.1.5" > "$RUNNER_TEMP/proof/tag.json"
+          jq -e --arg sha "$VERIFIED_SOURCE" '.object.type == "commit" and .object.sha == $sha' "$RUNNER_TEMP/proof/tag.json"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Tokiboshi-v015-publication-proof
+          path: ${{ runner.temp }}/proof/
