@@ -186,7 +186,7 @@ jobs:
       - name: Verify unattended upgrade from the published Windows installer
         env:
           GH_TOKEN: ${{ github.token }}
-        shell: pwsh
+        shell: powershell
         run: |
           $assets = Join-Path $env:RUNNER_TEMP 'tokiboshi-upgrade-previous'
           gh release download v0.1.2 --repo $env:GITHUB_REPOSITORY --pattern 'Tokiboshi-Setup-0.1.2.exe' --dir $assets
@@ -194,7 +194,15 @@ jobs:
           $setup = (Get-ChildItem -Filter 'Tokiboshi-Setup-*.exe' | Select-Object -First 1).FullName
           $payload = (Resolve-Path 'build/windows/x64/runner/Release').Path
           $proof = Join-Path $env:RUNNER_TEMP 'tokiboshi-release-audit/installer-upgrade'
-          & installer/tests/upgrade-install.ps1 $setup (Join-Path $assets 'Tokiboshi-Setup-0.1.2.exe') $payload $proof
+          & ./installer/tests/upgrade-install.ps1 -Installer $setup -OldInstaller (Join-Path $assets 'Tokiboshi-Setup-0.1.2.exe') -Payload $payload -OutputDir $proof
+
+      - name: Record package checksums
+        shell: pwsh
+        run: |
+          Get-ChildItem Tokiboshi-Setup-*.exe,Tokiboshi-windows.zip | ForEach-Object {
+            $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$hash  $($_.Name)"
+          } | Set-Content SHA256SUMS.txt -Encoding ascii
 
       - uses: actions/upload-artifact@v4
         with:
@@ -202,6 +210,7 @@ jobs:
           path: |
             Tokiboshi-windows.zip
             Tokiboshi-Setup-*.exe
+            SHA256SUMS.txt
 
       - uses: actions/upload-artifact@v4
         if: always()
