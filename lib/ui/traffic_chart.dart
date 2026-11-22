@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 import 'dart:ui' show lerpDouble;
+import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'preferences.dart';
@@ -30,7 +31,7 @@ class _SmoothTrafficChartState extends State<SmoothTrafficChart>
   @override
   void didUpdateWidget(covariant SmoothTrafficChart old) {
     super.didUpdateWidget(old);
-    if (old.down != widget.down || old.up != widget.up) {
+    if (!listEquals(old.down, widget.down) || !listEquals(old.up, widget.up)) {
       _previousDown = old.down;
       _previousUp = old.up;
       if (UiScope.duration(context) == Duration.zero) {
@@ -65,23 +66,23 @@ class _SmoothTrafficChartState extends State<SmoothTrafficChart>
 class _TrafficPainter extends CustomPainter {
   _TrafficPainter(this.down, this.up, this.oldDown, this.oldUp, this.animation,
       this.color, this.grid)
-      : super(repaint: animation);
+      : ceiling = [down, up, oldDown, oldUp]
+            .expand((values) => values)
+            .fold(1024.0, math.max),
+        super(repaint: animation);
   final List<double> down, up, oldDown, oldUp;
   final Animation<double> animation;
   final Color color, grid;
+  final double ceiling;
   @override
   void paint(Canvas canvas, Size size) {
     if (size.isEmpty) return;
-    final largest = math.max(
-        1024.0, [...down, ...up, ...oldDown, ...oldUp, 0.0].reduce(math.max));
+    final gridPaint = Paint()
+      ..color = grid.withValues(alpha: .25)
+      ..strokeWidth = .5;
     for (var i = 1; i <= 3; i++) {
       final y = size.height * i / 4;
-      canvas.drawLine(
-          Offset(0, y),
-          Offset(size.width, y),
-          Paint()
-            ..color = grid.withValues(alpha: .25)
-            ..strokeWidth = .5);
+      canvas.drawLine(Offset(0, y), Offset(size.width, y), gridPaint);
     }
     final progress = Curves.easeOutCubic.transform(animation.value);
     for (final series in [(down, oldDown, color), (up, oldUp, gold)]) {
@@ -93,7 +94,7 @@ class _TrafficPainter extends CustomPainter {
         final x = i / (count - 1) * size.width;
         final v =
             lerpDouble(sample(series.$2, i), sample(series.$1, i), progress)!;
-        final y = size.height - 1 - v / largest * (size.height - 3);
+        final y = size.height - 1 - v / ceiling * (size.height - 3);
         if (i == 0)
           path.moveTo(x, y);
         else
@@ -118,8 +119,7 @@ class _TrafficPainter extends CustomPainter {
           Paint()
             ..color = series.$3.withValues(alpha: .18)
             ..strokeWidth = 3
-            ..style = PaintingStyle.stroke
-            ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 2));
+            ..style = PaintingStyle.stroke);
       canvas.drawPath(
           path,
           Paint()
@@ -131,8 +131,8 @@ class _TrafficPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_TrafficPainter old) =>
-      down != old.down ||
-      up != old.up ||
+      !listEquals(down, old.down) ||
+      !listEquals(up, old.up) ||
       color != old.color ||
       grid != old.grid;
 }

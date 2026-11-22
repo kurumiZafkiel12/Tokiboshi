@@ -104,12 +104,33 @@ class _DashboardPageState extends State<DashboardPage> {
 
   @override
   Widget build(BuildContext context) {
-    final monitor = widget.monitor;
     return LayoutBuilder(builder: (context, bounds) {
       final ui = UiScope.of(context);
       final wide = bounds.maxWidth >= 790 &&
           MediaQuery.textScalerOf(context).scale(14) <= 17;
       final gutter = bounds.maxWidth < 600 ? 12.0 : 16.0;
+      Widget live(WidgetBuilder buildPanel) {
+        final monitor = widget.monitor;
+        return RepaintBoundary(
+          child: monitor == null
+              ? buildPanel(context)
+              : ListenableBuilder(
+                  listenable: monitor,
+                  builder: (context, _) => buildPanel(context)),
+        );
+      }
+
+      final modules = <String, Widget>{
+        'traffic': live(_traffic),
+        'profile': _profile(context),
+        'runtime': _runtime(context),
+      };
+      final order = ui.order.where(modules.containsKey).toList();
+      Widget panel(String id) => _editable(id, modules[id]!);
+      final contentWidth = bounds.maxWidth - gutter * 2;
+      final left =
+          wide ? ((contentWidth - 12) * 7 / 12).floorToDouble() : contentWidth;
+      final right = wide ? contentWidth - 12 - left : contentWidth;
       final header = Row(children: [
         Expanded(
           child:
@@ -138,65 +159,40 @@ class _DashboardPageState extends State<DashboardPage> {
           child: SingleChildScrollView(
             key: const PageStorageKey('dashboard-scroll'),
             padding: EdgeInsets.all(gutter),
-            child: ListenableBuilder(
-              listenable: monitor ?? const AlwaysStoppedAnimation(0),
-              builder: (context, _) {
-                final modules = <String, Widget>{
-                  'traffic': _traffic(context),
-                  'profile': _profile(context),
-                  'runtime': _runtime(context),
-                };
-                final order = ui.order.where(modules.containsKey).toList();
-                Widget panel(String id) => _editable(id, modules[id]!);
-                final contentWidth = bounds.maxWidth - gutter * 2;
-                final left = wide
-                    ? ((contentWidth - 12) * 7 / 12).floorToDouble()
-                    : contentWidth;
-                final right = wide ? contentWidth - 12 - left : contentWidth;
-                return TweenAnimationBuilder<double>(
-                  tween: Tween(end: wide ? 1.0 : 0.0),
-                  duration: UiScope.duration(context),
-                  curve: Curves.easeOutCubic,
-                  builder: (context, transition, child) => Transform.translate(
-                    offset: Offset(0, math.sin(transition * math.pi) * 5),
-                    child: child,
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      _hero(context),
-                      const SizedBox(height: 12),
-                      Wrap(spacing: 12, runSpacing: 12, children: [
-                        SizedBox(
-                            key: ValueKey(order.first),
-                            width: left,
-                            child: panel(order.first)),
-                        SizedBox(
-                            key: const ValueKey('quality'),
-                            width: right,
-                            child: _quality(context)),
-                        SizedBox(
-                            key: const ValueKey('ranking'),
-                            width: left,
-                            child: _ranking(context)),
-                        SizedBox(
-                            key: const ValueKey('mechanical-clock'),
-                            width: right,
-                            child: MechanicalClock(
-                                size: wide ? 132 : 76, dashboard: true)),
-                        SizedBox(
-                            key: ValueKey(order[1]),
-                            width: left,
-                            child: panel(order[1])),
-                        SizedBox(
-                            key: ValueKey(order[2]),
-                            width: right,
-                            child: panel(order[2])),
-                      ]),
-                    ],
-                  ),
-                );
-              },
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                RepaintBoundary(child: _hero(context)),
+                const SizedBox(height: 12),
+                Wrap(spacing: 12, runSpacing: 12, children: [
+                  SizedBox(
+                      key: ValueKey(order.first),
+                      width: left,
+                      child: panel(order.first)),
+                  SizedBox(
+                      key: const ValueKey('quality'),
+                      width: right,
+                      child: _quality(context)),
+                  SizedBox(
+                      key: const ValueKey('ranking'),
+                      width: left,
+                      child: live(_ranking)),
+                  SizedBox(
+                      key: const ValueKey('mechanical-clock'),
+                      width: right,
+                      child: RepaintBoundary(
+                          child: MechanicalClock(
+                              size: wide ? 132 : 76, dashboard: true))),
+                  SizedBox(
+                      key: ValueKey(order[1]),
+                      width: left,
+                      child: panel(order[1])),
+                  SizedBox(
+                      key: ValueKey(order[2]),
+                      width: right,
+                      child: panel(order[2])),
+                ]),
+              ],
             ),
           ),
         ),

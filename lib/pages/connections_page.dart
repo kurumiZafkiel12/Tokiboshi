@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import '../ui/design.dart';
@@ -76,6 +78,7 @@ class _ConnectionsPageState extends State<ConnectionsPage> {
                 })) return false;
             if (_network.isNotEmpty &&
                 '${m['network']}'.toLowerCase() != _network) return false;
+            if (_query.isEmpty) return true;
             return '${m['host']} ${m['destinationIP']} ${m['destinationPort']} ${m['processPath']} ${r['rule']} ${r['rulePayload']} ${r['chains']}'
                 .toLowerCase()
                 .contains(_query);
@@ -218,37 +221,7 @@ class _ConnectionsPageState extends State<ConnectionsPage> {
                                         itemBuilder: (_, index) =>
                                             _compactRow(rows[index]),
                                       )
-                                    : SingleChildScrollView(
-                                        child: SingleChildScrollView(
-                                          scrollDirection: Axis.horizontal,
-                                          child: DataTable(
-                                            headingRowHeight: 42,
-                                            dataRowMinHeight: 54,
-                                            dataRowMaxHeight: 64,
-                                            columnSpacing: 20,
-                                            columns: [
-                                              for (final s in [
-                                                '目标',
-                                                '匹配规则',
-                                                '出口',
-                                                '下载 / 上传',
-                                                '操作',
-                                              ])
-                                                DataColumn(
-                                                  label: Text(
-                                                    s,
-                                                    style: const TextStyle(
-                                                        fontSize: 11),
-                                                  ),
-                                                ),
-                                            ],
-                                            rows: [
-                                              for (final r in rows)
-                                                _row(context, r)
-                                            ],
-                                          ),
-                                        ),
-                                      ),
+                                    : _connectionTable(rows),
                   ),
                 ),
               ],
@@ -321,75 +294,105 @@ class _ConnectionsPageState extends State<ConnectionsPage> {
     );
   }
 
-  DataRow _row(BuildContext context, Map<String, dynamic> r) {
-    final meta = r['metadata'] as Map? ?? {};
+  Widget _connectionTable(List<Map<String, dynamic>> rows) {
+    const columns = ['目标', '匹配规则', '出口', '下载 / 上传', '操作'];
+    return LayoutBuilder(
+      builder: (context, bounds) => SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: SizedBox(
+          width: math.max(760, bounds.maxWidth),
+          child: Column(children: [
+            SizedBox(
+              height: 42,
+              child: _tableLine([
+                for (final title in columns)
+                  Text(title, style: Theme.of(context).textTheme.labelSmall),
+              ]),
+            ),
+            const Divider(height: 1),
+            Expanded(
+              child: ListView.builder(
+                primary: false,
+                itemExtent: math.max(
+                    56, MediaQuery.textScalerOf(context).scale(28) + 12),
+                itemCount: rows.length,
+                itemBuilder: (context, index) =>
+                    _tableRow(context, rows[index]),
+              ),
+            ),
+          ]),
+        ),
+      ),
+    );
+  }
+
+  Widget _tableLine(List<Widget> cells) => Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        child: Row(children: [
+          Expanded(flex: 6, child: cells[0]),
+          const SizedBox(width: 16),
+          Expanded(flex: 4, child: cells[1]),
+          const SizedBox(width: 16),
+          Expanded(flex: 5, child: cells[2]),
+          const SizedBox(width: 16),
+          Expanded(flex: 4, child: cells[3]),
+          SizedBox(width: 44, child: cells[4]),
+        ]),
+      );
+
+  Widget _tableRow(BuildContext context, Map<String, dynamic> row) {
+    final meta = row['metadata'] as Map? ?? {};
     final host = '${meta['host'] ?? ''}'.isNotEmpty
         ? '${meta['host']}'
         : '${meta['destinationIP'] ?? '未知目标'}';
-    final chains = (r['chains'] as List? ?? []).join(' → ');
-    return DataRow(
-      cells: [
-        DataCell(
-          SizedBox(
-            width: 210,
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  '$host:${meta['destinationPort'] ?? ''}',
+    final chains = (row['chains'] as List? ?? []).join(' → ');
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        border:
+            Border(bottom: BorderSide(color: Theme.of(context).dividerColor)),
+      ),
+      child: _tableLine([
+        InkWell(
+          onTap: () => _details(row),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('$host:${meta['destinationPort'] ?? ''}',
+                  maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontSize: 12),
-                ),
-                Text(
-                  '${meta['network'] ?? '—'} · ${meta['type'] ?? '—'}',
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-              ],
-            ),
+                  style: const TextStyle(fontSize: 12)),
+              Text('${meta['network'] ?? '—'} · ${meta['type'] ?? '—'}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.bodySmall),
+            ],
           ),
-          onTap: () => _details(r),
         ),
-        DataCell(
-          SizedBox(
-            width: 150,
-            child: Text(
-              '${r['rule'] ?? '—'}\n${r['rulePayload'] ?? ''}',
+        Text('${row['rule'] ?? '—'}\n${row['rulePayload'] ?? ''}',
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontSize: 11)),
+        Tooltip(
+          message: chains,
+          child: Text(chains.isEmpty ? '—' : chains,
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 11),
-            ),
-          ),
+              style: const TextStyle(fontSize: 11)),
         ),
-        DataCell(
-          SizedBox(
-            width: 180,
-            child: Tooltip(
-              message: chains,
-              child: Text(
-                chains.isEmpty ? '—' : chains,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontSize: 11),
-              ),
-            ),
-          ),
+        Text(
+            '${bytesLabel(row['download'] as num? ?? 0)} / ${bytesLabel(row['upload'] as num? ?? 0)}',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: mono),
+        IconButton(
+          tooltip: '关闭此连接',
+          onPressed: _closing || row['id'] == null || !widget.monitor.available
+              ? null
+              : () => _close('${row['id']}'),
+          icon: const Icon(Icons.close, size: 15),
         ),
-        DataCell(
-          Text(
-            '${bytesLabel(r['download'] as num? ?? 0)} / ${bytesLabel(r['upload'] as num? ?? 0)}',
-            style: mono,
-          ),
-        ),
-        DataCell(
-          IconButton(
-            tooltip: '关闭此连接',
-            onPressed:
-                _closing || r['id'] == null ? null : () => _close('${r['id']}'),
-            icon: const Icon(Icons.close, size: 15),
-          ),
-        ),
-      ],
+      ]),
     );
   }
 }

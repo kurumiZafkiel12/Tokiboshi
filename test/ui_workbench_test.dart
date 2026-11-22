@@ -6,6 +6,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tokiboshi/main.dart';
 import 'package:tokiboshi/pages/dashboard_page.dart';
+import 'package:tokiboshi/pages/connections_page.dart';
+import 'package:tokiboshi/ui/mechanical_clock.dart';
 import 'package:tokiboshi/pages/nodes_page.dart';
 import 'package:tokiboshi/bridge/core_bridge.dart';
 import 'package:tokiboshi/services/store.dart';
@@ -20,6 +22,10 @@ import 'package:tokiboshi/ui/design.dart';
 import 'package:tokiboshi/ui/runtime.dart';
 import 'fake_bridge.dart';
 import 'widget_test.dart' show MemoryStore;
+
+class _FixtureMonitor extends RuntimeMonitor {
+  void publish() => notifyListeners();
+}
 
 void main() {
   final capture = Platform.environment['TOKIBOSHI_UI_CAPTURE'];
@@ -388,7 +394,7 @@ void main() {
         outboundJson:
             '{"type":"socks","server":"127.0.0.1","server_port":1080}');
     final preferences = ValueNotifier(ui);
-    final monitor = RuntimeMonitor()
+    final monitor = _FixtureMonitor()
       ..available = true
       ..downSpeed = 512 * 1024
       ..upSpeed = 144 * 1024
@@ -445,6 +451,21 @@ void main() {
     expect(find.text('2 条活动连接'), findsOneWidget);
     expect(find.text('firefox.exe'), findsOneWidget);
     await screenshot(t, 'dashboard-live-wide');
+    final hero = t.widget<WorkbenchGlass>(find.byType(WorkbenchGlass));
+    final clock = t.widget<MechanicalClock>(find.byType(MechanicalClock));
+    monitor
+      ..downSpeed = 2 * 1024 * 1024
+      ..downHistory = [2 * 1024 * 1024]
+      ..connections = []
+      ..publish();
+    await t.pump();
+    expect(find.text('峰值 2.00 MB/s'), findsOneWidget);
+    expect(find.text('0 条活动连接'), findsOneWidget);
+    expect(find.text('firefox.exe'), findsNothing);
+    expect(t.widget(find.byType(WorkbenchGlass)), same(hero));
+    expect(t.widget(find.byType(MechanicalClock)), same(clock));
+    expect(find.byType(BackdropFilter), findsNothing);
+
     t.platformDispatcher.textScaleFactorTestValue = 1.5;
     addTearDown(t.platformDispatcher.clearTextScaleFactorTestValue);
     t.view.physicalSize = const Size(1200, 900);
@@ -453,6 +474,41 @@ void main() {
     expect(t.takeException(), isNull);
     expect(find.text('实时流量').hitTestable(), findsOneWidget);
     await screenshot(t, 'dashboard-live-compact');
+    await t.pumpWidget(const SizedBox());
+  });
+
+  testWidgets(
+      'connection table builds visible rows and can filter the full snapshot',
+      (t) async {
+    t.view.physicalSize = const Size(1100, 760);
+    t.view.devicePixelRatio = 1;
+    addTearDown(t.view.reset);
+    final monitor = _FixtureMonitor()
+      ..available = true
+      ..connections = [
+        for (var i = 0; i < 2000; i++)
+          {
+            'id': '$i',
+            'metadata': {'host': 'fixture-$i.test'},
+            'download': 2000 - i,
+          }
+      ];
+    addTearDown(monitor.dispose);
+    await t.pumpWidget(MaterialApp(
+        home: Scaffold(
+      body: ConnectionsPage(monitor: monitor, running: true),
+    )));
+    expect(find.text('显示 2000 / 2000'), findsOneWidget);
+    expect(find.text('fixture-0.test:'), findsOneWidget);
+    expect(find.byTooltip('关闭此连接').evaluate().length, lessThan(32));
+    expect(find.text('fixture-1999.test:'), findsNothing);
+    await t.enterText(find.byType(TextField), 'fixture-1999.test');
+    await t.pump();
+    expect(find.text('显示 1 / 2000'), findsOneWidget);
+    await t.tap(find.text('fixture-1999.test:'));
+    await t.pumpAndSettle();
+    expect(find.text('连接详情'), findsOneWidget);
+    expect(t.takeException(), isNull);
     await t.pumpWidget(const SizedBox());
   });
 

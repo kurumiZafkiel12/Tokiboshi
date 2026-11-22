@@ -34,52 +34,53 @@ class ConnectionDock extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final active = proxyActive ?? running;
-    Widget content() => LayoutBuilder(builder: (context, c) {
-          final textRatio = MediaQuery.textScalerOf(context).scale(12) / 12;
-          final compact = c.maxWidth < 680 * textRatio;
-          return Padding(
-              key: const ValueKey('connection-dock'),
-              padding: EdgeInsets.fromLTRB(
-                  compact ? 10 : 16, 4, compact ? 10 : 16, 10),
-              child: WorkbenchGlass(
-                  radius: 14,
-                  child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 12, vertical: 5),
-                      child: Row(children: [
-                        if (!compact) ...[
-                          Text('当前出口',
-                              style: Theme.of(context).textTheme.bodySmall),
-                          const SizedBox(width: 14)
-                        ],
-                        Expanded(
-                            child: InkWell(
-                                onTap: busy || blocked ? null : onPick,
-                                borderRadius: BorderRadius.circular(8),
-                                child: Padding(
-                                    padding:
-                                        const EdgeInsets.symmetric(vertical: 7),
-                                    child: Row(children: [
-                                      if (node != null) ...[
-                                        RegionMark(node!),
-                                        const SizedBox(width: 9)
-                                      ],
-                                      Expanded(
-                                          child: Text(
-                                              node == null
-                                                  ? '未选择节点'
-                                                  : nodeDisplayName(node!),
-                                              maxLines: 1,
-                                              overflow: TextOverflow.ellipsis,
-                                              style: const TextStyle(
-                                                  fontWeight:
-                                                      FontWeight.w600))),
-                                      const SizedBox(width: 8),
-                                      const Icon(Icons.unfold_more, size: 16)
-                                    ])))),
-                        if (c.maxWidth > 850 * textRatio &&
-                            monitor != null) ...[
-                          const SizedBox(width: 24),
+    return LayoutBuilder(builder: (context, c) {
+      final textRatio = MediaQuery.textScalerOf(context).scale(12) / 12;
+      final compact = c.maxWidth < 680 * textRatio;
+      return Padding(
+          key: const ValueKey('connection-dock'),
+          padding:
+              EdgeInsets.fromLTRB(compact ? 10 : 16, 4, compact ? 10 : 16, 10),
+          child: WorkbenchGlass(
+              radius: 14,
+              child: Padding(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+                  child: Row(children: [
+                    if (!compact) ...[
+                      Text('当前出口',
+                          style: Theme.of(context).textTheme.bodySmall),
+                      const SizedBox(width: 14)
+                    ],
+                    Expanded(
+                        child: InkWell(
+                            onTap: busy || blocked ? null : onPick,
+                            borderRadius: BorderRadius.circular(8),
+                            child: Padding(
+                                padding:
+                                    const EdgeInsets.symmetric(vertical: 7),
+                                child: Row(children: [
+                                  if (node != null) ...[
+                                    RegionMark(node!),
+                                    const SizedBox(width: 9)
+                                  ],
+                                  Expanded(
+                                      child: Text(
+                                          node == null
+                                              ? '未选择节点'
+                                              : nodeDisplayName(node!),
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: const TextStyle(
+                                              fontWeight: FontWeight.w600))),
+                                  const SizedBox(width: 8),
+                                  const Icon(Icons.unfold_more, size: 16)
+                                ])))),
+                    if (c.maxWidth > 850 * textRatio && monitor != null) ...[
+                      const SizedBox(width: 24),
+                      ListenableBuilder(
+                        listenable: monitor!,
+                        builder: (context, _) => Row(children: [
                           Text(
                               monitor!.available
                                   ? '↓ ${bytesLabel(monitor!.downSpeed)}/s'
@@ -91,72 +92,65 @@ class ConnectionDock extends StatelessWidget {
                                   ? '↑ ${bytesLabel(monitor!.upSpeed)}/s'
                                   : '↑ —',
                               style: mono.copyWith(color: brand)),
-                        ],
-                        if (!compact) ...[
-                          const SizedBox(width: 12),
-                          StatusDot(running ? '内核就绪' : '内核停止',
-                              color: running
-                                  ? good
-                                  : Theme.of(context)
-                                      .colorScheme
-                                      .onSurfaceVariant),
-                        ],
-                        const SizedBox(width: 12),
-                        if (!compact && node != null) ...[
-                          LatencyText(node!, latency),
-                          const SizedBox(width: 8)
-                        ],
-                        if (!compact) ...[
-                          IconButton(
-                              tooltip: '测试连通性',
-                              onPressed: busy || blocked || node == null
-                                  ? null
-                                  : onProbe,
-                              icon: const Icon(Icons.speed_outlined)),
-                          IconButton(
-                              tooltip: '重载内核配置',
-                              onPressed: running && !busy && !blocked
-                                  ? onRestart
-                                  : null,
-                              icon: const Icon(Icons.refresh)),
-                          const SizedBox(width: 8)
-                        ],
-                        if (!showProxyControl)
-                          Tag(active ? '代理已开启' : '代理已关闭')
-                        else
-                          FilledButton.icon(
-                              style: FilledButton.styleFrom(
-                                  minimumSize: const Size(130, 38),
-                                  padding: const EdgeInsets.symmetric(
-                                      horizontal: 16, vertical: 8)),
-                              onPressed: blocked
-                                  ? null
-                                  : busy
-                                      ? (running ? null : onCancel)
-                                      : onToggle,
-                              icon: busy
-                                  ? const SizedBox(
-                                      width: 15,
-                                      height: 15,
-                                      child: CircularProgressIndicator(
-                                          strokeWidth: 1.5,
-                                          color: Colors.white))
-                                  : Icon(
-                                      active
-                                          ? Icons.stop_circle_outlined
-                                          : Icons.power_settings_new,
-                                      size: 19),
-                              label: Text(busy
-                                  ? (running ? '正在停止' : '取消连接')
-                                  : active
-                                      ? '停止代理'
-                                      : '启动代理')),
-                      ]))));
-        });
-    return monitor == null
-        ? content()
-        : ListenableBuilder(
-            listenable: monitor!, builder: (_, __) => content());
+                        ]),
+                      ),
+                    ],
+                    if (!compact) ...[
+                      const SizedBox(width: 12),
+                      StatusDot(running ? '内核就绪' : '内核停止',
+                          color: running
+                              ? good
+                              : Theme.of(context).colorScheme.onSurfaceVariant),
+                    ],
+                    const SizedBox(width: 12),
+                    if (!compact && node != null) ...[
+                      LatencyText(node!, latency),
+                      const SizedBox(width: 8)
+                    ],
+                    if (!compact) ...[
+                      IconButton(
+                          tooltip: '测试连通性',
+                          onPressed:
+                              busy || blocked || node == null ? null : onProbe,
+                          icon: const Icon(Icons.speed_outlined)),
+                      IconButton(
+                          tooltip: '重载内核配置',
+                          onPressed:
+                              running && !busy && !blocked ? onRestart : null,
+                          icon: const Icon(Icons.refresh)),
+                      const SizedBox(width: 8)
+                    ],
+                    if (!showProxyControl)
+                      Tag(active ? '代理已开启' : '代理已关闭')
+                    else
+                      FilledButton.icon(
+                          style: FilledButton.styleFrom(
+                              minimumSize: const Size(130, 38),
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 16, vertical: 8)),
+                          onPressed: blocked
+                              ? null
+                              : busy
+                                  ? (running ? null : onCancel)
+                                  : onToggle,
+                          icon: busy
+                              ? const SizedBox(
+                                  width: 15,
+                                  height: 15,
+                                  child: CircularProgressIndicator(
+                                      strokeWidth: 1.5, color: Colors.white))
+                              : Icon(
+                                  active
+                                      ? Icons.stop_circle_outlined
+                                      : Icons.power_settings_new,
+                                  size: 19),
+                          label: Text(busy
+                              ? (running ? '正在停止' : '取消连接')
+                              : active
+                                  ? '停止代理'
+                                  : '启动代理')),
+                  ]))));
+    });
   }
 }
 

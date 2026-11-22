@@ -66,6 +66,7 @@ void main() {
                 }));
               } else {
                 request.response.write(jsonEncode({
+                  'extra': 'x' * (download > 1024 ? 70000 : 0),
                   'downloadTotal': download,
                   'uploadTotal': upload,
                   'connections': deleted

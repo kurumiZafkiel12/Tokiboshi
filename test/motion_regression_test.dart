@@ -77,6 +77,26 @@ void main() {
     await mouse.removePointer();
     await t.pumpWidget(const SizedBox());
   });
+  testWidgets('identical traffic snapshots do not restart the chart ticker',
+      (t) async {
+    final series = ValueNotifier<List<double>>([0, 0, 0]);
+    addTearDown(series.dispose);
+    await t.pumpWidget(MaterialApp(
+        home: Scaffold(
+      body: SizedBox(
+          height: 100,
+          child: ValueListenableBuilder(
+            valueListenable: series,
+            builder: (_, points, __) =>
+                SmoothTrafficChart(down: points, up: const [0, 0, 0]),
+          )),
+    )));
+    await t.pumpAndSettle();
+    series.value = [0, 0, 0];
+    await t.pump();
+    expect(t.hasRunningAnimations, isFalse);
+  });
+
   for (final mode in ['full', 'standard', 'reduced']) {
     testWidgets('motion $mode survives rapid updates and becomes idle',
         (t) async {

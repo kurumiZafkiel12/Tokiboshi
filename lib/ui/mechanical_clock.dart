@@ -169,6 +169,7 @@ class _MechanicalClockState extends State<MechanicalClock>
             constraints: const BoxConstraints(maxWidth: 440),
             child: WorkbenchGlass(
               radius: 20,
+              blurBackdrop: true,
               child: SingleChildScrollView(
                 padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
                 child: Column(mainAxisSize: MainAxisSize.min, children: [

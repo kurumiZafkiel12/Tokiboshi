@@ -2790,13 +2790,21 @@ class _ShellPageState extends State<ShellPage>
                     final forcedCompact = constraints.maxWidth < 1040;
                     final collapsed = _navCollapsed || forcedCompact;
                     return Row(children: [
-                      AnimatedContainer(
-                          duration: UiScope.duration(context),
-                          width: collapsed ? 68 : 176,
-                          decoration: BoxDecoration(
-                              color: scheme.surfaceContainerLow,
-                              border: Border(
-                                  right: BorderSide(color: scheme.outline))),
+                      TweenAnimationBuilder<double>(
+                          tween: Tween(end: _navCollapsed ? 68 : 176),
+                          duration: forcedCompact
+                              ? Duration.zero
+                              : UiScope.duration(context),
+                          curve: Curves.easeOutCubic,
+                          builder: (context, width, child) => Container(
+                                width: forcedCompact ? 68 : width,
+                                decoration: BoxDecoration(
+                                  color: scheme.surfaceContainerLow,
+                                  border: Border(
+                                      right: BorderSide(color: scheme.outline)),
+                                ),
+                                child: child,
+                              ),
                           child: LayoutBuilder(builder: (context, sidebar) {
                             final compact = sidebar.maxWidth < 165;
                             return Column(children: [
@@ -3098,28 +3106,19 @@ class _ShellPageState extends State<ShellPage>
                               const LinearProgressIndicator(minHeight: 2),
                             Expanded(
                                 child: AnimatedSwitcher(
-                                    duration: UiScope.duration(context),
+                                    duration: UiScope.duration(context, 150),
+                                    reverseDuration: Duration.zero,
                                     switchInCurve: Curves.easeOutCubic,
-                                    layoutBuilder: (current, previous) =>
-                                        Stack(fit: StackFit.expand, children: [
-                                          for (final old in previous)
-                                            IgnorePointer(
-                                                child: ExcludeSemantics(
-                                                    child: TickerMode(
-                                                        enabled: false,
-                                                        child: old))),
-                                          if (current != null) current
-                                        ]),
+                                    layoutBuilder: (current, _) =>
+                                        current ?? const SizedBox.shrink(),
                                     transitionBuilder: (child, animation) =>
-                                        FadeTransition(
-                                            opacity: animation,
-                                            child: SlideTransition(
-                                                position: Tween(
-                                                        begin: const Offset(
-                                                            0, .015),
-                                                        end: Offset.zero)
-                                                    .animate(animation),
-                                                child: child)),
+                                        SlideTransition(
+                                          position: Tween(
+                                                  begin: const Offset(0, .012),
+                                                  end: Offset.zero)
+                                              .animate(animation),
+                                          child: child,
+                                        ),
                                     child: KeyedSubtree(
                                         key: ValueKey(_loaded ? _page : -1),
                                         child: _loaded

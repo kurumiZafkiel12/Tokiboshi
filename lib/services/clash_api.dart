@@ -6,6 +6,7 @@ library;
 
 import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 
 class ClashApiException implements Exception {
   ClashApiException(this.message);
@@ -54,6 +55,9 @@ class ClashApiClient {
         );
       }
       if (text.isEmpty) return null;
+      if (path == '/connections' && text.length > 64 * 1024) {
+        return await _decodeLargeSnapshot(text);
+      }
       return jsonDecode(text);
     } on ClashApiException {
       rethrow;
@@ -129,3 +133,6 @@ class ClashApiClient {
 
   void close() => _http.close(force: true);
 }
+
+Future<Object?> _decodeLargeSnapshot(String text) =>
+    Isolate.run(() => jsonDecode(text));

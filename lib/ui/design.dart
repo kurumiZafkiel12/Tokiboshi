@@ -124,60 +124,62 @@ ThemeData workbenchTheme(UiPreferences ui) {
       tooltipTheme: TooltipThemeData(decoration: BoxDecoration(color: scheme.surfaceContainerHighest, borderRadius: radius, border: Border.all(color: line)), textStyle: TextStyle(fontSize: 11, color: ink)));
 }
 
-/// Restricts the glass material to a small, clipped surface.
+/// Glass tint stays cheap on workbench surfaces. Modal overlays can sample
+/// the page behind them when the backdrop actually contains content.
 class WorkbenchGlass extends StatefulWidget {
-  const WorkbenchGlass({super.key, required this.child, this.radius = 0});
+  const WorkbenchGlass({
+    super.key,
+    required this.child,
+    this.radius = 0,
+    this.blurBackdrop = false,
+  });
   final Widget child;
   final double radius;
+  final bool blurBackdrop;
 
   @override
   State<WorkbenchGlass> createState() => _WorkbenchGlassState();
 }
 
 class _WorkbenchGlassState extends State<WorkbenchGlass> {
+  static final _blur = ImageFilter.blur(sigmaX: 9, sigmaY: 9);
   bool _hovered = false;
+
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final light = scheme.brightness == Brightness.light;
-    final borderRadius = BorderRadius.circular(widget.radius);
+    final radius = BorderRadius.circular(widget.radius);
+    final surface = AnimatedContainer(
+      duration: UiScope.duration(context, _hovered ? 160 : 240),
+      curve: Curves.easeOutCubic,
+      decoration: BoxDecoration(
+        borderRadius: radius,
+        border: Border.all(
+          color: _hovered
+              ? scheme.primary.withValues(alpha: .52)
+              : scheme.outline.withValues(alpha: .85),
+        ),
+        gradient: LinearGradient(
+          begin: _hovered ? const Alignment(-.35, -1) : Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: light
+              ? const [Color(0xE8FFF5F5), Color(0xBFF8E9EC), Color(0xE6FFFFFF)]
+              : const [Color(0xDA532832), Color(0xB322161A), Color(0xDA321820)],
+        ),
+      ),
+      child: RepaintBoundary(child: widget.child),
+    );
     return MouseRegion(
-        onEnter: (_) => setState(() => _hovered = true),
-        onExit: (_) => setState(() => _hovered = false),
-        child: ClipRRect(
-          borderRadius: borderRadius,
-          child: BackdropFilter(
-            filter: ImageFilter.blur(sigmaX: 9, sigmaY: 9),
-            child: AnimatedContainer(
-              duration: UiScope.duration(context, _hovered ? 160 : 240),
-              curve: Curves.easeOutCubic,
-              decoration: BoxDecoration(
-                borderRadius: borderRadius,
-                border: Border.all(
-                    color: _hovered
-                        ? scheme.primary.withValues(alpha: .52)
-                        : scheme.outline.withValues(alpha: .85)),
-                gradient: LinearGradient(
-                  begin:
-                      _hovered ? const Alignment(-.35, -1) : Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: light
-                      ? [
-                          const Color(0xE8FFF5F5),
-                          const Color(0xBFF8E9EC),
-                          const Color(0xE6FFFFFF)
-                        ]
-                      : [
-                          const Color(0xDA532832),
-                          const Color(0xB322161A),
-                          const Color(0xDA321820)
-                        ],
-                ),
-              ),
-              child: widget.child,
-            ),
-          ),
-        ));
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      child: widget.blurBackdrop
+          ? ClipRRect(
+              borderRadius: radius,
+              child: BackdropFilter(filter: _blur, child: surface),
+            )
+          : surface,
+    );
   }
 }
 
