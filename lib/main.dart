@@ -605,14 +605,16 @@ class _ShellPageState extends State<ShellPage>
     try {
       final rule = RoutingRule(kind: 'process_name', value: name, target: target);
       if (target.isNotEmpty) rule.validate();
+      final updated = _data.client.withRules([
+        ..._data.client.rules.where((current) =>
+            current.kind != 'process_name' ||
+            current.value.toLowerCase() != name.toLowerCase()),
+        if (target.isNotEmpty) rule,
+      ]);
+      updated.validate();
       setState(() {
         _settingsBusy = true;
-        _data.client = _data.client.withRules([
-          ..._data.client.rules.where((current) =>
-              current.kind != 'process_name' ||
-              current.value.toLowerCase() != name.toLowerCase()),
-          if (target.isNotEmpty) rule,
-        ]);
+        _data.client = updated;
       });
       if (await _persistImport(before)) {
         _setMessage('「$name」分流已保存，${_running ? '应用配置后生效' : '下次启动生效'}');

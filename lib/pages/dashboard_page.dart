@@ -69,7 +69,6 @@ class DashboardPage extends StatefulWidget {
 
 class _DashboardPageState extends State<DashboardPage> {
   bool _editing = false;
-  bool _clockOpen = true;
   void _move(String key, int direction) {
     final ui = UiScope.of(context),
         order = List<String>.of(UiScope.of(context).order);
@@ -117,19 +116,10 @@ class _DashboardPageState extends State<DashboardPage> {
                     order: order.indexOf(key),
                     child: _editable(key, modules[key]!))),
         ];
-        final clock = Panel(
-            padding: const EdgeInsets.all(9),
-            child: Column(children: [
-              Row(children: [
-                const SizedBox(width: 8),
-                const Expanded(child: Text('主题钟')),
-                TextButton(
-                    onPressed: () => setState(() => _clockOpen = !_clockOpen),
-                    child: Text(_clockOpen ? '折叠' : '展开')),
-              ]),
-              if (_clockOpen)
-                const MechanicalClock(size: 200, initiallyOpen: true),
-            ]));
+        final clock = wide
+            ? const MechanicalClock(size: 150, dashboard: true)
+            : const MechanicalClock(
+                size: 150, initiallyOpen: false, dashboard: true);
         return SingleChildScrollView(
           padding: EdgeInsets.fromLTRB(wide ? 26 : 17, 17, wide ? 26 : 17, 22),
           child:
@@ -217,100 +207,118 @@ class _DashboardPageState extends State<DashboardPage> {
             ? good
             : colors.onSurfaceVariant;
     final node = widget.selected;
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(23),
-          border: Border.all(color: colors.primary.withValues(alpha: .32)),
-          gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [
-                Color.alphaBlend(
-                    colors.primary.withValues(alpha: .13), colors.surface),
-                colors.surface,
-                Color.alphaBlend(
-                    colors.primary.withValues(alpha: .09), colors.surface)
-              ])),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        LayoutBuilder(builder: (context, bounds) {
-          final status =
-              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            StatusDot('代理状态', color: color),
-            const SizedBox(height: 4),
-            Text(title, style: Theme.of(context).textTheme.headlineSmall),
-            Text(hint,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: Theme.of(context).textTheme.bodySmall),
-            const SizedBox(height: 9),
-            FilledButton(
-                onPressed: widget.controlsBlocked
-                    ? null
-                    : widget.busy
-                        ? widget.onCancelConnect
-                        : widget.onToggle,
-                child: Text(widget.busy
-                    ? '取消连接'
-                    : widget.running
-                        ? '停止代理'
-                        : '启动代理')),
-          ]);
-          final outlet =
-              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text('当前出口', style: Theme.of(context).textTheme.labelMedium),
-            const SizedBox(height: 4),
-            Row(children: [
-              if (node != null) ...[RegionMark(node), const SizedBox(width: 7)],
-              Expanded(
-                  child: InkWell(
-                      onTap: widget.controlsBlocked ? null : widget.onPickNode,
-                      child: Text(node?.name ?? '未选择节点',
+    return CustomPaint(
+        foregroundPainter: _GlassRim(colors.primary.withValues(alpha: .11)),
+        child: Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(23),
+              border: Border.all(color: colors.primary.withValues(alpha: .32)),
+              gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    Color.alphaBlend(
+                        colors.primary.withValues(alpha: .13), colors.surface),
+                    colors.surface,
+                    Color.alphaBlend(
+                        colors.primary.withValues(alpha: .09), colors.surface)
+                  ])),
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            LayoutBuilder(builder: (context, bounds) {
+              final status = Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    StatusDot('代理状态', color: color),
+                    const SizedBox(height: 4),
+                    Text(title,
+                        style: Theme.of(context).textTheme.headlineSmall),
+                    Text(hint,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.bodySmall),
+                    const SizedBox(height: 9),
+                    FilledButton(
+                        onPressed: widget.controlsBlocked
+                            ? null
+                            : widget.busy
+                                ? widget.onCancelConnect
+                                : widget.onToggle,
+                        child: Text(widget.busy
+                            ? '取消连接'
+                            : widget.running
+                                ? '停止代理'
+                                : '启动代理')),
+                  ]);
+              final outlet = Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('当前出口',
+                        style: Theme.of(context).textTheme.labelMedium),
+                    const SizedBox(height: 4),
+                    Row(children: [
+                      if (node != null) ...[
+                        RegionMark(node),
+                        const SizedBox(width: 7)
+                      ],
+                      Expanded(
+                          child: InkWell(
+                              onTap: widget.controlsBlocked
+                                  ? null
+                                  : widget.onPickNode,
+                              child: Text(node?.name ?? '未选择节点',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: Theme.of(context)
+                                      .textTheme
+                                      .titleMedium))),
+                    ]),
+                    if (node != null)
+                      Text(sourceLabel(node, widget.subscriptions),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: Theme.of(context).textTheme.titleMedium))),
-            ]),
-            if (node != null)
-              Text(sourceLabel(node, widget.subscriptions),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.bodySmall),
-            Wrap(
-                spacing: 8,
-                crossAxisAlignment: WrapCrossAlignment.center,
-                children: [
-                  if (widget.onPickNode != null)
-                    TextButton(
-                        onPressed:
-                            widget.controlsBlocked ? null : widget.onPickNode,
-                        child: const Text('选择节点')),
-                  if (node != null)
-                    TextButton(
-                        onPressed:
-                            widget.busy ? null : widget.onMeasureSelected,
-                        child: Text(widget.selectedLatency == null
-                            ? widget.selectedMeasured
-                                ? '测速超时 · 重测'
-                                : '测量延迟'
-                            : '${widget.selectedLatency} ms · 重测')),
-                ]),
-          ]);
-          if (bounds.maxWidth < 450 ||
-              MediaQuery.textScalerOf(context).scale(14) > 17) {
-            return Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [status, const Divider(height: 18), outlet]);
-          }
-          return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Expanded(child: status),
-            const SizedBox(width: 22),
-            Expanded(child: outlet),
-          ]);
-        }),
-        const Divider(height: 14),
-        _controls(context),
-      ]),
-    );
+                          style: Theme.of(context).textTheme.bodySmall),
+                    Wrap(
+                        spacing: 8,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        children: [
+                          if (widget.onPickNode != null)
+                            TextButton(
+                                onPressed: widget.controlsBlocked
+                                    ? null
+                                    : widget.onPickNode,
+                                child: const Text('选择节点')),
+                          if (node != null)
+                            TextButton(
+                                onPressed: widget.busy
+                                    ? null
+                                    : widget.onMeasureSelected,
+                                child: Text(widget.selectedLatency == null
+                                    ? widget.selectedMeasured
+                                        ? '测速超时 · 重测'
+                                        : '测量延迟'
+                                    : '${widget.selectedLatency} ms · 重测')),
+                        ]),
+                  ]);
+              if (bounds.maxWidth < 450 ||
+                  MediaQuery.textScalerOf(context).scale(14) > 17) {
+                return Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [status, const Divider(height: 18), outlet]);
+              }
+              return Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(child: status),
+                    const SizedBox(width: 22),
+                    Expanded(child: outlet),
+                  ]);
+            }),
+            const Divider(height: 14),
+            _controls(context),
+          ]),
+        ));
   }
 
   Widget _metricBand(BuildContext context) {
@@ -624,6 +632,36 @@ class _DashboardPageState extends State<DashboardPage> {
               style: TextStyle(
                   fontSize: 11,
                   color: Theme.of(context).colorScheme.onSurfaceVariant))));
+}
+
+class _GlassRim extends CustomPainter {
+  const _GlassRim(this.color);
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (size.width < 450) return;
+    final clip =
+        RRect.fromRectAndRadius(Offset.zero & size, const Radius.circular(23));
+    canvas.save();
+    canvas.clipRRect(clip);
+    final paint = Paint()
+      ..color = color
+      ..strokeWidth = .75
+      ..style = PaintingStyle.stroke;
+    for (final radius in [49.0, 64.0, 79.0]) {
+      canvas.drawOval(
+          Rect.fromCenter(
+              center: Offset(size.width + 8, 20),
+              width: radius * 2,
+              height: radius * 2.4),
+          paint);
+    }
+    canvas.restore();
+  }
+
+  @override
+  bool shouldRepaint(_GlassRim oldDelegate) => oldDelegate.color != color;
 }
 
 class Segments<T> extends StatelessWidget {

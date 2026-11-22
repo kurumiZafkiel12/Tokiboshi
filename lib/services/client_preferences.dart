@@ -212,6 +212,12 @@ String applyClientPreferences(
       ...routingRules.where((r) => r.containsKey('clash_mode')),
       ...preferences.rules.where((r) => r.enabled).map((r) {
         final rule = Map<String, dynamic>.from(r.config);
+        if (lookupProcesses && r.kind == 'process_name') {
+          rule.remove('process_name');
+          rule['process_path_regex'] = [
+            r'(?i)(?:^|[\\/])' + RegExp.escape(r.value.trim()) + r'$'
+          ];
+        }
         final outbound = rule['outbound'];
         if (outbound is String) {
           applyRouteTarget(rule, outbound, tagByName, outbounds);

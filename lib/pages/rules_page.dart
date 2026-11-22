@@ -193,22 +193,20 @@ class _RulesPageState extends State<RulesPage> {
         padding: const EdgeInsets.all(22),
         child:
             Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-          PageHeading('分流规则', '按配置顺序匹配，展示来源与目标。',
-              eyebrow: 'KNOW WHERE YOUR TRAFFIC GOES.',
-              actions: [
-                if (widget.onEdit != null)
-                  OutlinedButton.icon(
-                      onPressed: widget.busy ? null : widget.onEdit,
-                      icon: const Icon(Icons.tune, size: 16),
-                      label: const Text('自定义规则')),
-                OutlinedButton.icon(
-                    onPressed: widget.onSources,
-                    icon: const Icon(Icons.inventory_2_outlined, size: 16),
-                    label: const Text('查看来源')),
-                FilledButton(
-                    onPressed: widget.busy || conflict ? null : widget.onApply,
-                    child: Text(widget.running ? '重启并应用配置' : '启动并应用配置'))
-              ]),
+          PageHeading('分流规则', '按配置顺序匹配，展示来源与目标。', actions: [
+            if (widget.onEdit != null)
+              OutlinedButton.icon(
+                  onPressed: widget.busy ? null : widget.onEdit,
+                  icon: const Icon(Icons.tune, size: 16),
+                  label: const Text('自定义规则')),
+            OutlinedButton.icon(
+                onPressed: widget.onSources,
+                icon: const Icon(Icons.inventory_2_outlined, size: 16),
+                label: const Text('查看来源')),
+            FilledButton(
+                onPressed: widget.busy || conflict ? null : widget.onApply,
+                child: Text(widget.running ? '重启并应用配置' : '启动并应用配置'))
+          ]),
           LayoutBuilder(
               builder: (context, c) =>
                   Wrap(spacing: 12, runSpacing: 12, children: [
@@ -416,13 +414,16 @@ class _RulesPageState extends State<RulesPage> {
 
   Widget _meta(String title, String value, String hint, BoxConstraints c) =>
       SizedBox(
-          width: c.maxWidth < 730 ? c.maxWidth : (c.maxWidth - 24) / 3,
+          width: c.maxWidth < 530 ||
+                  MediaQuery.textScalerOf(context).scale(14) > 17
+              ? c.maxWidth
+              : (c.maxWidth - 24) / 3,
           child: Panel(
               child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                 Text(title, style: Theme.of(context).textTheme.bodySmall),
-                const SizedBox(height: 9),
+                const SizedBox(height: 5),
                 Text(value,
                     style: const TextStyle(
                         fontSize: 16, fontWeight: FontWeight.w500),
@@ -557,7 +558,7 @@ class _PerAppRoutingCard extends StatefulWidget {
 class _PerAppRoutingCardState extends State<_PerAppRoutingCard> {
   final _process = TextEditingController();
   String _target = 'proxy';
-  bool _catalog = true;
+  bool _catalog = false;
 
   @override
   void dispose() {
@@ -586,17 +587,16 @@ class _PerAppRoutingCardState extends State<_PerAppRoutingCard> {
               TextButton.icon(
                   onPressed: () => setState(() => _catalog = !_catalog),
                   icon: Icon(_catalog ? Icons.expand_less : Icons.expand_more),
-                  label: Text(_catalog ? '收起应用' : '打开内置应用')),
+                  label: Text(_catalog ? '收起更多应用' : '查看全部 25 个内置应用')),
             ]),
-        if (_catalog)
-          Wrap(spacing: 7, runSpacing: 7, children: [
-            for (final app in _apps.entries)
-              ActionChip(
-                  label: Text(app.key),
-                  onPressed: widget.busy
-                      ? null
-                      : () => setState(() => _process.text = app.value)),
-          ]),
+        Wrap(spacing: 7, runSpacing: 7, children: [
+          for (final app in _apps.entries.take(_catalog ? _apps.length : 8))
+            ActionChip(
+                label: Text(app.key),
+                onPressed: widget.busy
+                    ? null
+                    : () => setState(() => _process.text = app.value)),
+        ]),
         const SizedBox(height: 12),
         if (widget.activeProcesses.isNotEmpty)
           Wrap(spacing: 7, children: [

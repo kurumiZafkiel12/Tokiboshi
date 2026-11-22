@@ -182,6 +182,11 @@ String applyServiceRouting(String raw, Map<String, String> settings,
         target != 'off' &&
         File(resource.path(dataDir)).existsSync();
   }).toList();
+  // The general foreign-domain rule comes after individual services.
+  final fallback =
+      selected.where((r) => r.tag == 'geosite-geolocation-!cn').toList();
+  selected.removeWhere((r) => r.tag == 'geosite-geolocation-!cn');
+  selected.addAll(fallback);
   if (selected.isEmpty) return raw;
   final root = jsonDecode(raw) as Map<String, dynamic>;
   final route = root['route'] as Map<String, dynamic>;

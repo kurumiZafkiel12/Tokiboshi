@@ -195,6 +195,22 @@ void main() {
       await t.pumpWidget(const SizedBox());
     });
   }
+  testWidgets('0.1.3 compact workbench preserves primary action at 125% text',
+      (t) async {
+    t.platformDispatcher.textScaleFactorTestValue = 1.25;
+    addTearDown(t.platformDispatcher.clearTextScaleFactorTestValue);
+    await mount(t, size: const Size(800, 600), light: true);
+    expect(find.text('连接工作台'), findsOneWidget);
+    final start = find.text('启动代理');
+    expect(t.getRect(start).bottom, lessThan(600));
+    await screenshot(t, 'dashboard-800-light-125percent');
+    await t.tap(start);
+    await t.pumpAndSettle();
+    expect(find.text('停止代理'), findsOneWidget);
+    expect(t.takeException(), isNull);
+    await screenshot(t, 'dashboard-800-running-light-125percent');
+    await t.pumpWidget(const SizedBox());
+  });
   testWidgets(
       'layout moves persist, status stays anchored, picker selects and drawer opens',
       (t) async {

@@ -15,11 +15,15 @@ import 'preferences.dart';
 ///   恢复时对齐墙钟。折叠态只保留小时分度、指针与文字时间。
 class MechanicalClock extends StatefulWidget {
   const MechanicalClock(
-      {super.key, this.size = 232, this.initiallyOpen = true});
+      {super.key,
+      this.size = 232,
+      this.initiallyOpen = true,
+      this.dashboard = false});
 
   /// 展开时的钟面直径（逻辑像素）。
   final double size;
   final bool initiallyOpen;
+  final bool dashboard;
 
   @override
   State<MechanicalClock> createState() => _MechanicalClockState();
@@ -60,7 +64,7 @@ class _MechanicalClockState extends State<MechanicalClock>
 
   void _start() {
     _stop();
-    if (!_open || !_visible) return;
+    if (!_open || !_visible || !TickerMode.of(context)) return;
     // 滑动秒针的连续 ticker 会让 widget 测试的 pumpAndSettle 永不收敛；
     // 测试环境（FLUTTER_TEST）自动降级为整秒跳，视觉行为等价。
     final isTest = Platform.environment.containsKey('FLUTTER_TEST');
@@ -141,6 +145,9 @@ class _MechanicalClockState extends State<MechanicalClock>
           const Spacer(),
           IconButton(
               tooltip: _open ? '折叠模块' : '展开机芯',
+              visualDensity: widget.dashboard
+                  ? VisualDensity.compact
+                  : VisualDensity.standard,
               onPressed: () {
                 setState(() => _open = !_open);
                 _start();
@@ -166,9 +173,10 @@ class _MechanicalClockState extends State<MechanicalClock>
                   fontWeight: FontWeight.w700,
                   color: Color(0xFFF8EFF5),
                   fontFeatures: [FontFeature.tabularFigures()])),
-          Text(_textDate(),
-              style:
-                  const TextStyle(fontSize: 10.5, color: Color(0xFFBDB0BD))),
+          if (!widget.dashboard)
+            Text(_textDate(),
+                style:
+                    const TextStyle(fontSize: 10.5, color: Color(0xFFBDB0BD))),
         ] else ...[
           Row(children: [
             SizedBox(
@@ -192,20 +200,25 @@ class _MechanicalClockState extends State<MechanicalClock>
           ]),
         ],
         const SizedBox(height: 2),
-        Text(
-            tier == 'full'
-                ? '钟面动效：滑动秒针 · 齿轮慢转'
-                : tier == 'reduced'
-                    ? '钟面动效：整秒跳 · 齿轮静止'
-                    : '钟面动效：整秒跳',
-            style: const TextStyle(fontSize: 10, color: Color(0xFFBDB0BD))),
+        if (!widget.dashboard)
+          Text(
+              tier == 'full'
+                  ? '钟面动效：滑动秒针 · 齿轮慢转'
+                  : tier == 'reduced'
+                      ? '钟面动效：整秒跳 · 齿轮静止'
+                      : '钟面动效：整秒跳',
+              style: const TextStyle(fontSize: 10, color: Color(0xFFBDB0BD))),
       ]),
     );
   }
 }
 
 class _ClockPainter extends CustomPainter {
-  _ClockPainter({required this.tier, required this.now, required this.tick, required this.compact});
+  _ClockPainter(
+      {required this.tier,
+      required this.now,
+      required this.tick,
+      required this.compact});
   final String tier;
   final DateTime now;
   final int tick;
@@ -228,12 +241,15 @@ class _ClockPainter extends CustomPainter {
     // ---- 金属边环 ----
     final ring = Paint()
       ..shader = SweepGradient(
-              startAngle: -math.pi / 2,
-              endAngle: 3 * math.pi / 2,
-              colors: const [
-                Color(0xFFB4678A), rose, Color(0xFF8E4E70), rose, Color(0xFFB4678A)
-              ])
-          .createShader(Rect.fromCircle(center: c, radius: R));
+          startAngle: -math.pi / 2,
+          endAngle: 3 * math.pi / 2,
+          colors: const [
+            Color(0xFFB4678A),
+            rose,
+            Color(0xFF8E4E70),
+            rose,
+            Color(0xFFB4678A)
+          ]).createShader(Rect.fromCircle(center: c, radius: R));
     canvas.drawCircle(c, R, ring);
     canvas.drawCircle(c, R - 3, Paint()..color = const Color(0xFF2A1420));
     if (!compact) {
@@ -257,8 +273,14 @@ class _ClockPainter extends CustomPainter {
         faceR,
         Paint()
           ..shader = RadialGradient(colors: const [
-            Color(0xFF241C2C), face, Color(0xFF14101A),
-          ], stops: const [0, .55, 1]).createShader(Rect.fromCircle(center: c, radius: faceR)));
+            Color(0xFF241C2C),
+            face,
+            Color(0xFF14101A),
+          ], stops: const [
+            0,
+            .55,
+            1
+          ]).createShader(Rect.fromCircle(center: c, radius: faceR)));
     final ring2 = Paint()
       ..style = PaintingStyle.stroke
       ..color = rose.withValues(alpha: .16)
@@ -289,7 +311,18 @@ class _ClockPainter extends CustomPainter {
     // ---- 罗马数字 ----
     if (!compact) {
       const numerals = [
-        'XII', 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X', 'XI'
+        'XII',
+        'I',
+        'II',
+        'III',
+        'IV',
+        'V',
+        'VI',
+        'VII',
+        'VIII',
+        'IX',
+        'X',
+        'XI'
       ];
       for (var i = 0; i < 12; i++) {
         final a = i * math.pi / 6;
@@ -300,8 +333,9 @@ class _ClockPainter extends CustomPainter {
             text: TextSpan(
                 text: numerals[i],
                 style: TextStyle(
-                    fontSize: (isMain ? faceR * .12 : faceR * .085)
-                        .clamp(8.0, 22.0),
+                    fontFamily: 'Segoe UI',
+                    fontSize:
+                        (isMain ? faceR * .12 : faceR * .085).clamp(8.0, 22.0),
                     color: ink.withValues(alpha: isMain ? .92 : .55),
                     fontWeight: isMain ? FontWeight.w700 : FontWeight.w500)),
             textDirection: TextDirection.ltr);
@@ -312,9 +346,10 @@ class _ClockPainter extends CustomPainter {
           text: const TextSpan(
               text: 'TOKIBOSHI',
               style: TextStyle(
-                  fontSize: 9,
+                  fontFamily: 'Segoe UI',
+                  fontSize: 8,
                   color: rose,
-                  letterSpacing: 3,
+                  letterSpacing: 1.4,
                   fontWeight: FontWeight.w600)),
           textDirection: TextDirection.ltr);
       brand.layout();
@@ -323,7 +358,9 @@ class _ClockPainter extends CustomPainter {
           text: TextSpan(
               text: '時の星',
               style: TextStyle(
-                  fontSize: 8, color: rose.withValues(alpha: .6))),
+                  fontFamily: 'Segoe UI',
+                  fontSize: 8,
+                  color: rose.withValues(alpha: .6))),
           textDirection: TextDirection.ltr);
       sub.layout();
       sub.paint(canvas, c + Offset(-sub.width / 2, faceR * .38));
@@ -351,9 +388,11 @@ class _ClockPainter extends CustomPainter {
             ..color = rose.withValues(alpha: .22));
       for (final (dx, dy) in [(-.42, -.55), (.34, -.62)]) {
         final sp = c + Offset(faceR * dx, faceR * dy);
-        canvas.drawCircle(sp, faceR * .045,
-            Paint()..color = rose.withValues(alpha: .5));
-        canvas.drawLine(sp - Offset(faceR * .03, 0), sp + Offset(faceR * .03, 0),
+        canvas.drawCircle(
+            sp, faceR * .045, Paint()..color = rose.withValues(alpha: .5));
+        canvas.drawLine(
+            sp - Offset(faceR * .03, 0),
+            sp + Offset(faceR * .03, 0),
             Paint()
               ..color = const Color(0xFF14101A)
               ..strokeWidth = 1.4);
@@ -386,8 +425,9 @@ class _ClockPainter extends CustomPainter {
             Offset(math.cos(a0 + math.pi / teeth) * ri,
                 math.sin(a0 + math.pi / teeth) * ri);
         final p2 = gc + Offset(math.cos(a1) * ri, math.sin(a1) * ri);
-        final p3 = gc + Offset(math.cos(a1 + math.pi / teeth) * ro,
-            math.sin(a1 + math.pi / teeth) * ro);
+        final p3 = gc +
+            Offset(math.cos(a1 + math.pi / teeth) * ro,
+                math.sin(a1 + math.pi / teeth) * ro);
         if (i == 0) path.moveTo(p0.dx, p0.dy);
         path.lineTo(p1.dx, p1.dy);
         path.lineTo(p2.dx, p2.dy);
@@ -403,10 +443,13 @@ class _ClockPainter extends CustomPainter {
             ..strokeWidth = 1);
       canvas.drawCircle(gc, gr * .30,
           Paint()..color = const Color(0xFF14101A).withValues(alpha: .8));
-      canvas.drawCircle(gc, gr * .12, Paint()..color = rose.withValues(alpha: .6));
+      canvas.drawCircle(
+          gc, gr * .12, Paint()..color = rose.withValues(alpha: .6));
       for (var i = 0; i < 3; i++) {
         final a = angle + i * 2 * math.pi / 3;
-        canvas.drawLine(gc, gc + Offset(math.cos(a) * gr * .72, math.sin(a) * gr * .72),
+        canvas.drawLine(
+            gc,
+            gc + Offset(math.cos(a) * gr * .72, math.sin(a) * gr * .72),
             Paint()
               ..color = rose.withValues(alpha: .28)
               ..strokeWidth = 1.2);
@@ -419,18 +462,22 @@ class _ClockPainter extends CustomPainter {
         {double tail = 0}) {
       final a = handAngle(value);
       final dir = Offset(math.sin(a), -math.cos(a));
-      canvas.drawLine(c - dir * (tail * faceR), c + dir * (len * faceR),
+      canvas.drawLine(
+          c - dir * (tail * faceR),
+          c + dir * (len * faceR),
           Paint()
             ..color = color
             ..strokeWidth = w
             ..strokeCap = StrokeCap.round);
     }
+
     hand(hour, .48, faceR * .045, ink.withValues(alpha: .92), tail: .06);
     hand(minute, .66, faceR * .032, ink.withValues(alpha: .92), tail: .08);
     hand(sec, .72, math.max(1.0, faceR * .016).toDouble(), rose, tail: .12);
 
     canvas.drawCircle(c, faceR * .05, Paint()..color = rose);
-    canvas.drawCircle(c, faceR * .022, Paint()..color = const Color(0xFF14101A));
+    canvas.drawCircle(
+        c, faceR * .022, Paint()..color = const Color(0xFF14101A));
   }
 
   @override

@@ -65,6 +65,12 @@ jobs:
             exit $code
           }
 
+      - name: Verify per-application routing on the native core
+        shell: pwsh
+        run: |
+          dart run tool/v013/windows_process_route.dart
+          if ($LASTEXITCODE -ne 0) { throw 'Native Windows process routing failed' }
+
       - name: Flutter analysis
         run: |
           $log = Join-Path $env:RUNNER_TEMP "flutter-analyze.log"
