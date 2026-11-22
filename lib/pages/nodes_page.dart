@@ -132,150 +132,172 @@ class _NodesPageState extends State<NodesPage> {
           .compareTo(widget.latency[widget.nodes[b]] ?? 0x7fffffff));
     return Padding(
         padding: const EdgeInsets.fromLTRB(22, 20, 22, 12),
-        child:
-            Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-          PageHeading('节点选择（${widget.nodes.where((n) => !n.isPolicy).length}）',
-              '按来源筛选，选择适合当前连接的出口。',
-              eyebrow: 'FIND YOUR NEXT CONNECTION.',
-              actions: [
-                if (widget.onCreateChain != null)
-                  OutlinedButton.icon(
-                      onPressed: widget.busy ||
-                              widget.running ||
-                              widget.nodes.length < 2
-                          ? null
-                          : widget.onCreateChain,
-                      icon: const Icon(Icons.link, size: 16),
-                      label: const Text('链式代理')),
-                OutlinedButton.icon(
-                    onPressed: widget.busy ? null : widget.onMeasureAll,
-                    icon: const Icon(Icons.speed, size: 16),
-                    label: const Text('测速全部')),
-                ImportMenuButton(
-                    label: '导入',
-                    enabled: !widget.busy,
-                    onSelected: (method) => widget.onImportMethod == null
-                        ? widget.onImport()
-                        : widget.onImportMethod!(method))
-              ]),
-          if (widget.running &&
-              widget.onQualitySample != null &&
-              widget.selectedIndex >= 0 &&
-              widget.selectedIndex < widget.nodes.length) ...[
-            const SizedBox(height: 8),
-            NodeQualityPanel(
-                node: _qualityNode ?? widget.nodes[widget.selectedIndex],
-                measure: widget.onQualitySample!),
-            const SizedBox(height: 8),
-          ],
-          SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Row(children: [
-                Text('来源', style: Theme.of(context).textTheme.bodySmall),
-                const SizedBox(width: 10),
-                for (final entry in {
-                  '': '全部来源',
-                  if (widget.nodes.any((n) => n.source.isEmpty))
-                    '__manual': '手动导入',
-                  for (final sub in widget.subscriptions) sub.id: sub.name
-                }.entries)
-                  Padding(
-                      padding: const EdgeInsets.only(right: 6),
-                      child: ChoiceChip(
-                          label: Text(entry.value),
-                          selected: _source == entry.key,
-                          onSelected: widget.busy
-                              ? null
-                              : (_) => setState(() {
-                                    _source = entry.key;
-                                    _group = '';
-                                  })))
-              ])),
-          if (policyIndex != null)
-            Padding(
-                padding: const EdgeInsets.only(top: 8),
-                child: Row(children: [
-                  const Expanded(
-                      child: Text('当前仅筛选策略成员；使用策略组需明确切换。',
-                          style: TextStyle(fontSize: 12))),
-                  TextButton.icon(
-                      onPressed: widget.busy
-                          ? null
-                          : () => widget.onSelect(policyIndex),
-                      icon: const Icon(Icons.play_arrow, size: 16),
-                      label: const Text('使用此策略组'))
-                ])),
-          const SizedBox(height: 10),
-          Row(children: [
-            Expanded(
-                child: TextField(
-                    controller: _search,
-                    decoration: InputDecoration(
-                        prefixIcon: const Icon(Icons.search, size: 17),
-                        hintText: '搜索节点名或服务器、地区、协议',
-                        suffixIcon: _query.isEmpty
-                            ? null
-                            : IconButton(
-                                tooltip: '清除搜索',
+        child: CustomScrollView(
+            key: const PageStorageKey('nodes-scroll'),
+            slivers: [
+              SliverToBoxAdapter(
+                child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      PageHeading(
+                          '节点选择（${widget.nodes.where((n) => !n.isPolicy).length}）',
+                          '按来源筛选，选择适合当前连接的出口。',
+                          eyebrow: 'FIND YOUR NEXT CONNECTION.',
+                          actions: [
+                            if (widget.onCreateChain != null)
+                              OutlinedButton.icon(
+                                  onPressed: widget.busy ||
+                                          widget.running ||
+                                          widget.nodes.length < 2
+                                      ? null
+                                      : widget.onCreateChain,
+                                  icon: const Icon(Icons.link, size: 16),
+                                  label: const Text('链式代理')),
+                            OutlinedButton.icon(
+                                onPressed:
+                                    widget.busy ? null : widget.onMeasureAll,
+                                icon: const Icon(Icons.speed, size: 16),
+                                label: const Text('测速全部')),
+                            ImportMenuButton(
+                                label: '导入',
+                                enabled: !widget.busy,
+                                onSelected: (method) =>
+                                    widget.onImportMethod == null
+                                        ? widget.onImport()
+                                        : widget.onImportMethod!(method))
+                          ]),
+                      if (widget.running &&
+                          widget.onQualitySample != null &&
+                          widget.selectedIndex >= 0 &&
+                          widget.selectedIndex < widget.nodes.length) ...[
+                        const SizedBox(height: 8),
+                        NodeQualityPanel(
+                            node: _qualityNode ??
+                                widget.nodes[widget.selectedIndex],
+                            measure: widget.onQualitySample!),
+                        const SizedBox(height: 8),
+                      ],
+                      SingleChildScrollView(
+                          scrollDirection: Axis.horizontal,
+                          child: Row(children: [
+                            Text('来源',
+                                style: Theme.of(context).textTheme.bodySmall),
+                            const SizedBox(width: 10),
+                            for (final entry in {
+                              '': '全部来源',
+                              if (widget.nodes.any((n) => n.source.isEmpty))
+                                '__manual': '手动导入',
+                              for (final sub in widget.subscriptions)
+                                sub.id: sub.name
+                            }.entries)
+                              Padding(
+                                  padding: const EdgeInsets.only(right: 6),
+                                  child: ChoiceChip(
+                                      label: Text(entry.value),
+                                      selected: _source == entry.key,
+                                      onSelected: widget.busy
+                                          ? null
+                                          : (_) => setState(() {
+                                                _source = entry.key;
+                                                _group = '';
+                                              })))
+                          ])),
+                      if (policyIndex != null)
+                        Padding(
+                            padding: const EdgeInsets.only(top: 8),
+                            child: Row(children: [
+                              const Expanded(
+                                  child: Text('当前仅筛选策略成员；使用策略组需明确切换。',
+                                      style: TextStyle(fontSize: 12))),
+                              TextButton.icon(
+                                  onPressed: widget.busy
+                                      ? null
+                                      : () => widget.onSelect(policyIndex),
+                                  icon: const Icon(Icons.play_arrow, size: 16),
+                                  label: const Text('使用此策略组'))
+                            ])),
+                      const SizedBox(height: 10),
+                      Row(children: [
+                        Expanded(
+                            child: TextField(
+                                controller: _search,
+                                decoration: InputDecoration(
+                                    prefixIcon:
+                                        const Icon(Icons.search, size: 17),
+                                    hintText: '搜索节点名或服务器、地区、协议',
+                                    suffixIcon: _query.isEmpty
+                                        ? null
+                                        : IconButton(
+                                            tooltip: '清除搜索',
+                                            onPressed: () {
+                                              _search.clear();
+                                              setState(() => _query = '');
+                                            },
+                                            icon: const Icon(Icons.close,
+                                                size: 15))),
+                                onChanged: (v) => setState(
+                                    () => _query = v.trim().toLowerCase()))),
+                        const SizedBox(width: 8),
+                        IconButton(
+                            tooltip: '按延迟排序',
+                            isSelected: _sort,
+                            onPressed: () => setState(() => _sort = !_sort),
+                            icon: const Icon(Icons.sort)),
+                        IconButton(
+                            tooltip: '列表视图',
+                            isSelected: !_grid,
+                            onPressed: () => setState(() => _grid = false),
+                            icon: const Icon(Icons.view_list_outlined)),
+                        IconButton(
+                            tooltip: '卡片视图',
+                            isSelected: _grid,
+                            onPressed: () => setState(() => _grid = true),
+                            icon: const Icon(Icons.grid_view_outlined))
+                      ]),
+                      const SizedBox(height: 6),
+                    ]),
+              ),
+              if (indices.isEmpty)
+                SliverFillRemaining(
+                    hasScrollBody: false,
+                    child: widget.nodes.isEmpty
+                        ? EmptyView('还没有节点', '导入分享链接或订阅，开始建立连接。',
+                            icon: Icons.dns_outlined,
+                            action: FilledButton(
+                                onPressed: widget.onImport,
+                                child: const Text('导入节点')))
+                        : EmptyView('没有找到匹配的节点', '试试其他来源或关键词。',
+                            icon: Icons.search,
+                            action: TextButton(
                                 onPressed: () {
                                   _search.clear();
-                                  setState(() => _query = '');
+                                  setState(() {
+                                    _query = '';
+                                    _group = '';
+                                    _source = '';
+                                  });
                                 },
-                                icon: const Icon(Icons.close, size: 15))),
-                    onChanged: (v) =>
-                        setState(() => _query = v.trim().toLowerCase()))),
-            const SizedBox(width: 8),
-            IconButton(
-                tooltip: '按延迟排序',
-                isSelected: _sort,
-                onPressed: () => setState(() => _sort = !_sort),
-                icon: const Icon(Icons.sort)),
-            IconButton(
-                tooltip: '列表视图',
-                isSelected: !_grid,
-                onPressed: () => setState(() => _grid = false),
-                icon: const Icon(Icons.view_list_outlined)),
-            IconButton(
-                tooltip: '卡片视图',
-                isSelected: _grid,
-                onPressed: () => setState(() => _grid = true),
-                icon: const Icon(Icons.grid_view_outlined))
-          ]),
-          const SizedBox(height: 14),
-          Expanded(
-              child: widget.nodes.isEmpty
-                  ? EmptyView('还没有节点', '导入分享链接或订阅，开始建立连接。',
-                      icon: Icons.dns_outlined,
-                      action: FilledButton(
-                          onPressed: widget.onImport,
-                          child: const Text('导入节点')))
-                  : indices.isEmpty
-                      ? EmptyView('没有找到匹配的节点', '试试其他来源或关键词。',
-                          icon: Icons.search,
-                          action: TextButton(
-                              onPressed: () {
-                                _search.clear();
-                                setState(() {
-                                  _query = '';
-                                  _group = '';
-                                  _source = '';
-                                });
-                              },
-                              child: const Text('清除筛选')))
-                      : _grouped(indices)),
-          const SizedBox(height: 9),
-          Row(children: [
-            Expanded(
-                child: Text(
-                    '显示 ${indices.length} / ${widget.nodes.where((n) => !n.isPolicy).length} 个节点',
-                    style: Theme.of(context).textTheme.bodySmall)),
-            Text(widget.running ? '内核 URL 测速 · 含代理握手' : 'TCP 端口探测 · 不代表代理可用',
-                style: Theme.of(context).textTheme.bodySmall)
-          ])
-        ]));
+                                child: const Text('清除筛选'))))
+              else
+                ..._grouped(indices),
+              SliverPadding(
+                padding: const EdgeInsets.only(top: 10),
+                sliver: SliverToBoxAdapter(
+                    child: Wrap(spacing: 16, runSpacing: 4, children: [
+                  Text(
+                      '显示 ${indices.length} / ${widget.nodes.where((n) => !n.isPolicy).length} 个节点',
+                      style: Theme.of(context).textTheme.bodySmall),
+                  Text(
+                      widget.running
+                          ? '内核 URL 测速 · 含代理握手'
+                          : 'TCP 端口探测 · 不代表代理可用',
+                      style: Theme.of(context).textTheme.bodySmall)
+                ])),
+              ),
+            ]));
   }
 
-  Widget _grouped(List<int> indices) {
+  List<Widget> _grouped(List<int> indices) {
     final scaler = MediaQuery.textScalerOf(context);
     final rowHeight = (UiScope.of(context).compact ? 52.0 : 68.0) +
         (scaler.scale(36) - 36).clamp(0.0, double.infinity);
@@ -299,7 +321,7 @@ class _NodesPageState extends State<NodesPage> {
         groups[key]!.contains(widget.selectedIndex) ||
         _group.isNotEmpty ||
         _query.isNotEmpty;
-    return CustomScrollView(slivers: [
+    return [
       for (final key in keys) ...[
         SliverToBoxAdapter(
             child: Padding(
@@ -368,7 +390,7 @@ class _NodesPageState extends State<NodesPage> {
                     key: ValueKey(groups[key]![position]),
                     child: _row(groups[key]![position])))
       ]
-    ]);
+    ];
   }
 
   Widget _row(int i) {

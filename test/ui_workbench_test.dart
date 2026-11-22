@@ -280,7 +280,10 @@ void main() {
       (t) async {
     t.platformDispatcher.textScaleFactorTestValue = 1.5;
     addTearDown(t.platformDispatcher.clearTextScaleFactorTestValue);
-    await mount(t, size: const Size(800, 600), dpr: 1.5);
+    final fixture = MemoryStore();
+    fixture.data.desktop =
+        const DesktopSettings(autoRun: true, autoCheckUpdates: false);
+    await mount(t, size: const Size(800, 600), dpr: 1.5, withStore: fixture);
     expect(t.takeException(), isNull, reason: '连接');
     await t.tap(find.byTooltip('查找节点 (Ctrl+K)'));
     await t.pumpAndSettle();
@@ -294,7 +297,27 @@ void main() {
       await t.pumpAndSettle();
       expect(t.takeException(), isNull, reason: name);
       await screenshot(t, 'dpi-150-$name');
+      if (name == '节点') {
+        final nodes = find.byKey(const PageStorageKey('nodes-scroll'));
+        final localGroup = find.text('本地导入（1）').hitTestable();
+        for (var i = 0; i < 3 && localGroup.evaluate().isEmpty; i++) {
+          await t.drag(nodes, const Offset(0, -240));
+          await t.pumpAndSettle();
+        }
+        expect(localGroup, findsOneWidget);
+        await t.tap(localGroup);
+        await t.pumpAndSettle();
+        final localNode = find.text('本地 · SOCKS').hitTestable();
+        for (var i = 0; i < 3 && localNode.evaluate().isEmpty; i++) {
+          await t.drag(nodes, const Offset(0, -240));
+          await t.pumpAndSettle();
+        }
+        expect(localNode, findsOneWidget);
+        expect(t.takeException(), isNull);
+        await screenshot(t, 'dpi-150-node-list-scrolled');
+      }
     }
+    await t.pump(const Duration(seconds: 2));
     await t.pumpWidget(const SizedBox());
   });
   testWidgets(
