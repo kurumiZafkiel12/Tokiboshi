@@ -2,17 +2,7 @@ import 'dart:convert';
 
 import '../bridge/core_bridge.dart';
 import 'store.dart';
-
-/// A remote outbound may require a policy group or another named outbound.
-bool isIndependentSubscriptionNode(NodeInfo node) {
-  final outbound = node.outbound;
-  final type = outbound['type'];
-  return type is String &&
-      type.isNotEmpty &&
-      !const {'selector', 'urltest', 'direct', 'block', 'dns'}.contains(type) &&
-      outbound['outbounds'] == null &&
-      (outbound['detour'] == null || outbound['detour'] == '');
-}
+import 'subscription_resolver.dart' show isIndependentSubscriptionNode;
 
 /// Convert installed data and restored backups to the nodes-only model.
 /// Keep source identities and restore a selected node by its original row.

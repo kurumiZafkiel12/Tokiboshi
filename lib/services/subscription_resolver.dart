@@ -3,7 +3,6 @@ import 'dart:io';
 
 import '../bridge/core_bridge.dart';
 import 'subscription_fetcher.dart';
-import 'subscription_nodes.dart';
 
 /// Fetch with automatic mirror fallback for GitHub raw content.
 /// Airports ship rule-providers on raw.githubusercontent.com, which is
@@ -259,6 +258,17 @@ class SubscriptionResolver {
 
     return expand(url, userAgent, 0, {});
   }
+}
+
+/// A remote outbound may require a policy group or another named outbound.
+bool isIndependentSubscriptionNode(NodeInfo node) {
+  final outbound = node.outbound;
+  final type = outbound['type'];
+  return type is String &&
+      type.isNotEmpty &&
+      !const {'selector', 'urltest', 'direct', 'block', 'dns'}.contains(type) &&
+      outbound['outbounds'] == null &&
+      (outbound['detour'] == null || outbound['detour'] == '');
 }
 
 /// Keep old nodes only for failed sources; successful empty/filtered sources
