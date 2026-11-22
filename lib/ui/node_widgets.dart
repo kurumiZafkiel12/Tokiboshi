@@ -284,7 +284,9 @@ Future<NodeInfo?> showNodeEditor(BuildContext context, NodeInfo node) async {
           ? 'server_name'
           : null);
   final sni = TextEditingController(
-      text: sniKey == null ? '' : '${(ob['tls'] as Map)[sniKey]}');
+      text: sniKey == null
+          ? ''
+          : '${(ob['tls'] as Map)[sniKey] ?? ''}');
   final hasSecret =
       ob.containsKey('password') || ob.containsKey('uuid') || ob.containsKey('psk');
   final secretLabel = ob.containsKey('uuid')

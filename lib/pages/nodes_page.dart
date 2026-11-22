@@ -484,8 +484,11 @@ class _NodesPageState extends State<NodesPage> {
                               tooltip: '节点操作',
                               icon: const Icon(Icons.more_horiz, size: 17),
                               onSelected: (v) {
-                                if (v == 'details') return _details(i);
-                                if (v == 'edit') return _edit(i);
+                                if (v == 'details') {
+                                  _details(i);
+                                } else if (v == 'edit') {
+                                  _edit(i);
+                                }
                                 if (v == 'delete') {
                                   widget.running || widget.busy
                                       ? toastBlocked(context)
