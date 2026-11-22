@@ -28,11 +28,11 @@ Tokiboshi 不提供代理服务器或订阅服务，使用前需要导入自己�
 
 ## 下载与安装
 
-Windows 当前为 **0.1.1（build 13）**：工具箱新增实时链路拓扑和节点延迟，支持管理 17 个 sing-box 规则集、自定义下载源与按需自动更新。
+Windows 当前为 **0.1.4（build 20）**：仅节点导入支持先预览再保存，按软件验证分流可查看实时请求与实际出口，节点质量保留最近一轮五次测速，红黑工作台与机械钟继续打磨。
 
 | 平台 | 版本要求 | 下载 |
 | --- | --- | --- |
-| Windows | Windows 10/11，x64 | [![Setup x64](https://img.shields.io/badge/Setup-x64-3d8ba3?style=flat-square)](https://github.com/kurumiZafkiel12/Tokiboshi/releases/download/v0.1.1/Tokiboshi-Setup-0.1.1.exe) [![ZIP x64](https://img.shields.io/badge/ZIP-x64-3d8ba3?style=flat-square)](https://github.com/kurumiZafkiel12/Tokiboshi/releases/download/v0.1.1/Tokiboshi-windows.zip) |
+| Windows | Windows 10/11，x64 | [![Setup x64](https://img.shields.io/badge/Setup-x64-3d8ba3?style=flat-square)](https://github.com/kurumiZafkiel12/Tokiboshi/releases/download/v0.1.4/Tokiboshi-Setup-0.1.4.exe) [![ZIP x64](https://img.shields.io/badge/ZIP-x64-3d8ba3?style=flat-square)](https://github.com/kurumiZafkiel12/Tokiboshi/releases/download/v0.1.4/Tokiboshi-windows.zip) |
 | Android | Android 7.0+（API24），三种架构 | [![APK arm64-v8a](https://img.shields.io/badge/APK-arm64--v8a-3DDC84?style=flat-square&logo=android&logoColor=white&labelColor=555555)](https://github.com/kurumiZafkiel12/Tokiboshi/releases/download/v0.1.0/Tokiboshi-0.1.0-android-arm64-v8a.apk)<br>[![APK armeabi-v7a](https://img.shields.io/badge/APK-armeabi--v7a-3DDC84?style=flat-square&logo=android&logoColor=white&labelColor=555555)](https://github.com/kurumiZafkiel12/Tokiboshi/releases/download/v0.1.0/Tokiboshi-0.1.0-android-armeabi-v7a.apk)<br>[![APK x86_64](https://img.shields.io/badge/APK-x86_64-3DDC84?style=flat-square&logo=android&logoColor=white&labelColor=555555)](https://github.com/kurumiZafkiel12/Tokiboshi/releases/download/v0.1.0/Tokiboshi-0.1.0-android-x86_64.apk) |
 
 安装文件与 SHA256 校验清单（`SHA256SUMS.txt`）均在发布页。安装程序尚未做 Authenticode 签名。
