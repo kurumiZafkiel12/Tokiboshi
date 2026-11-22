@@ -96,12 +96,7 @@ class _SubscriptionsPageState extends State<SubscriptionsPage> {
         '不把策略组计入节点',
         Icons.hub_outlined
       ),
-      (
-        '完整配置',
-        '${widget.subscriptions.where((s) => s.profileJson != null).length}',
-        '规则与 DNS 随来源保留',
-        Icons.route_outlined
-      ),
+      ('导入方式', '仅节点', '分流由应用内置规则与自定义规则管理', Icons.route_outlined),
       (
         '自动更新',
         '${widget.subscriptions.where((s) => s.refreshMinutes > 0).length}',
@@ -113,7 +108,7 @@ class _SubscriptionsPageState extends State<SubscriptionsPage> {
         padding: const EdgeInsets.all(22),
         child:
             Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-          PageHeading('订阅管理', '集中管理来源、更新计划与规则配置。',
+          PageHeading('订阅管理', '每条订阅独立保存节点与更新计划。',
               eyebrow: 'SOURCES / PROFILES',
               actions: [
                 OutlinedButton.icon(

@@ -465,10 +465,8 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   Widget _profile(BuildContext context) {
-    final profiles =
-        widget.subscriptions.where((s) => s.profileJson != null).toList();
     final viewed = widget.subscriptions
-        .where((s) => s.id == widget.activeProfileId)
+        .where((s) => s.id == widget.selected?.source)
         .firstOrNull;
     return SizedBox(
         height: 220,
@@ -484,65 +482,18 @@ class _DashboardPageState extends State<DashboardPage> {
                     child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                      Text(
-                          viewed?.name ??
-                              (widget.activeProfileId == null
-                                  ? '请选择规则配置'
-                                  : '内置分流模板'),
+                      Text(viewed?.name ?? '内置分流模板',
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(
                               fontSize: 13, fontWeight: FontWeight.w500)),
-                      Text(
-                          widget.activeProfileId == null
-                              ? '请明确选择一份规则配置'
-                              : viewed?.profileJson != null
-                                  ? '订阅携带规则 · 运行状态见规则页'
-                                  : '使用内置分流模板',
+                      Text('订阅仅提供节点。分流在「分流规则」内管理。',
                           style: Theme.of(context).textTheme.bodySmall,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis)
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis),
                     ])),
                 const SizedBox(width: 6),
-                Tag(viewed?.profileJson != null ? '完整配置' : '内置模板',
-                    color: Theme.of(context).colorScheme.primary)
-              ]),
-              const SizedBox(height: 10),
-              Row(children: [
-                Text('切换配置', style: Theme.of(context).textTheme.bodySmall),
-                const SizedBox(width: 10),
-                Expanded(
-                    child: SizedBox(
-                        height: 34,
-                        child: DropdownButtonFormField<String>(
-                            key: ValueKey(widget.activeProfileId),
-                            initialValue: widget.activeProfileId,
-                            isExpanded: true,
-                            style: Theme.of(context)
-                                .textTheme
-                                .bodyMedium
-                                ?.copyWith(fontSize: 12),
-                            decoration: const InputDecoration(
-                                contentPadding: EdgeInsets.symmetric(
-                                    horizontal: 10, vertical: 5)),
-                            hint: const Text('请选择激活配置'),
-                            items: [
-                              const DropdownMenuItem(
-                                  value: '', child: Text('内置分流模板')),
-                              for (final s in profiles)
-                                DropdownMenuItem(
-                                    value: s.id,
-                                    child: Text(s.name,
-                                        overflow: TextOverflow.ellipsis))
-                            ],
-                            onChanged: widget.running ||
-                                    widget.busy ||
-                                    widget.profileBusy
-                                ? null
-                                : (v) {
-                                    if (v != null)
-                                      widget.onActivateProfile?.call(v);
-                                  })))
+                Tag('仅节点', color: Theme.of(context).colorScheme.primary)
               ]),
               const SizedBox(height: 9),
               Wrap(spacing: 8, children: [
@@ -550,7 +501,7 @@ class _DashboardPageState extends State<DashboardPage> {
                     height: 29,
                     child: OutlinedButton.icon(
                         onPressed: widget.busy ||
-                                widget.running ||
+                                (widget.proxyActive ?? widget.running) ||
                                 widget.profileBusy ||
                                 viewed == null
                             ? null

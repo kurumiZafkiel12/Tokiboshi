@@ -4,6 +4,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:tokiboshi/bridge/core_bridge.dart';
 import 'package:tokiboshi/services/subscription_fetcher.dart';
 import 'package:tokiboshi/services/subscription_resolver.dart';
+import 'package:tokiboshi/services/proxy_chain.dart';
+import 'package:tokiboshi/services/store.dart';
+import 'package:tokiboshi/services/subscription_nodes.dart';
 import 'fake_bridge.dart';
 
 class ContentBridge extends FakeBridge {
@@ -14,62 +17,189 @@ class ContentBridge extends FakeBridge {
 }
 
 void main() {
+  test(
+      'nodes-only expands both sources without merging their upstream policies',
+      () async {
+    const real = NodeInfo(
+        name: 'JP',
+        outboundJson:
+            '{"type":"socks","server":"example.test","server_port":1080}');
+    const policy = NodeInfo(
+        name: '自动', outboundJson: '{"type":"selector","outbounds":["不存在"]}');
+    const detour =
+        NodeInfo(name: '依赖上游组', outboundJson: '{"type":"socks","detour":"自动"}');
+    final fetcher = FakeFetcher({
+      'https://fixture.example/root': 'root',
+      'https://fixture.example/child': 'child',
+    });
+    final result = await SubscriptionResolver(
+      bridge: ContentBridge({
+        'root': const ParseOutcome(
+            nodes: [real, policy],
+            profileJson: '{"unsupported":["legacy"]}',
+            providers: [
+              ProviderInfo(name: '', url: 'https://fixture.example/child')
+            ]),
+        'child': const ParseOutcome(
+            nodes: [real, policy, detour],
+            profileJson: '{"unsupported":["child"]}'),
+      }),
+      fetcher: fetcher,
+    ).resolve('https://fixture.example/root', nodesOnly: true);
+    expect(result.nodes.map((n) => n.name), ['JP', 'JP']);
+    expect(result.profileJson, isNull);
+    expect(result.nodesOnly, isTrue);
+    expect(result.skipped.join(), contains('策略组'));
+    expect(fetcher.requested, hasLength(2));
+  });
+
+  test(
+      'migrating saved sources preserves selected rows and local chains across a name collision',
+      () {
+    const first = NodeInfo(
+        name: 'JP',
+        source: 'first',
+        outboundJson: '{"type":"socks","server":"first.test"}');
+    const second = NodeInfo(
+        name: 'JP',
+        source: 'second',
+        outboundJson: '{"type":"socks","server":"second.test"}');
+    final chain = createProxyChain([first, second], 0, 1, '本地链');
+    final data = AppData(
+      activeProfileId: 'second',
+      selectedIndex: 2,
+      nodes: [
+        first,
+        const NodeInfo(
+            name: '策略组',
+            source: 'first',
+            outboundJson: '{"type":"selector","outbounds":["missing"]}'),
+        second,
+        ...chain,
+        const NodeInfo(
+            name: '本地链 · 前置',
+            source: 'second',
+            outboundJson: '{"type":"socks","server":"another.test"}'),
+      ],
+      subscriptions: const [
+        Subscription(id: 'first', name: 'First', url: 'https://first.test/'),
+        Subscription(
+            id: 'second',
+            name: 'Second',
+            url: 'https://second.test/',
+            profileJson: '{}'),
+      ],
+    );
+    expect(migrateSubscriptionNodes(data), isTrue);
+    expect(data.selected, same(second));
+    expect(data.activeProfileId, '');
+    expect(
+        data.subscriptions.every((s) => s.nodesOnly && s.profileJson == null),
+        isTrue);
+    expect(migrateSubscriptionNodes(data), isFalse);
+    final specs = buildNodesOnlySpecs(data.nodes);
+    final entry = jsonDecode(specs[2].outboundJson) as Map;
+    final exit = jsonDecode(specs[3].outboundJson) as Map;
+    expect(exit['detour'], entry['tag']);
+    expect(entry['tag'], isNot(specs[4].name));
+  });
+
   test('policy use expands provider nodes and nested policy membership', () {
     final nodes = resolvePolicyGroups([
       const NodeInfo(name: 'inline', outboundJson: '{"type":"socks"}'),
-      const NodeInfo(name: 'remote', group: 'airport', outboundJson: '{"type":"vless"}'),
-      const NodeInfo(name: 'notice', group: 'airport', outboundJson: '{"type":"socks"}'),
-      const NodeInfo(name: 'root', outboundJson: '{"type":"selector","_clash_proxies":["inline","nested"],"_clash_use":["airport"],"_clash_exclude_filter":"notice"}'),
-      const NodeInfo(name: 'nested', outboundJson: '{"type":"selector","_clash_proxies":["remote"],"_clash_use":[]}'),
-      const NodeInfo(name: 'unavailable', outboundJson: '{"type":"selector","_clash_proxies":[],"_clash_use":["missing"]}'),
+      const NodeInfo(
+          name: 'remote', group: 'airport', outboundJson: '{"type":"vless"}'),
+      const NodeInfo(
+          name: 'notice', group: 'airport', outboundJson: '{"type":"socks"}'),
+      const NodeInfo(
+          name: 'root',
+          outboundJson:
+              '{"type":"selector","_clash_proxies":["inline","nested"],"_clash_use":["airport"],"_clash_exclude_filter":"notice"}'),
+      const NodeInfo(
+          name: 'nested',
+          outboundJson:
+              '{"type":"selector","_clash_proxies":["remote"],"_clash_use":[]}'),
+      const NodeInfo(
+          name: 'unavailable',
+          outboundJson:
+              '{"type":"selector","_clash_proxies":[],"_clash_use":["missing"]}'),
     ]);
-    expect(nodes[3].outbound['outbounds'], ['inline','nested','remote']);
-    expect(policyNodeIndices(nodes,3), {0,1});
+    expect(nodes[3].outbound['outbounds'], ['inline', 'nested', 'remote']);
+    expect(policyNodeIndices(nodes, 3), {0, 1});
     expect(nodes[5].outbound['outbounds'], ['REJECT']);
   });
 
-  test('partial provider failures retain only that sources previous nodes', () async {
+  test('partial provider failures retain only that sources previous nodes',
+      () async {
     final fetcher = FakeFetcher({'https://test.example/root': 'root'});
-    final bridge = ContentBridge({'root': const ParseOutcome(nodes: [], providers: [
-      ProviderInfo(name: 'broken', url: 'https://test.example/missing'),
-    ])});
-    final result = await SubscriptionResolver(bridge: bridge, fetcher: fetcher).resolve('https://test.example/root');
+    final bridge = ContentBridge({
+      'root': const ParseOutcome(nodes: [], providers: [
+        ProviderInfo(name: 'broken', url: 'https://test.example/missing'),
+      ])
+    });
+    final result = await SubscriptionResolver(bridge: bridge, fetcher: fetcher)
+        .resolve('https://test.example/root');
     expect(result.failedGroups, ['broken']);
-    const previous = [NodeInfo(name: 'cached', outboundJson: '{}', group: 'broken'), NodeInfo(name: 'removed', outboundJson: '{}', group: 'healthy')];
+    const previous = [
+      NodeInfo(name: 'cached', outboundJson: '{}', group: 'broken'),
+      NodeInfo(name: 'removed', outboundJson: '{}', group: 'healthy')
+    ];
     final retained = retainFailedSourceNodes(previous, [], result.failedGroups);
     expect(retained.map((n) => n.name), ['cached']);
     expect(retainFailedSourceNodes(previous, [], []), isEmpty);
   });
 
-  test('inline providers keep source groups and apply filters without HTTP', () async {
-    final inline = Uri.dataFromString('inline', encoding: utf8, base64: true).toString();
-    final fetcher = FakeFetcher({'https://test.example/root': 'root', 'https://test.example/relative': 'relative'});
+  test('inline providers keep source groups and apply filters without HTTP',
+      () async {
+    final inline =
+        Uri.dataFromString('inline', encoding: utf8, base64: true).toString();
+    final fetcher = FakeFetcher({
+      'https://test.example/root': 'root',
+      'https://test.example/relative': 'relative'
+    });
     final bridge = ContentBridge({
       'root': ParseOutcome(nodes: const [], providers: [
         ProviderInfo(name: 'local', url: inline, filter: 'JP'),
         const ProviderInfo(name: 'relative', url: '/relative'),
       ]),
-      'inline': const ParseOutcome(nodes: [NodeInfo(name: 'JP', outboundJson: '{}'), NodeInfo(name: 'US', outboundJson: '{}'), NodeInfo(name: 'provider policy', outboundJson: '{"type":"selector","outbounds":["JP"]}')]),
-      'relative': const ParseOutcome(nodes: [NodeInfo(name: 'other', outboundJson: '{}')]),
+      'inline': const ParseOutcome(nodes: [
+        NodeInfo(name: 'JP', outboundJson: '{}'),
+        NodeInfo(name: 'US', outboundJson: '{}'),
+        NodeInfo(
+            name: 'provider policy',
+            outboundJson: '{"type":"selector","outbounds":["JP"]}')
+      ]),
+      'relative': const ParseOutcome(
+          nodes: [NodeInfo(name: 'other', outboundJson: '{}')]),
     });
-    final result = await SubscriptionResolver(bridge: bridge, fetcher: fetcher).resolve('https://test.example/root');
+    final result = await SubscriptionResolver(bridge: bridge, fetcher: fetcher)
+        .resolve('https://test.example/root');
     expect(result.nodes.map((n) => n.name), ['JP', 'other']);
     expect(result.nodes.map((n) => n.group), ['local', 'relative']);
-    expect(fetcher.requested, ['https://test.example/root', 'https://test.example/relative']);
+    expect(fetcher.requested,
+        ['https://test.example/root', 'https://test.example/relative']);
     expect(result.skipped, isEmpty);
   });
 
-  test('recursive providers preserve same-name nodes beyond former limits', () async {
-    final providers = [for (var i = 0; i < 15; i++)
-      ProviderInfo(name: 'source$i', url: 'https://test.example/p$i')];
-    final fetcher = FakeFetcher({'https://test.example/root': 'root',
+  test('recursive providers preserve same-name nodes beyond former limits',
+      () async {
+    final providers = [
+      for (var i = 0; i < 15; i++)
+        ProviderInfo(name: 'source$i', url: 'https://test.example/p$i')
+    ];
+    final fetcher = FakeFetcher({
+      'https://test.example/root': 'root',
       for (var i = 0; i < 15; i++) 'https://test.example/p$i': 'p$i',
-      'https://test.example/leaf': 'leaf'});
+      'https://test.example/leaf': 'leaf'
+    });
     final bridge = ContentBridge({
       'root': ParseOutcome(nodes: const [], providers: providers),
-      for (var i = 0; i < 15; i++) 'p$i': const ParseOutcome(nodes: [], providers: [
-        ProviderInfo(name: 'nested', url: 'https://test.example/leaf')]),
-      'leaf': const ParseOutcome(nodes: [NodeInfo(name: 'same', outboundJson: '{}')]),
+      for (var i = 0; i < 15; i++)
+        'p$i': const ParseOutcome(nodes: [], providers: [
+          ProviderInfo(name: 'nested', url: 'https://test.example/leaf')
+        ]),
+      'leaf': const ParseOutcome(
+          nodes: [NodeInfo(name: 'same', outboundJson: '{}')]),
     });
     final result = await SubscriptionResolver(bridge: bridge, fetcher: fetcher)
         .resolve('https://test.example/root');
@@ -81,11 +211,14 @@ void main() {
 
   test('cycles, failed sources and invalid filters are visible', () async {
     final fetcher = FakeFetcher({'https://test.example/root': 'root'});
-    final bridge = ContentBridge({'root': const ParseOutcome(nodes: [], providers: [
-      ProviderInfo(name: 'cycle', url: 'https://test.example/root'),
-      ProviderInfo(name: 'missing', url: 'https://test.example/missing'),
-      ProviderInfo(name: 'filter', url: 'https://test.example/root', filter: '['),
-    ])});
+    final bridge = ContentBridge({
+      'root': const ParseOutcome(nodes: [], providers: [
+        ProviderInfo(name: 'cycle', url: 'https://test.example/root'),
+        ProviderInfo(name: 'missing', url: 'https://test.example/missing'),
+        ProviderInfo(
+            name: 'filter', url: 'https://test.example/root', filter: '['),
+      ])
+    });
     final result = await SubscriptionResolver(bridge: bridge, fetcher: fetcher)
         .resolve('https://test.example/root');
     expect(result.skipped, hasLength(3));

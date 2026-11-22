@@ -3,6 +3,7 @@ import 'dart:io';
 
 import '../bridge/core_bridge.dart';
 import 'subscription_fetcher.dart';
+import 'subscription_nodes.dart';
 
 /// Fetch with automatic mirror fallback for GitHub raw content.
 /// Airports ship rule-providers on raw.githubusercontent.com, which is
@@ -111,10 +112,17 @@ class SubscriptionResolver {
         return bridge.parseSubscription(content);
       });
       _checkCancelled();
-      final nodes = first.nodes.take(maxNodes).toList();
-      final skipped = [...first.skipped];
+      final eligible = nodesOnly
+          ? first.nodes.where(isIndependentSubscriptionNode).toList()
+          : first.nodes;
+      final nodes = eligible.take(maxNodes).toList();
+      final skipped = [
+        ...first.skipped,
+        if (eligible.length != first.nodes.length)
+          '已略过 ${first.nodes.length - eligible.length} 个策略组或依赖其他出站的节点'
+      ];
       final failedGroups = [...first.failedGroups];
-      if (first.nodes.length > maxNodes) skipped.add('节点数量达到安全上限');
+      if (eligible.length > maxNodes) skipped.add('节点数量达到安全上限');
       for (final provider in first.providers) {
         _checkCancelled();
         try {
@@ -177,7 +185,7 @@ class SubscriptionResolver {
       }
       // Named node providers cannot replace the root routing profile.
       var profile = first.profileJson;
-      if (nodesOnly && depth == 0) {
+      if (nodesOnly) {
         return ParseOutcome(
             nodes: nodes,
             skipped: [
@@ -213,8 +221,8 @@ class SubscriptionResolver {
                 cache.length + ruleCache.length >= maxRequests) {
               throw const FormatException('规则集请求达到上限，保留上次配置');
             }
-            final content =
-                await ruleCache.putIfAbsent(link, () => fetchWithMirrors(fetcher, link));
+            final content = await ruleCache.putIfAbsent(
+                link, () => fetchWithMirrors(fetcher, link));
             _checkCancelled();
             final rules = await bridge.convertRuleProvider(
                 text: content,

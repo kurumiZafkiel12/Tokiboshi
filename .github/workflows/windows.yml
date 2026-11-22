@@ -85,9 +85,6 @@ jobs:
             exit $code
           }
 
-      - name: Original-method elevation regression fixtures
-        run: python tool/release008/prepare_elevation.py .
-
       - name: Prepare local TLS and native desktop checks
         shell: pwsh
         run: |

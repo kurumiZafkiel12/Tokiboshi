@@ -921,9 +921,19 @@ pub fn parse_clash_yaml(text: &str) -> Result<ParseOutcome, String> {
         // alongside the nodes (T069). A parse failure here must not
         // fail node import — the profile is simply absent and the
         // caller discloses "仅节点订阅".
-        let profile_json = crate::profile::parse_clash_profile(text)?
-            .and_then(|p| serde_json::to_string(&p).ok());
+        let profile_json = serialize_subscription_profile(crate::profile::parse_clash_profile(text));
         Ok(ParseOutcome { nodes, skipped, providers, profile_json })
+    }
+}
+
+// A malformed routing section must not prevent extracting independent nodes.
+fn serialize_subscription_profile(
+    result: Result<Option<crate::profile::ParsedProfile>, String>,
+) -> Option<String> {
+    match result {
+        Ok(Some(profile)) => serde_json::to_string(&profile).ok(),
+        Ok(None) => None,
+        Err(error) => Some(json!({"unsupported": [error]}).to_string()),
     }
 }
 
@@ -955,8 +965,7 @@ fn parse_subscription_inner(text: &str, depth: usize) -> Result<ParseOutcome, St
                 outbound_json: ob.to_string(),
             }).collect();
         if nodes.is_empty() { return Err("no usable outbounds in JSON config".into()); }
-        let profile_json = crate::profile::parse_singbox_profile(text)?
-            .and_then(|p| serde_json::to_string(&p).ok());
+        let profile_json = serialize_subscription_profile(crate::profile::parse_singbox_profile(text));
         return Ok(ParseOutcome { nodes, skipped: vec![], providers: vec![], profile_json });
     }
     if trimmed.starts_with("- ") || trimmed.lines().any(|l| {
@@ -992,6 +1001,16 @@ fn parse_subscription_inner(text: &str, depth: usize) -> Result<ParseOutcome, St
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn malformed_subscription_rules_do_not_drop_nodes() {
+        let clash = "proxies:\n  - {name: fixture, type: socks5, server: example.test, port: 1080}\nrules: broken";
+        let parsed = parse_subscription(clash).unwrap();
+        assert_eq!(parsed.nodes[0].name, "fixture");
+        let profile: Value = serde_json::from_str(&parsed.profile_json.unwrap()).unwrap();
+        assert!(!profile["unsupported"].as_array().unwrap().is_empty());
+    }
+
 
     fn out(node: &NodeInfo) -> Value {
         serde_json::from_str(&node.outbound_json).unwrap()

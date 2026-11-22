@@ -52,6 +52,7 @@ import 'services/proxy_chain.dart';
 import 'services/store.dart';
 import 'services/subscription_fetcher.dart';
 import 'services/subscription_resolver.dart';
+import 'services/subscription_nodes.dart';
 import 'services/system_proxy.dart';
 import 'src/rust/frb_generated.dart';
 
@@ -395,7 +396,7 @@ class _ShellPageState extends State<ShellPage>
     final data = await widget.store.load();
     final running = await widget.bridge.coreRunning();
     if (!mounted) return;
-    var changed = false;
+    var changed = migrateSubscriptionNodes(data);
     // Snapshot how the PREVIOUS run ended before mutating anything:
     // the auto-connect decision below must not rely on this run's
     // in-progress flags (HV001-01).
@@ -423,7 +424,13 @@ class _ShellPageState extends State<ShellPage>
     // From here until a clean quit this run counts as unclean.
     if (data.cleanExit) changed = true;
     data.cleanExit = false;
-    if (changed) await widget.store.save(data);
+    if (changed) {
+      try {
+        await widget.store.save(data);
+      } catch (_) {
+        _message = _compose('配置未能写入磁盘。本次仍使用清理后的节点。');
+      }
+    }
     if (!mounted) return;
     setState(() {
       _data = data;
@@ -678,10 +685,7 @@ class _ShellPageState extends State<ShellPage>
     }
   }
 
-  Future<ParseOutcome> _fetchParseExpand(String url,
-      {String? content,
-      bool nodesOnly = false,
-      bool interactive = true}) async {
+  Future<ParseOutcome> _fetchParseExpand(String url, {String? content}) async {
     final fetcher = widget.fetcher is HttpSubscriptionFetcher
         ? HttpSubscriptionFetcher(
             verifyTls: _data.desktop.verifyTls,
@@ -691,45 +695,11 @@ class _ShellPageState extends State<ShellPage>
         bridge: widget.bridge,
         fetcher: fetcher,
         isCancelled: () => _importCancelling);
-    try {
-      final outcome = content == null
-          ? await resolver.resolve(url, nodesOnly: nodesOnly)
-          : await resolver.resolveContent(content, nodesOnly: nodesOnly);
-      if (!outcome.nodes.any((n) => !n.isPolicy))
-        throw const FormatException('没有识别到可用节点，请检查内容和来源诊断');
-      return outcome;
-    } on ProfileCompatibilityException catch (e) {
-      if (!interactive) rethrow;
-      if (!e.nodesOnlyOutcome.nodes.any((n) => !n.isPolicy)) rethrow;
-      if (!mounted) rethrow;
-      final accepted = await showDialog<bool>(
-          context: context,
-          builder: (context) => AlertDialog(
-                  title: const Text('节点可导入，完整规则暂不兼容'),
-                  content: SizedBox(
-                      width: 600,
-                      child: SingleChildScrollView(
-                          child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                            Text(
-                                '已识别 ${e.nodesOnlyOutcome.nodes.where((n) => !n.isPolicy).length} 个节点。可以仅导入节点，使用应用内置规则；此来源的规则与 DNS 不会被应用。选择会保存，后续更新沿用。'),
-                            const SizedBox(height: 16),
-                            Text(redactDiagnostics(e.message),
-                                style: Theme.of(context).textTheme.bodySmall)
-                          ]))),
-                  actions: [
-                    TextButton(
-                        onPressed: () => Navigator.pop(context, false),
-                        child: const Text('取消，保留原配置')),
-                    FilledButton(
-                        onPressed: () => Navigator.pop(context, true),
-                        child: const Text('仅导入节点'))
-                  ]));
-      if (accepted == true) return e.nodesOnlyOutcome;
-      throw const ImportCancelled();
-    }
+    final outcome = content == null
+        ? await resolver.resolve(url, nodesOnly: true)
+        : await resolver.resolveContent(content, nodesOnly: true);
+    if (outcome.nodes.isEmpty) throw const FormatException('没有识别到可独立使用的代理节点');
+    return outcome;
   }
 
   Future<void> _createChainDialog() async {
@@ -861,12 +831,11 @@ class _ShellPageState extends State<ShellPage>
     _setMessage('正在读取并解析来源…');
     try {
       // 用户设定（2026-11-21）：订阅只导入节点，不再尝试识别来源规则 / DNS。
-      final outcome =
-          await _fetchParseExpand(url, content: content, nodesOnly: true);
-      if (manual && outcome.profileJson == null) {
+      final outcome = await _fetchParseExpand(url, content: content);
+      if (manual) {
         if (_importCancelling) throw const ImportCancelled();
         _importCommitting = true;
-        final nodes = resolvePolicyGroups(outcome.nodes);
+        final nodes = outcome.nodes;
         setState(() {
           _data.nodes = [..._data.nodes, ...nodes];
           if (_data.selectedIndex < 0) _data.selectedIndex = 0;
@@ -881,8 +850,7 @@ class _ShellPageState extends State<ShellPage>
       _importCommitting = true;
       final id =
           'sub-${DateTime.now().microsecondsSinceEpoch}-${_sourceSequence++}';
-      final nodes = resolvePolicyGroups(
-          outcome.nodes.map((n) => n.withSource(id)).toList());
+      final nodes = outcome.nodes.map((n) => n.withSource(id)).toList();
       setState(() {
         _data.subscriptions = [
           ..._data.subscriptions,
@@ -896,8 +864,7 @@ class _ShellPageState extends State<ShellPage>
                 content != null && localPath == null ? content : null,
             updatedAt: DateTime.now().toIso8601String(),
             lastReport: _subscriptionReport(outcome),
-            profileJson: outcome.profileJson,
-            profileState: outcome.profileJson == null ? 'nodes-only' : 'parsed',
+            profileState: 'nodes-only',
           ),
         ];
         _data.nodes = [..._data.nodes, ...nodes];
@@ -924,8 +891,7 @@ class _ShellPageState extends State<ShellPage>
     }
   }
 
-  Future<void> _updateSubscription(Subscription sub,
-      {bool retryFull = false, bool automatic = false}) async {
+  Future<void> _updateSubscription(Subscription sub) async {
     if (_busy || _profileChanging || _settingsBusy || _proxyActive) return;
     _lastSourceAttempt[sub.id] = DateTime.now();
     final before = _data.copyWith();
@@ -945,12 +911,7 @@ class _ShellPageState extends State<ShellPage>
         content = await file.readAsString();
       }
       // 仅节点设定：更新同样只取节点，不再尝试来源规则 / DNS。
-      final outcome = await _fetchParseExpand(sub.url,
-          content: content, nodesOnly: true, interactive: !automatic);
-      String? previousActive;
-      try {
-        previousActive = activeProfile(_data)?.id;
-      } catch (_) {}
+      final outcome = await _fetchParseExpand(sub.url, content: content);
 
       if (_importCancelling) throw const ImportCancelled();
       _importCommitting = true;
@@ -962,10 +923,8 @@ class _ShellPageState extends State<ShellPage>
           fresh,
           outcome.failedGroups);
       fresh.addAll(retained);
-      fresh = resolvePolicyGroups(fresh);
+      fresh = fresh.where(isIndependentSubscriptionNode).toList();
       setState(() {
-        if (previousActive == sub.id && outcome.profileJson == null)
-          _data.activeProfileId = '';
         _data.nodes = [
           for (final n in _data.nodes)
             if (n.source != sub.id) n,
@@ -984,9 +943,7 @@ class _ShellPageState extends State<ShellPage>
                   refreshMinutes: s.refreshMinutes,
                   lastError: null,
                   lastAttemptAt: DateTime.now().toIso8601String(),
-                  profileJson: outcome.profileJson,
-                  profileState:
-                      outcome.profileJson == null ? 'nodes-only' : 'parsed',
+                  profileState: 'nodes-only',
                   updatedAt: DateTime.now().toIso8601String(),
                   lastReport:
                       '${_subscriptionReport(outcome)}${retained.isEmpty ? '' : '\n保留上次成功获取的 ${retained.length} 个节点（相关来源更新失败）'}')
@@ -1561,10 +1518,7 @@ class _ShellPageState extends State<ShellPage>
       final routeTargets = RoutingTargets(configNodes).resolved;
       final config = hasRoutes
           ? await widget.bridge.buildConfig(
-              nodes: configNodes
-                  .map((n) =>
-                      NodeSpec(name: n.name, outboundJson: n.outboundJson))
-                  .toList(),
+              nodes: buildNodesOnlySpecs(configNodes),
               mixedPort: _data.mixedPort,
               clashApiPort: _data.clashApiPort,
               enableTun: _proxyActive && _data.enableTun,
@@ -2151,7 +2105,6 @@ class _ShellPageState extends State<ShellPage>
           busy: _busy || _profileChanging || _settingsBusy,
           onAdd: _addSubscriptionDialog,
           onImportMethod: (method) => _importDialog(initialMethod: method),
-          onRetryFull: (sub) => _updateSubscription(sub, retryFull: true),
           onUpdate: _updateSubscription,
           onDelete: _deleteSubscription,
           onUpdateAll: _updateAllSubscriptions,
@@ -2911,7 +2864,7 @@ class _ShellPageState extends State<ShellPage>
         if (last != null &&
             DateTime.now().difference(last).inMinutes < source.refreshMinutes)
           continue;
-        await _updateSubscription(source, automatic: true);
+        await _updateSubscription(source);
       }
     } finally {
       _scheduledBusy = false;
@@ -3120,6 +3073,7 @@ class _ShellPageState extends State<ShellPage>
       if (await file.length() > backupMaxBytes)
         throw const FormatException('备份文件超过 64MiB');
       final restored = decodeBackup(await file.readAsString(), _data);
+      migrateSubscriptionNodes(restored);
       final yes = await showDialog<bool>(
           context: context,
           builder: (c) => AlertDialog(

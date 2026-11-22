@@ -1,5 +1,4 @@
 import 'dart:io';
-import 'dart:async';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
@@ -289,46 +288,21 @@ void main() {
     await t.pumpAndSettle();
     await t.pumpWidget(const SizedBox());
   });
-  testWidgets('explicit profile switching never reuses a foreign selected node',
+  testWidgets(
+      'old subscriptions become node sources without changing the selected node',
       (t) async {
     final store = await mount(t, twoProfiles: true);
-    expect(find.text('请选择规则配置'), findsOneWidget);
-    await t.tap(find.byType(DropdownButtonFormField<String>).first);
-    await t.pumpAndSettle();
-    await t.tap(find.text('Orbit · 节点源').last);
-    await t.pumpAndSettle();
-    expect(store.data.activeProfileId, 's2');
-    expect(store.data.selectedIndex, -1);
-    expect(find.byType(NodePicker), findsOneWidget);
+    expect(store.data.activeProfileId, '');
     expect(
-        find.descendant(
-            of: find.byType(NodePicker), matching: find.text('东京 · Sakura 01')),
-        findsNothing);
+        store.data.subscriptions
+            .every((s) => s.nodesOnly && s.profileJson == null),
+        isTrue);
+    expect(store.data.selected?.source, 's1');
+    await t.tap(find.text('节点').first);
+    await t.pumpAndSettle();
     await t.tap(find.text('Singapore · Orbit'));
     await t.pumpAndSettle();
     expect(store.data.selected?.source, 's2');
-    await t.pumpWidget(const SizedBox());
-  });
-  testWidgets('pending profile save blocks startup until commit', (t) async {
-    final store = SlowProfileStore();
-    await mount(t, withStore: store);
-    store.block = true;
-    await t.tap(find.byType(DropdownButtonFormField<String>).first);
-    await t.pumpAndSettle();
-    await t.tap(find.text('内置分流模板').last);
-    await t.pump();
-    await t.pump(const Duration(milliseconds: 100));
-    final start = find.ancestor(
-        of: find.text('启动代理'), matching: find.byType(FilledButton));
-    expect(t.widget<FilledButton>(start).onPressed, isNull);
-    expect(
-        (t.widget<TokiboshiApp>(find.byType(TokiboshiApp)).bridge as FakeBridge)
-            .running,
-        false);
-    store.gate.complete();
-    await t.pumpAndSettle();
-    expect(store.data.activeProfileId, '');
-    expect(t.widget<FilledButton>(start).onPressed, isNotNull);
     await t.pumpWidget(const SizedBox());
   });
   testWidgets(
@@ -359,14 +333,4 @@ void main() {
     });
     await t.pumpWidget(const SizedBox());
   });
-}
-
-class SlowProfileStore extends MemoryStore {
-  bool block = false;
-  final gate = Completer<void>();
-  @override
-  Future<void> save(AppData value) async {
-    if (block) await gate.future;
-    await super.save(value);
-  }
 }
