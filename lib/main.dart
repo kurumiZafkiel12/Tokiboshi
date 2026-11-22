@@ -1657,13 +1657,17 @@ class _ShellPageState extends State<ShellPage>
         _latency.clear();
         _restartCount = 0;
         _lastExit = null;
-        _message = _compose(
-            '${_proxyActive ? '代理接管已开启' : '内核待命 · 系统流量未接管'}：${_data.nodes.where((n) => !n.isPolicy).length} 个节点 · mixed 127.0.0.1:${_data.mixedPort}'
-            ' · 面板 127.0.0.1:${_data.clashApiPort}/ui'
-            ' · 分流：${profile == null ? '仅节点订阅/内置模板' : '订阅自带规则'}'
-            '${_systemProxyActive ? ' · 系统代理已开启' : ''}'
-            '${portsChanged ? ' · 原端口被占用，已自动更换并保存端口' : ''}'
-            '${profile == null && rulesPending ? ' · ⚠ 规则集未就绪，重启内核后分流生效' : ''}');
+        if (_proxyActive ||
+            portsChanged ||
+            (hasRoutes && profile == null && rulesPending)) {
+          _message = _compose(
+              '${_proxyActive ? '代理接管已开启' : '内核待命 · 系统流量未接管'}：${_data.nodes.where((n) => !n.isPolicy).length} 个节点 · mixed 127.0.0.1:${_data.mixedPort}'
+              ' · 面板 127.0.0.1:${_data.clashApiPort}/ui'
+              ' · 分流：${profile == null ? '仅节点订阅/内置模板' : '订阅自带规则'}'
+              '${_systemProxyActive ? ' · 系统代理已开启' : ''}'
+              '${portsChanged ? ' · 原端口被占用，已自动更换并保存端口' : ''}'
+              '${profile == null && rulesPending ? ' · ⚠ 规则集未就绪，重启内核后分流生效' : ''}');
+        }
       });
       if (_data.ruleSetAutoUpdate) {
         unawaited(_refreshRuleResources(binary: binary));
@@ -2613,9 +2617,23 @@ class _ShellPageState extends State<ShellPage>
                                           color: ui.flow
                                               ? gold
                                               : scheme.onSurfaceVariant)),
+                                  if (Platform.environment[
+                                          'TOKIBOSHI_ELEVATED_RUNNER'] ==
+                                      '1')
+                                    Tooltip(
+                                      message: '正在以管理员身份运行',
+                                      child: Padding(
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 7),
+                                        child: Icon(
+                                            Icons.admin_panel_settings_outlined,
+                                            size: 17,
+                                            color: scheme.onSurfaceVariant),
+                                      ),
+                                    ),
                                   StatusDot(
                                       _coreBusy
-                                          ? '正在连接'
+                                          ? '内核准备中'
                                           : _running
                                               ? '内核运行'
                                               : '内核停止',

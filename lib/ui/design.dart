@@ -174,18 +174,26 @@ class StatusDot extends StatelessWidget {
   final String text;
   final Color color;
   @override
-  Widget build(BuildContext context) =>
-      Row(mainAxisSize: MainAxisSize.min, children: [
-        Container(
-            width: 5,
-            height: 5,
-            decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
-        const SizedBox(width: 7),
-        Flexible(
-            child: Text(text,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(fontSize: 11, color: color)))
-      ]);
+  Widget build(BuildContext context) {
+    final foreground = Theme.of(context).brightness == Brightness.light
+        ? switch (color) {
+            good => const Color(0xFF0E6B50),
+            gold => const Color(0xFF795518),
+            _ => color,
+          }
+        : color;
+    return Row(mainAxisSize: MainAxisSize.min, children: [
+      Container(
+          width: 5,
+          height: 5,
+          decoration: BoxDecoration(color: foreground, shape: BoxShape.circle)),
+      const SizedBox(width: 7),
+      Flexible(
+          child: Text(text,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 11, color: foreground)))
+    ]);
+  }
 }
 
 class PageHeading extends StatelessWidget {
