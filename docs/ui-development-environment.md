@@ -48,7 +48,7 @@ python3 -B .agents/skills/ui-ux-pro-max/scripts/search.py "compact desktop dashb
 
 | 库 | 参考版本 | 项目配置与取舍 |
 | --- | --- | --- |
-| [shadcn_flutter](https://pub.dev/packages/shadcn_flutter) | 0.0.55 | **主组件库，锁定 0.0.55**。主题、表单、弹层和密集桌面组件统一。先在局部验证主题和浮层上下文，随后按页面迁移。 |
+| [shadcn_flutter](https://pub.dev/packages/shadcn_flutter) | 0.0.55 | **主组件库，锁定 0.0.55**。主题、表单、弹层和密集桌面组件统一。先在现有 Material 壳中用 `ShadcnLayer` 验证主题及浮层上下文，随后按页面迁移。 |
 | [shadcn_ui](https://pub.dev/packages/shadcn_ui) | 0.61.2 | 组件可定制且文档丰富，与主库覆盖重叠，保留参考。 |
 | [forui](https://pub.dev/packages/forui) | 0.28.0 | 首选备选，主题和跨平台组件完整。最低 Flutter 3.50、Dart 3.14，适合在主库试做评估后再决定。 |
 | [fluent_ui](https://pub.dev/packages/fluent_ui) | 4.17.0 | 参考 Windows 的菜单、焦点、键盘与交互细节，共用组件继续用主库。 |
@@ -62,7 +62,7 @@ python3 -B .agents/skills/ui-ux-pro-max/scripts/search.py "compact desktop dashb
 | [flutter_acrylic](https://pub.dev/packages/flutter_acrylic) | 1.1.4 | 可做 Windows 材质效果。待测试高对比度、GPU/系统回退与 Android 平台隔离后再决定。 |
 | [super_sliver_list](https://pub.dev/packages/super_sliver_list) | 0.4.1 | 节点和日志使用现有惰性列表，等基准确认跳转、变高或滚动瓶颈再引入。 |
 | [flutter_staggered_grid_view](https://pub.dev/packages/flutter_staggered_grid_view) | 0.7.0 | 当前 SDK 求解成功，包声明仍标旧 Dart 上限。确定仪表盘确实需要错列布局和滚动能力后再评估。 |
-| [data_table_2](https://pub.dev/packages/data_table_2) | 3.0.0 | 锁定 3.0.0，用于固定表头、高密度连接记录。超长日志先实测现有列表。 |
+| [data_table_2](https://pub.dev/packages/data_table_2) | 3.0.0 | 锁定 **2.8.0**。3.0.0 可求解，但它要求 `material_ui` 的 DataRow/DataColumn，与现有 Flutter Material 类型混用时编译失败。2.8.0 在现有 Material 环境中通过渲染试验。用于固定表头、高密度连接记录。 |
 | [tray_manager](https://pub.dev/packages/tray_manager) | 0.9.0 | 已安装 0.5.3，维持现有 Windows 托盘和退出行为。 |
 
 新锁定 5 个直接依赖及 9 个传递依赖，原锁定依赖版本无变动，Flutter SDK 区间与现有锁文件一致。新库均无需注册平台原生插件，现有 Windows 窗口与托盘仍由既有代码管理。后续 Windows 的窗口、托盘、材质 API 通过桌面平台入口接线，Android 继续使用自身的窗口生命周期和导航。新库当前没有页面调用，Windows 和 Android 可先独立验证依赖、打包与字体资源，再验证实际新组件的行为。
@@ -80,5 +80,6 @@ python3 -B .agents/skills/ui-ux-pro-max/scripts/search.py "compact desktop dashb
 
 - 项目技能离线校验通过，共 24 个技能、374 个文件，另附 7 份上游许可证。UI UX Pro Max 本地 Flutter 查询与 39 个核心自测通过。
 - `flutter pub get` 与 `flutter pub get --enforce-lockfile` 均通过。`flutter analyze --no-fatal-infos` 通过。默认 `flutter analyze` 返回 1，因为 216 条 info 参与退出码。与同一 SDK、同一命令下的基线分析逐条对照，新增诊断、warning 和 error 均为 0。
-- Linux 下显式设置 sing-box 1.14.4 和 CJK 测试字体后，现有 Flutter 测试 126 项通过，4 项跳过。Windows 原生窗口、系统代理、TUN 及 Android VPN 真机行为需分别验收。
+- 临时组件试验通过 2 项，覆盖 shadcn_flutter 按钮点击，以及 fl_chart、Lucide、flutter_animate、data_table_2 在现有 Material 上下文的渲染。
+- Linux 下显式设置 sing-box 1.14.4 和 CJK 测试字体后，增加本地 TLS 测试夹具后，现有 Flutter 测试 127 项通过，3 项 Windows 原生测试跳过。Windows 原生窗口、系统代理、TUN 及 Android VPN 真机行为需分别验收。
 - 变更范围为 `.agents/skills/`、`.agents/skill-licenses/`、`.agents/skills-lock.json`、`.gitattributes`、`AGENTS.md`、`tool/verify_ui_skills.py`、本报告、`pubspec.yaml` 与 `pubspec.lock`。现有页面、自定义组件、代理逻辑、核心、系统接线和发布流程均保持源文件原样。
