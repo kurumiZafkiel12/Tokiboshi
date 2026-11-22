@@ -1180,13 +1180,12 @@ class _ShellPageState extends State<ShellPage>
 
     try {
       if (live) {
-        previousTag = await _clash.selectedOf('proxy');
+        final group = await _clash.proxy('proxy');
+        previousTag = group['now'] as String?;
         if (previousTag == null) throw const FormatException('无法确认当前出口');
         target = _nodeTag(node);
-        final group = (await _clash.proxies())['proxy'];
-        if (group is Map &&
-            group['all'] is List &&
-            !(group['all'] as List).contains(target)) {
+        final members = group['all'] as List?;
+        if (members != null && !members.contains(target)) {
           _setMessage('此节点已保存。请在分流页应用配置后再切换。');
           return;
         }

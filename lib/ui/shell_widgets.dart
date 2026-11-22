@@ -35,7 +35,8 @@ class ConnectionDock extends StatelessWidget {
   Widget build(BuildContext context) {
     final active = proxyActive ?? running;
     Widget content() => LayoutBuilder(builder: (context, c) {
-          final compact = c.maxWidth < 680;
+          final textRatio = MediaQuery.textScalerOf(context).scale(12) / 12;
+          final compact = c.maxWidth < 680 * textRatio;
           return Padding(
               key: const ValueKey('connection-dock'),
               padding: EdgeInsets.fromLTRB(
@@ -73,7 +74,8 @@ class ConnectionDock extends StatelessWidget {
                                       const SizedBox(width: 8),
                                       const Icon(Icons.unfold_more, size: 16)
                                     ])))),
-                        if (c.maxWidth > 850 && monitor != null) ...[
+                        if (c.maxWidth > 850 * textRatio &&
+                            monitor != null) ...[
                           const SizedBox(width: 24),
                           Text(
                               monitor!.available
@@ -119,32 +121,33 @@ class ConnectionDock extends StatelessWidget {
                         if (!showProxyControl)
                           Tag(active ? '代理已开启' : '代理已关闭')
                         else
-                          SizedBox(
-                              height: 38,
-                              width: 130,
-                              child: FilledButton.icon(
-                                  onPressed: blocked
-                                      ? null
-                                      : busy
-                                          ? (running ? null : onCancel)
-                                          : onToggle,
-                                  icon: busy
-                                      ? const SizedBox(
-                                          width: 15,
-                                          height: 15,
-                                          child: CircularProgressIndicator(
-                                              strokeWidth: 1.5,
-                                              color: Colors.white))
-                                      : Icon(
-                                          active
-                                              ? Icons.stop_circle_outlined
-                                              : Icons.power_settings_new,
-                                          size: 19),
-                                  label: Text(busy
-                                      ? (running ? '正在停止' : '取消连接')
-                                      : active
-                                          ? '停止代理'
-                                          : '启动代理'))),
+                          FilledButton.icon(
+                              style: FilledButton.styleFrom(
+                                  minimumSize: const Size(130, 38),
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 16, vertical: 8)),
+                              onPressed: blocked
+                                  ? null
+                                  : busy
+                                      ? (running ? null : onCancel)
+                                      : onToggle,
+                              icon: busy
+                                  ? const SizedBox(
+                                      width: 15,
+                                      height: 15,
+                                      child: CircularProgressIndicator(
+                                          strokeWidth: 1.5,
+                                          color: Colors.white))
+                                  : Icon(
+                                      active
+                                          ? Icons.stop_circle_outlined
+                                          : Icons.power_settings_new,
+                                      size: 19),
+                              label: Text(busy
+                                  ? (running ? '正在停止' : '取消连接')
+                                  : active
+                                      ? '停止代理'
+                                      : '启动代理')),
                       ]))));
         });
     return monitor == null

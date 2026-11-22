@@ -333,6 +333,59 @@ class _ClockPainter extends CustomPainter {
   static const ink = Color(0xFFF8EFF5);
   static const face = Color(0xFF211317);
 
+  static const _gearLayout = [
+    (.28, -.18, .16, 12, 7),
+    (-.34, .22, .13, 10, -9),
+    (.36, .30, .11, 10, 11),
+    (-.10, .42, .085, 8, -13),
+    (.05, .05, .07, 8, 11),
+  ];
+  static final _gearProfiles = {
+    for (final teeth in [8, 10, 12]) teeth: _gearProfile(teeth)
+  };
+  static final _gearMetal = Paint()
+    ..shader = const LinearGradient(
+      begin: Alignment.topLeft,
+      end: Alignment.bottomRight,
+      colors: [Color(0xFFAC7382), Color(0xFF724653), Color(0xFF462731)],
+    ).createShader(const Rect.fromLTWH(-1, -1, 2, 2));
+  static final _gearEdge = Paint()
+    ..style = PaintingStyle.stroke
+    ..strokeWidth = .045
+    ..color = rose.withValues(alpha: .55);
+  static final _gearHub = Paint()..color = const Color(0xFF28151C);
+  static final _gearPin = Paint()..color = const Color(0xFFD4A3AF);
+
+  static Path _gearProfile(int teeth) {
+    final path = Path()..fillType = PathFillType.evenOdd;
+    for (var tooth = 0; tooth < teeth; tooth++) {
+      for (final (phase, radius) in const [
+        (0.0, .77),
+        (.22, .77),
+        (.34, .985),
+        (.62, .985),
+        (.76, .77)
+      ]) {
+        final angle = (tooth + phase) * 2 * math.pi / teeth;
+        final x = radius * math.cos(angle), y = radius * math.sin(angle);
+        if (tooth == 0 && phase == 0) {
+          path.moveTo(x, y);
+        } else {
+          path.lineTo(x, y);
+        }
+      }
+    }
+    path.close();
+    for (var opening = 0; opening < 3; opening++) {
+      final angle = opening * 2 * math.pi / 3;
+      path.addOval(Rect.fromCircle(
+        center: Offset(math.cos(angle) * .44, math.sin(angle) * .44),
+        radius: .155,
+      ));
+    }
+    return path;
+  }
+
   @override
   void paint(Canvas canvas, Size size) {
     final c = Offset(size.width / 2, size.height / 2);
@@ -342,7 +395,6 @@ class _ClockPainter extends CustomPainter {
     final sec = now.second + (tier == 'full' ? t : 0.0);
     final minute = now.minute + sec / 60;
     final hour = now.hour % 12 + minute / 60;
-    final secs = now.minute * 60 + now.second + t;
 
     final faceR = R - R * .10;
     if (staticLayer) {
@@ -448,6 +500,7 @@ class _ClockPainter extends CustomPainter {
               textDirection: TextDirection.ltr);
           tp2.layout();
           tp2.paint(canvas, tp - Offset(tp2.width / 2, tp2.height / 2));
+          tp2.dispose();
         }
         final brand = TextPainter(
             text: const TextSpan(
@@ -461,6 +514,7 @@ class _ClockPainter extends CustomPainter {
             textDirection: TextDirection.ltr);
         brand.layout();
         brand.paint(canvas, c - Offset(brand.width / 2, faceR * .42));
+        brand.dispose();
         final sub = TextPainter(
             text: TextSpan(
                 text: '時の星',
@@ -471,6 +525,7 @@ class _ClockPainter extends CustomPainter {
             textDirection: TextDirection.ltr);
         sub.layout();
         sub.paint(canvas, c + Offset(-sub.width / 2, faceR * .38));
+        sub.dispose();
       }
 
       if (!compact) {
@@ -518,59 +573,19 @@ class _ClockPainter extends CustomPainter {
     }
 
     // ---- 可见机芯：五枚慢转齿轮 ----
-    final gears = compact
-        ? const <(double, double, double, double)>[]
-        : const [
-            (0.28, -0.18, 0.16, 0.9),
-            (-0.34, 0.22, 0.13, -0.7),
-            (0.36, 0.30, 0.11, 0.55),
-            (-0.10, 0.42, 0.085, -1.1),
-            (0.05, 0.05, 0.07, 0.4),
-          ];
-    final gearTurn = tier == 'reduced' ? 0.0 : secs;
-    for (final (dx, dy, rr, speed) in gears) {
-      final gc = c + Offset(faceR * dx, faceR * dy);
-      final gr = faceR * rr;
-      final angle = gearTurn * speed;
-      final path = Path();
-      const teeth = 10;
-      for (var i = 0; i < teeth; i++) {
-        final a0 = angle + i * 2 * math.pi / teeth;
-        final a1 = a0 + math.pi / teeth;
-        final ro = gr, ri = gr * .78;
-        final p0 = gc + Offset(math.cos(a0) * ro, math.sin(a0) * ro);
-        final p1 = gc +
-            Offset(math.cos(a0 + math.pi / teeth) * ri,
-                math.sin(a0 + math.pi / teeth) * ri);
-        final p2 = gc + Offset(math.cos(a1) * ri, math.sin(a1) * ri);
-        final p3 = gc +
-            Offset(math.cos(a1 + math.pi / teeth) * ro,
-                math.sin(a1 + math.pi / teeth) * ro);
-        if (i == 0) path.moveTo(p0.dx, p0.dy);
-        path.lineTo(p1.dx, p1.dy);
-        path.lineTo(p2.dx, p2.dy);
-        path.lineTo(p3.dx, p3.dy);
-      }
-      path.close();
-      canvas.drawPath(path, Paint()..color = rose.withValues(alpha: .34));
-      canvas.drawPath(
-          path,
-          Paint()
-            ..style = PaintingStyle.stroke
-            ..color = rose.withValues(alpha: .5)
-            ..strokeWidth = 1);
-      canvas.drawCircle(gc, gr * .30,
-          Paint()..color = const Color(0xFF160F13).withValues(alpha: .8));
-      canvas.drawCircle(
-          gc, gr * .12, Paint()..color = rose.withValues(alpha: .6));
-      for (var i = 0; i < 3; i++) {
-        final a = angle + i * 2 * math.pi / 3;
-        canvas.drawLine(
-            gc,
-            gc + Offset(math.cos(a) * gr * .72, math.sin(a) * gr * .72),
-            Paint()
-              ..color = rose.withValues(alpha: .28)
-              ..strokeWidth = 1.2);
+    if (!compact) {
+      final withinMinute = tier == 'reduced' ? 0.0 : sec / 60;
+      for (final (dx, dy, radius, teeth, rpm) in _gearLayout) {
+        final path = _gearProfiles[teeth]!;
+        canvas.save();
+        canvas.translate(c.dx + faceR * dx, c.dy + faceR * dy);
+        canvas.rotate(2 * math.pi * withinMinute * rpm);
+        canvas.scale(faceR * radius);
+        canvas.drawPath(path, _gearMetal);
+        canvas.drawPath(path, _gearEdge);
+        canvas.drawCircle(Offset.zero, .23, _gearHub);
+        canvas.drawCircle(Offset.zero, .105, _gearPin);
+        canvas.restore();
       }
     }
 

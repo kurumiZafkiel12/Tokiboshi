@@ -130,50 +130,51 @@ class _SubscriptionsPageState extends State<SubscriptionsPage> {
                                     ? widget.onAdd()
                                     : widget.onImportMethod!(method))
                       ]),
-                  LayoutBuilder(
-                      builder: (c, size) =>
-                          Wrap(spacing: 12, runSpacing: 12, children: [
-                            for (final item in counts)
-                              SizedBox(
-                                  width: (size.maxWidth -
-                                          12 * (size.maxWidth < 560 ? 1 : 3)) /
-                                      (size.maxWidth < 560 ? 2 : 4),
-                                  child: MotionEntrance(
-                                      order: counts.indexOf(item),
-                                      child: Panel(
-                                          padding: const EdgeInsets.all(16),
-                                          child: Column(
-                                              crossAxisAlignment:
-                                                  CrossAxisAlignment.start,
-                                              children: [
-                                                Row(children: [
-                                                  Expanded(
-                                                      child: Text(item.$1,
-                                                          style: Theme.of(c)
-                                                              .textTheme
-                                                              .bodySmall)),
-                                                  Icon(item.$4,
-                                                      size: 17,
-                                                      color: Theme.of(c)
-                                                          .colorScheme
-                                                          .primary)
-                                                ]),
-                                                const SizedBox(height: 10),
-                                                Text(item.$2,
-                                                    style: const TextStyle(
-                                                        fontSize: 26,
-                                                        fontWeight:
-                                                            FontWeight.w600)),
-                                                const SizedBox(height: 5),
-                                                Text(item.$3,
-                                                    maxLines: 1,
-                                                    overflow:
-                                                        TextOverflow.ellipsis,
+                  LayoutBuilder(builder: (c, size) {
+                    final scaler = MediaQuery.textScalerOf(c);
+                    final columns =
+                        size.maxWidth < 560 || scaler.scale(12) > 15 ? 2 : 4;
+                    final width =
+                        (size.maxWidth - 12 * (columns - 1)) / columns;
+                    return Wrap(spacing: 12, runSpacing: 12, children: [
+                      for (final item in counts)
+                        SizedBox(
+                            width: width,
+                            child: MotionEntrance(
+                                order: counts.indexOf(item),
+                                child: Panel(
+                                    padding: const EdgeInsets.all(16),
+                                    child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Row(children: [
+                                            Expanded(
+                                                child: Text(item.$1,
                                                     style: Theme.of(c)
                                                         .textTheme
-                                                        .bodySmall)
-                                              ]))))
-                          ])),
+                                                        .bodySmall)),
+                                            Icon(item.$4,
+                                                size: 17,
+                                                color: Theme.of(c)
+                                                    .colorScheme
+                                                    .primary)
+                                          ]),
+                                          const SizedBox(height: 10),
+                                          Text(item.$2,
+                                              style: const TextStyle(
+                                                  fontSize: 26,
+                                                  fontWeight: FontWeight.w600)),
+                                          const SizedBox(height: 5),
+                                          Text(item.$3,
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: Theme.of(c)
+                                                  .textTheme
+                                                  .bodySmall)
+                                        ]))))
+                    ]);
+                  }),
                   const SizedBox(height: 16),
                   Row(children: [
                     Expanded(

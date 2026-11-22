@@ -72,12 +72,13 @@ class ClashApiClient {
     return (v as Map<String, dynamic>)['proxies'] as Map<String, dynamic>;
   }
 
+  Future<Map<String, dynamic>> proxy(String name) async =>
+      (await _request('GET', '/proxies/${Uri.encodeComponent(name)}'))
+          as Map<String, dynamic>;
+
   /// Currently selected member of a group (e.g. "proxy").
-  Future<String?> selectedOf(String group) async {
-    final all = await proxies();
-    final g = all[group];
-    return g is Map<String, dynamic> ? g['now'] as String? : null;
-  }
+  Future<String?> selectedOf(String group) async =>
+      (await proxy(group))['now'] as String?;
 
   Future<void> select(String group, String name) => _request(
         'PUT',

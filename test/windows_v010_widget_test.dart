@@ -266,12 +266,8 @@ void main() {
       final puts = <String>[];
       server!.listen((request) async {
         request.response.headers.contentType = ContentType.json;
-        if (request.uri.path == '/proxies' && request.method == 'GET') {
-          request.response.write(jsonEncode({
-            'proxies': {
-              'proxy': {'now': active}
-            }
-          }));
+        if (request.uri.path == '/proxies/proxy' && request.method == 'GET') {
+          request.response.write(jsonEncode({'now': active}));
         } else if (request.method == 'PUT') {
           final data = jsonDecode(await request
               .cast<List<int>>()
