@@ -245,6 +245,60 @@ void main() {
     expect(proxy.calls.last, (enable: false, port: 7890));
   });
 
+  for (final reject in [false, true]) {
+    testWidgets(
+        'applying a manually imported running node ${reject ? 'restores the old core on failure' : 'switches the active core'}',
+        (t) async {
+      t.view.physicalSize = const Size(1280, 800);
+      t.view.devicePixelRatio = 1;
+      addTearDown(t.view.reset);
+      final store = MemoryStore();
+      final bridge = RejectNextStartBridge();
+      store.data.desktop =
+          const DesktopSettings(autoRun: true, autoCheckUpdates: false);
+      store.data.nodes = const [
+        NodeInfo(
+            name: '原出口',
+            outboundJson:
+                '{"type":"socks","server":"127.0.0.1","server_port":1080}')
+      ];
+      store.data.selectedIndex = 0;
+      await t.pumpWidget(TokiboshiApp(
+          bridge: bridge,
+          store: store,
+          systemProxy: NoopSystemProxy(),
+          allocatePort: (p, r) async => p));
+      await t.pumpAndSettle();
+      await t.tap(find.text('启动代理'));
+      await t.pumpAndSettle();
+      final oldConfig = store.runtimeConfig;
+      await t.tap(find.text('节点').first);
+      await t.pumpAndSettle();
+      await t.tap(find.text('导入'));
+      await t.pumpAndSettle();
+      await t.tap(find.text('链接'));
+      await t.pumpAndSettle();
+      await t.enterText(find.byType(TextField).last,
+          'ss://aes-256-gcm:pw@127.0.0.1:8388#新出口');
+      await t.tap(find.text('导入').last);
+      await t.pumpAndSettle();
+      expect(find.text('待应用'), findsOneWidget);
+      expect(store.data.selected?.name, '原出口');
+      await t.tap(find.text('新出口'));
+      await t.pumpAndSettle();
+      expect(find.text('应用新节点'), findsOneWidget);
+      bridge.reject = reject;
+      await t.tap(find.text('应用并切换'));
+      await t.pumpAndSettle();
+      expect(bridge.running, isTrue);
+      expect(store.data.nodes, hasLength(2));
+      expect(store.data.selected?.name, reject ? '原出口' : '新出口');
+      expect(store.runtimeConfig, reject ? oldConfig : isNot(oldConfig));
+      expect(find.text('待应用'), reject ? findsOneWidget : findsNothing);
+      await t.pumpWidget(const SizedBox());
+    });
+  }
+
   testWidgets('pasting a subscription URL in import adds a subscription',
       (tester) async {
     tester.view.physicalSize = const Size(1280, 800);
@@ -341,6 +395,19 @@ class LateStartBridge extends FakeBridge {
       {required String singBoxPath, required String configPath}) async {
     enteredStart = true;
     await gate.future;
+    await super.startCore(singBoxPath: singBoxPath, configPath: configPath);
+  }
+}
+
+class RejectNextStartBridge extends FakeBridge {
+  bool reject = false;
+  @override
+  Future<void> startCore(
+      {required String singBoxPath, required String configPath}) async {
+    if (reject) {
+      reject = false;
+      throw StateError('test rejected candidate config');
+    }
     await super.startCore(singBoxPath: singBoxPath, configPath: configPath);
   }
 }

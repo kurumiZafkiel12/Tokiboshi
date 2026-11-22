@@ -25,12 +25,14 @@ class NodesPage extends StatefulWidget {
       this.onCreateChain,
       this.onMeasureNode,
       this.onQualitySample,
-      this.onImportMethod});
+      this.onImportMethod,
+      this.pendingNodes = const {}});
   final List<NodeInfo> nodes;
   final List<Subscription> subscriptions;
   final int selectedIndex;
   final bool running, busy;
   final Map<NodeInfo, int?> latency;
+  final Set<NodeInfo> pendingNodes;
   final ValueChanged<int> onSelect, onDelete;
   final VoidCallback onImport, onMeasureAll;
   final VoidCallback? onCreateChain;
@@ -68,8 +70,9 @@ class _NodesPageState extends State<NodesPage> {
     showNodeDetails(context, n, widget.subscriptions, widget.latency,
         onSelect: widget.busy ? null : () => widget.onSelect(index),
         onMeasure: widget.busy ? null : () => widget.onMeasureNode?.call(n),
-        onQuality: !widget.running || widget.onQualitySample == null ? null :
-            () => setState(() => _qualityNode = n),
+        onQuality: !widget.running || widget.onQualitySample == null
+            ? null
+            : () => setState(() => _qualityNode = n),
         onDelete: widget.running || widget.busy ? null : () => _delete(index));
   }
 
@@ -155,10 +158,14 @@ class _NodesPageState extends State<NodesPage> {
                         ? widget.onImport()
                         : widget.onImportMethod!(method))
               ]),
-          if (widget.running && widget.onQualitySample != null &&
-              widget.selectedIndex >= 0 && widget.selectedIndex < widget.nodes.length) ...[
+          if (widget.running &&
+              widget.onQualitySample != null &&
+              widget.selectedIndex >= 0 &&
+              widget.selectedIndex < widget.nodes.length) ...[
             const SizedBox(height: 8),
-            NodeQualityPanel(node: _qualityNode ?? widget.nodes[widget.selectedIndex], measure: widget.onQualitySample!),
+            NodeQualityPanel(
+                node: _qualityNode ?? widget.nodes[widget.selectedIndex],
+                measure: widget.onQualitySample!),
             const SizedBox(height: 8),
           ],
           SingleChildScrollView(
@@ -429,7 +436,10 @@ class _NodesPageState extends State<NodesPage> {
                           ],
                           const SizedBox(width: 10),
                           SizedBox(
-                              width: 70, child: LatencyText(n, widget.latency)),
+                              width: 70,
+                              child: widget.pendingNodes.contains(n)
+                                  ? const Tag('待应用', color: gold)
+                                  : LatencyText(n, widget.latency)),
                           IconButton(
                               tooltip: '节点详情',
                               onPressed: () => _details(i),
@@ -476,7 +486,10 @@ class _NodesPageState extends State<NodesPage> {
                       Row(children: [
                         Tag(n.protocol.toUpperCase()),
                         const Spacer(),
-                        LatencyText(n, widget.latency)
+                        if (widget.pendingNodes.contains(n))
+                          const Tag('待应用', color: gold)
+                        else
+                          LatencyText(n, widget.latency)
                       ]),
                       const SizedBox(height: 5),
                       Text(sourceLabel(n, widget.subscriptions),

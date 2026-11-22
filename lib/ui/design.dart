@@ -1,9 +1,10 @@
 import 'dart:math' as math;
+import 'dart:ui' show ImageFilter;
 import 'package:flutter/material.dart';
 import 'preferences.dart';
 
 const brand = Color(0xFFFFB1C0);
-const wine = Color(0xFFB83B5E);
+const wine = Color(0xFFAA2941);
 const gold = Color(0xFFDBBB80);
 const good = Color(0xFF60DCB2);
 const danger = Color(0xFFF19592);
@@ -15,25 +16,25 @@ const mono = TextStyle(
 ThemeData workbenchTheme(UiPreferences ui) {
   final light = ui.light;
   final character = ui.character;
-  // 深绿工作区与暖粉主操作，状态色独立于品牌色。
+  // 红黑工作台，状态色独立于操作色。
   final bg = light
-      ? (character ? const Color(0xFFF0F6F2) : const Color(0xFFF2F3F6))
-      : (character ? const Color(0xFF101A17) : const Color(0xFF0F1014));
+      ? (character ? const Color(0xFFF8F1F2) : const Color(0xFFF2F3F6))
+      : (character ? const Color(0xFF110F11) : const Color(0xFF0F1014));
   final surface = light
       ? const Color(0xFFFFFFFF)
-      : (character ? const Color(0xFF1A2823) : const Color(0xFF181A20));
+      : (character ? const Color(0xFF21191C) : const Color(0xFF181A20));
   final surfaceLow = light
-      ? const Color(0xFFF5F9F6)
-      : (character ? const Color(0xFF15221D) : const Color(0xFF121318));
+      ? const Color(0xFFFAF4F5)
+      : (character ? const Color(0xFF191316) : const Color(0xFF121318));
   final surfaceHigh = light
-      ? const Color(0xFFE4EFE8)
-      : (character ? const Color(0xFF23352D) : const Color(0xFF24272F));
+      ? const Color(0xFFF1E1E4)
+      : (character ? const Color(0xFF2B1D23) : const Color(0xFF24272F));
   final line = light
-      ? const Color(0xFFCDDCD2)
-      : (character ? const Color(0xFF304238) : const Color(0xFF262A33));
+      ? const Color(0xFFEAD4D8)
+      : (character ? const Color(0xFF54343D) : const Color(0xFF262A33));
   final ink = light ? const Color(0xFF2E2027) : const Color(0xFFF4F1F4);
-  final sub = light ? const Color(0xFF506659) : const Color(0xFFABBDB2);
-  final accent = light ? const Color(0xFFC23A66) : const Color(0xFFFF8FA8);
+  final sub = light ? const Color(0xFF6D535A) : const Color(0xFFC0AFB4);
+  final accent = light ? const Color(0xFF9F263E) : const Color(0xFFFF9CA7);
   final scheme = ColorScheme.fromSeed(
           seedColor: wine,
           brightness: light ? Brightness.light : Brightness.dark)
@@ -103,7 +104,7 @@ ThemeData workbenchTheme(UiPreferences ui) {
           hintStyle: TextStyle(fontSize: 12, color: sub)),
       filledButtonTheme: FilledButtonThemeData(
           style: FilledButton.styleFrom(
-              backgroundColor: light ? wine : const Color(0xFFF45B87),
+              backgroundColor: light ? wine : const Color(0xFFB92C46),
               foregroundColor: Colors.white,
               textStyle: const TextStyle(fontFamily: 'Segoe UI', fontSize: 12),
               minimumSize: const Size(36, 38),
@@ -115,11 +116,45 @@ ThemeData workbenchTheme(UiPreferences ui) {
               OutlinedButton.styleFrom(foregroundColor: ink, textStyle: const TextStyle(fontFamily: 'Segoe UI', fontSize: 12), minimumSize: const Size(36, 36), side: BorderSide(color: line), shape: RoundedRectangleBorder(borderRadius: radius))),
       textButtonTheme: TextButtonThemeData(style: TextButton.styleFrom(foregroundColor: accent, textStyle: const TextStyle(fontFamily: 'Segoe UI', fontSize: 12))),
       iconButtonTheme: IconButtonThemeData(style: IconButton.styleFrom(foregroundColor: sub, iconSize: 18, shape: RoundedRectangleBorder(borderRadius: radius))),
-      switchTheme: SwitchThemeData(thumbColor: WidgetStateProperty.resolveWith((s) => s.contains(WidgetState.selected) ? Colors.white : sub), trackColor: WidgetStateProperty.resolveWith((s) => s.contains(WidgetState.selected) ? (light ? wine : const Color(0xFFF45B87)) : line)),
-      chipTheme: ChipThemeData(backgroundColor: surfaceLow, selectedColor: (light ? wine : const Color(0xFFF45B87)).withValues(alpha: .28), side: BorderSide(color: line.withValues(alpha: .8)), shape: const StadiumBorder(), labelStyle: TextStyle(fontFamily: 'Segoe UI', fontSize: 11, color: ink), padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4)),
+      switchTheme: SwitchThemeData(thumbColor: WidgetStateProperty.resolveWith((s) => s.contains(WidgetState.selected) ? Colors.white : sub), trackColor: WidgetStateProperty.resolveWith((s) => s.contains(WidgetState.selected) ? (light ? wine : const Color(0xFFB92C46)) : line)),
+      chipTheme: ChipThemeData(backgroundColor: surfaceLow, selectedColor: (light ? wine : const Color(0xFFB92C46)).withValues(alpha: .28), side: BorderSide(color: line.withValues(alpha: .8)), shape: const StadiumBorder(), labelStyle: TextStyle(fontFamily: 'Segoe UI', fontSize: 11, color: ink), padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4)),
       snackBarTheme: const SnackBarThemeData(behavior: SnackBarBehavior.floating, width: 420),
       dialogTheme: DialogThemeData(backgroundColor: surface, shape: RoundedRectangleBorder(borderRadius: radiusLg, side: BorderSide(color: line.withValues(alpha: .55)))),
       tooltipTheme: TooltipThemeData(decoration: BoxDecoration(color: scheme.surfaceContainerHighest, borderRadius: radius, border: Border.all(color: line)), textStyle: TextStyle(fontSize: 11, color: ink)));
+}
+
+/// Restricts the glass material to a small, clipped surface.
+class WorkbenchGlass extends StatelessWidget {
+  const WorkbenchGlass({super.key, required this.child, this.radius = 0});
+  final Widget child;
+  final double radius;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final light = scheme.brightness == Brightness.light;
+    final borderRadius = BorderRadius.circular(radius);
+    return ClipRRect(
+      borderRadius: borderRadius,
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 9, sigmaY: 9),
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            borderRadius: borderRadius,
+            border: Border.all(color: scheme.outline.withValues(alpha: .85)),
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: light
+                  ? [const Color(0xF5FFF5F5), const Color(0xEDF8E9EC)]
+                  : [const Color(0xDE3B1D25), const Color(0xEC22161A)],
+            ),
+          ),
+          child: child,
+        ),
+      ),
+    );
+  }
 }
 
 class Panel extends StatelessWidget {

@@ -323,6 +323,12 @@ class _ShellPageState extends State<ShellPage>
   bool _runtimeHasRoutes = false;
   bool _proxySwitching = false;
   List<NodeInfo> _runtimeNodes = const [];
+  ({
+    String binary,
+    String config,
+    List<NodeInfo> nodes,
+    bool hasRoutes
+  })? _appliedCore;
 
   bool get _systemProxyActive =>
       _proxyActive && (_data.systemProxy || !_data.enableTun);
@@ -1014,10 +1020,102 @@ class _ShellPageState extends State<ShellPage>
   // ---- nodes ----
 
   String _nodeTag(NodeInfo node) {
-    final nodes = profileNodes(_data);
+    final nodes = _running ? _runtimeNodes : profileNodes(_data);
     final index = nodes.indexOf(node);
-    if (index < 0) throw const FormatException('节点不属于激活配置');
+    if (index < 0) throw const FormatException('节点尚未应用到内核');
     return assignNodeTags(nodes.map((n) => n.name))[index];
+  }
+
+  Future<void> _applyPendingNode(int index, NodeInfo node) async {
+    final accepted = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('应用新节点'),
+        content: Text('「${node.name}」已保存。应用并切换会重载内核，现有连接可能短暂重连。'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('稍后')),
+          FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('应用并切换')),
+        ],
+      ),
+    );
+    if (accepted != true ||
+        !mounted ||
+        _busy ||
+        _settingsBusy ||
+        _proxySwitching ||
+        _profileChanging ||
+        _quitting ||
+        index >= _data.nodes.length ||
+        !identical(_data.nodes[index], node)) return;
+    final before = _data.copyWith();
+    final applied = _appliedCore;
+    final wasActive = _proxyActive;
+    setState(() {
+      _settingsBusy = true;
+      _data.selectedIndex = index;
+    });
+    try {
+      if (!await _persistImport(before)) return;
+      await (_running
+          ? _restartCore(duringSelection: true)
+          : _startCore(duringSelection: true));
+      if (_running && _runtimeNodes.contains(node)) {
+        _setMessage('节点已应用并切换：${node.name}');
+        unawaited(_refreshTray());
+        return;
+      }
+
+      final failure = _message;
+      setState(() {
+        _data = before;
+        _proxyActive = wasActive;
+      });
+      final restoredPreference = await _persist();
+      if (!_running && applied != null) {
+        setState(() => _coreBusy = true);
+        final file = await widget.store.writeRuntimeConfig(applied.config);
+        await widget.bridge
+            .startCore(singBoxPath: applied.binary, configPath: file.path);
+        if (_systemProxyActive)
+          await widget.systemProxy.apply(true, _data.mixedPort);
+        setState(() {
+          _running = true;
+          _runtimeNodes = applied.nodes;
+          _runtimeHasRoutes = applied.hasRoutes;
+          _appliedCore = applied;
+        });
+      }
+      _setMessage('应用失败，已恢复原出口${restoredPreference ? '' : '（选择写入失败）'}'
+          '${failure == null ? '' : '。$failure'}');
+    } catch (error) {
+      try {
+        await widget.bridge.stopCore();
+      } catch (_) {}
+      if (_systemProxyActive) {
+        try {
+          await widget.systemProxy.apply(false, _data.mixedPort);
+        } catch (_) {}
+      }
+      if (mounted)
+        setState(() {
+          _running = false;
+          _proxyActive = false;
+          _runtimeHasRoutes = false;
+          _runtimeNodes = const [];
+          _appliedCore = null;
+        });
+      _setMessage('应用失败，原内核未能恢复：${redactDiagnostics('$error')}');
+    } finally {
+      if (mounted)
+        setState(() {
+          _coreBusy = false;
+          _settingsBusy = false;
+        });
+    }
   }
 
   Future<void> _selectNode(int index) async {
@@ -1037,11 +1135,13 @@ class _ShellPageState extends State<ShellPage>
       _setMessage(e.message);
       return;
     }
+    if (_running && !_runtimeNodes.contains(node)) {
+      await _applyPendingNode(index, node);
+      return;
+    }
     String? previousTag;
     bool attempted = false;
-    final live = _running &&
-        _runtimeHasRoutes &&
-        (_proxyActive || _runtimeNodes.contains(node));
+    final live = _running && _runtimeHasRoutes;
     setState(() => _settingsBusy = true);
     Future<void> rollbackLive() async {
       if (!live || !attempted || previousTag == null) return;
@@ -1139,7 +1239,7 @@ class _ShellPageState extends State<ShellPage>
   }
 
   Future<int?> _sampleNodeQuality(NodeInfo node) async {
-    if (!_running || !_data.nodes.contains(node)) return null;
+    if (!_running || !_runtimeNodes.contains(node)) return null;
     final port = _data.clashApiPort;
     final generation = _monitor.startedAt;
     final ms = await _clash.delay(_nodeTag(node),
@@ -1153,7 +1253,7 @@ class _ShellPageState extends State<ShellPage>
 
   Future<void> _measureNode(NodeInfo node) async {
     if (_measuring) return;
-    if (_running && !profileNodes(_data).contains(node)) {
+    if (_running && !_runtimeNodes.contains(node)) {
       _setMessage('该节点不属于当前激活配置，无法通过运行内核测试');
       return;
     }
@@ -1178,7 +1278,7 @@ class _ShellPageState extends State<ShellPage>
     for (final node in List.of(_data.nodes)) {
       if (node.isPolicy && !liveOnly) continue;
       if (liveOnly && (!_running || _monitor.startedAt != session)) break;
-      if (_running && !profileNodes(_data).contains(node)) continue;
+      if (_running && !_runtimeNodes.contains(node)) continue;
       if (!_running && _udpProtocols.contains(node.protocol)) {
         skipped++;
         continue;
@@ -1465,9 +1565,12 @@ class _ShellPageState extends State<ShellPage>
     }
   }
 
-  Future<void> _startCore() async {
-    if (_running || _busy || _profileChanging || _settingsBusy || _quitting)
-      return;
+  Future<void> _startCore({bool duringSelection = false}) async {
+    if (_running ||
+        _busy ||
+        _profileChanging ||
+        (_settingsBusy && !duringSelection) ||
+        _quitting) return;
     _cancelConnect = false;
     setState(() {
       _busy = true;
@@ -1608,6 +1711,12 @@ class _ShellPageState extends State<ShellPage>
         _running = true;
         _runtimeHasRoutes = hasRoutes;
         _runtimeNodes = hasRoutes ? List.of(configNodes) : const [];
+        _appliedCore = (
+          binary: binary,
+          config: runtimeConfig,
+          nodes: _runtimeNodes,
+          hasRoutes: hasRoutes
+        );
         _latency.clear();
         _restartCount = 0;
         _lastExit = null;
@@ -1648,7 +1757,7 @@ class _ShellPageState extends State<ShellPage>
     }
   }
 
-  Future<void> _restartCore() async {
+  Future<void> _restartCore({bool duringSelection = false}) async {
     if (_busy || !_running) return;
     setState(() {
       _busy = true;
@@ -1674,7 +1783,7 @@ class _ShellPageState extends State<ShellPage>
           _coreBusy = false;
         });
     }
-    await _startCore();
+    await _startCore(duringSelection: duringSelection);
     if (!_running && _proxyActive) {
       if (_systemProxyActive) {
         try {
@@ -2089,6 +2198,9 @@ class _ShellPageState extends State<ShellPage>
           busy: _busy || _profileChanging || _settingsBusy,
           latency: _latency,
           onSelect: _selectNode,
+          pendingNodes: _running
+              ? _data.nodes.toSet().difference(_runtimeNodes.toSet())
+              : const {},
           onDelete: _deleteNode,
           onImport: _importDialog,
           onImportMethod: (method) => _importDialog(initialMethod: method),
@@ -2252,6 +2364,8 @@ class _ShellPageState extends State<ShellPage>
           onTunChanged: _setTun,
           onSystemProxyChanged: _busy ? null : _setSystemProxy,
           onModeChanged: _setMode,
+          onQualitySample: _sampleNodeQuality,
+          onConnections: () => setState(() => _page = 7),
           onMeasureSelected: () {
             final node = _data.selected;
             if (node != null) _measureNode(node);
@@ -2354,11 +2468,11 @@ class _ShellPageState extends State<ShellPage>
                   Expanded(
                       child: LayoutBuilder(builder: (context, constraints) {
                     final collapsed =
-                        _navCollapsed || constraints.maxWidth < 900;
+                        _navCollapsed || constraints.maxWidth < 1040;
                     return Row(children: [
                       AnimatedContainer(
                           duration: UiScope.duration(context),
-                          width: collapsed ? 68 : 220,
+                          width: collapsed ? 68 : 176,
                           decoration: BoxDecoration(
                               color: scheme.surfaceContainerLow,
                               border: Border(
@@ -2512,125 +2626,135 @@ class _ShellPageState extends State<ShellPage>
                           child: Column(
                               crossAxisAlignment: CrossAxisAlignment.stretch,
                               children: [
-                            Container(
-                                height: 54,
-                                padding:
-                                    const EdgeInsets.symmetric(horizontal: 22),
-                                decoration: BoxDecoration(
-                                    border: Border(
-                                        bottom: BorderSide(
-                                            color: scheme.outlineVariant))),
-                                child: Row(children: [
-                                  const Icon(Icons.grid_view_outlined,
-                                      size: 16),
-                                  const SizedBox(width: 10),
-                                  Text(names[_page] ?? '连接',
-                                      style: const TextStyle(
-                                          fontSize: 13,
-                                          fontWeight: FontWeight.w600)),
-                                  const Spacer(),
-                                  if (constraints.maxWidth > 1000)
-                                    OutlinedButton.icon(
-                                        onPressed: _showNodePicker,
-                                        icon:
-                                            const Icon(Icons.search, size: 14),
-                                        label: const Text('查找节点    Ctrl K',
-                                            style: TextStyle(fontSize: 10))),
-                                  const SizedBox(width: 10),
-                                  if (constraints.maxWidth > 1100)
-                                    OutlinedButton.icon(
-                                        onPressed: () => UiScope.change(
-                                            context,
-                                            ui.copyWith(
-                                                motion: ui.motion == 'reduced'
-                                                    ? ui.previousMotion
-                                                    : 'reduced')),
-                                        icon: Icon(
-                                            ui.motion == 'reduced'
-                                                ? Icons
-                                                    .motion_photos_off_outlined
-                                                : Icons
-                                                    .motion_photos_on_outlined,
-                                            size: 14),
-                                        label: Text(ui.motion == 'reduced' ? '动效关' : '动效开',
-                                            style:
-                                                const TextStyle(fontSize: 10)))
-                                  else
-                                    IconButton(
-                                        tooltip: '切换动态效果',
-                                        onPressed: () =>
-                                            UiScope.change(context, ui.copyWith(motion: ui.motion == 'reduced' ? ui.previousMotion : 'reduced')),
-                                        icon: Icon(ui.motion == 'reduced' ? Icons.motion_photos_off_outlined : Icons.motion_photos_on_outlined, size: 17)),
-                                  IconButton(
-                                      tooltip: '连接光流',
-                                      onPressed: () => UiScope.change(
-                                          context, ui.copyWith(flow: !ui.flow)),
-                                      icon: Icon(Icons.waves_outlined,
-                                          size: 17,
-                                          color: ui.flow
-                                              ? gold
-                                              : scheme.onSurfaceVariant)),
-                                  if (Platform.environment[
-                                          'TOKIBOSHI_ELEVATED_RUNNER'] ==
-                                      '1')
-                                    Tooltip(
-                                      message: '正在以管理员身份运行',
-                                      child: Padding(
+                            WorkbenchGlass(
+                                child: SizedBox(
+                                    height: 52,
+                                    child: Padding(
                                         padding: const EdgeInsets.symmetric(
-                                            horizontal: 7),
-                                        child: Icon(
-                                            Icons.admin_panel_settings_outlined,
-                                            size: 17,
-                                            color: scheme.onSurfaceVariant),
-                                      ),
-                                    ),
-                                  StatusDot(
-                                      _coreBusy
-                                          ? '内核准备中'
-                                          : _running
-                                              ? '内核运行'
-                                              : '内核停止',
-                                      color: _running
-                                          ? good
-                                          : scheme.onSurfaceVariant),
-                                  const SizedBox(width: 9),
-                                  IconButton(
-                                      tooltip: ui.light ? '切换深色' : '切换浅色',
-                                      onPressed: () => UiScope.change(context,
-                                          ui.copyWith(light: !ui.light)),
-                                      icon: Icon(
-                                          ui.light
-                                              ? Icons.dark_mode_outlined
-                                              : Icons.light_mode_outlined,
-                                          size: 17)),
-                                  IconButton(
-                                      tooltip: '运行通知',
-                                      onPressed: () => showDialog<void>(
-                                          context: context,
-                                          builder: (context) =>
-                                              AlertDialog(
-                                                  title: const Text('运行通知'),
-                                                  content:
-                                                      SingleChildScrollView(
-                                                          child: SelectableText(
-                                                              _message ??
-                                                                  '暂无运行通知')),
-                                                  actions: [
-                                                    TextButton(
-                                                        onPressed: () =>
-                                                            Navigator.pop(
-                                                                context),
-                                                        child: const Text('关闭'))
-                                                  ])),
-                                      icon: Badge(
-                                          isLabelVisible: _message != null,
-                                          smallSize: 5,
-                                          child: const Icon(
-                                              Icons.notifications_none_outlined,
-                                              size: 17)))
-                                ])),
+                                            horizontal: 16),
+                                        child: Row(children: [
+                                          const Icon(Icons.grid_view_outlined,
+                                              size: 16),
+                                          const SizedBox(width: 10),
+                                          Text(names[_page] ?? '连接',
+                                              style: const TextStyle(
+                                                  fontSize: 13,
+                                                  fontWeight: FontWeight.w600)),
+                                          const Spacer(),
+                                          if (constraints.maxWidth > 1000)
+                                            OutlinedButton.icon(
+                                                onPressed: _showNodePicker,
+                                                icon: const Icon(Icons.search,
+                                                    size: 14),
+                                                label: const Text(
+                                                    '查找节点    Ctrl K',
+                                                    style: TextStyle(
+                                                        fontSize: 10))),
+                                          const SizedBox(width: 10),
+                                          if (constraints.maxWidth > 1100)
+                                            OutlinedButton.icon(
+                                                onPressed: () => UiScope.change(
+                                                    context,
+                                                    ui.copyWith(
+                                                        motion: ui.motion == 'reduced'
+                                                            ? ui.previousMotion
+                                                            : 'reduced')),
+                                                icon: Icon(ui.motion == 'reduced' ? Icons.motion_photos_off_outlined : Icons.motion_photos_on_outlined,
+                                                    size: 14),
+                                                label: Text(ui.motion == 'reduced' ? '动效关' : '动效开',
+                                                    style: const TextStyle(
+                                                        fontSize: 10)))
+                                          else
+                                            IconButton(
+                                                tooltip: '切换动态效果',
+                                                onPressed: () => UiScope.change(
+                                                    context,
+                                                    ui.copyWith(motion: ui.motion == 'reduced' ? ui.previousMotion : 'reduced')),
+                                                icon: Icon(ui.motion == 'reduced' ? Icons.motion_photos_off_outlined : Icons.motion_photos_on_outlined, size: 17)),
+                                          IconButton(
+                                              tooltip: '连接光流',
+                                              onPressed: () => UiScope.change(
+                                                  context,
+                                                  ui.copyWith(flow: !ui.flow)),
+                                              icon: Icon(Icons.waves_outlined,
+                                                  size: 17,
+                                                  color: ui.flow
+                                                      ? gold
+                                                      : scheme
+                                                          .onSurfaceVariant)),
+                                          if (Platform.environment[
+                                                  'TOKIBOSHI_ELEVATED_RUNNER'] ==
+                                              '1')
+                                            Tooltip(
+                                              message: '正在以管理员身份运行',
+                                              child: Padding(
+                                                padding:
+                                                    const EdgeInsets.symmetric(
+                                                        horizontal: 7),
+                                                child: Icon(
+                                                    Icons
+                                                        .admin_panel_settings_outlined,
+                                                    size: 17,
+                                                    color: scheme
+                                                        .onSurfaceVariant),
+                                              ),
+                                            ),
+                                          StatusDot(
+                                              _coreBusy
+                                                  ? '内核准备中'
+                                                  : _running
+                                                      ? '内核运行'
+                                                      : '内核停止',
+                                              color: _running
+                                                  ? good
+                                                  : scheme.onSurfaceVariant),
+                                          const SizedBox(width: 9),
+                                          IconButton(
+                                              tooltip:
+                                                  ui.light ? '切换深色' : '切换浅色',
+                                              onPressed: () => UiScope.change(
+                                                  context,
+                                                  ui.copyWith(
+                                                      light: !ui.light)),
+                                              icon: Icon(
+                                                  ui.light
+                                                      ? Icons.dark_mode_outlined
+                                                      : Icons
+                                                          .light_mode_outlined,
+                                                  size: 17)),
+                                          IconButton(
+                                              tooltip: '运行通知',
+                                              onPressed: () => showDialog<void>(
+                                                  context: context,
+                                                  builder: (context) => AlertDialog(
+                                                          title: const Text('运行通知'),
+                                                          content:
+                                                              SingleChildScrollView(
+                                                                  child: SelectableText(_message ??
+                                                                      '暂无运行通知')),
+                                                          actions: [
+                                                            TextButton(
+                                                                onPressed: () =>
+                                                                    Navigator.pop(
+                                                                        context),
+                                                                child:
+                                                                    const Text(
+                                                                        '关闭'))
+                                                          ])),
+                                              icon: Badge(
+                                                  isLabelVisible:
+                                                      _message != null,
+                                                  smallSize: 5,
+                                                  child: const Icon(
+                                                      Icons
+                                                          .notifications_none_outlined,
+                                                      size: 17)))
+                                        ])))),
                             if (_message != null &&
-                                !_message!.startsWith('运行中：'))
+                                (_importing ||
+                                    _saveFailed ||
+                                    _message!.contains('失败') ||
+                                    _message!.contains('取消')))
                               _messageBanner(context),
                             if (_busy || _profileChanging || _settingsBusy)
                               const LinearProgressIndicator(minHeight: 2),
@@ -2693,8 +2817,9 @@ class _ShellPageState extends State<ShellPage>
                                                                             2)),
                                                         ])),
                                               )))),
-                            if (_page != 0)
+                            if (_loaded)
                               ConnectionDock(
+                                  showProxyControl: _page != 0,
                                   node: selected,
                                   subscriptions: _data.subscriptions,
                                   latency: _latency,

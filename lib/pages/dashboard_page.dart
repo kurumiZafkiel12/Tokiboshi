@@ -5,10 +5,10 @@ import '../services/store.dart';
 import '../ui/design.dart';
 import '../ui/preferences.dart';
 import '../ui/runtime.dart';
-import '../ui/motion.dart';
 import '../ui/traffic_chart.dart';
 import '../ui/mechanical_clock.dart';
 import '../ui/node_widgets.dart';
+import 'node_quality_panel.dart';
 
 class DashboardPage extends StatefulWidget {
   const DashboardPage(
@@ -38,6 +38,8 @@ class DashboardPage extends StatefulWidget {
       this.onTunChanged,
       this.onSystemProxyChanged,
       this.onModeChanged,
+      this.onQualitySample,
+      this.onConnections,
       this.subscriptions = const [],
       this.monitor,
       this.onSubscriptions,
@@ -60,6 +62,8 @@ class DashboardPage extends StatefulWidget {
   final ValueChanged<Subscription>? onUpdate;
   final ValueChanged<bool>? onTunChanged, onSystemProxyChanged;
   final ValueChanged<String>? onModeChanged;
+  final Future<int?> Function(NodeInfo)? onQualitySample;
+  final VoidCallback? onConnections;
   final List<Subscription> subscriptions;
   final RuntimeMonitor? monitor;
   final String? activeProfileId;
@@ -94,90 +98,212 @@ class _DashboardPageState extends State<DashboardPage> {
   @override
   Widget build(BuildContext context) {
     final monitor = widget.monitor;
-    return ListenableBuilder(
-      listenable: monitor ?? const AlwaysStoppedAnimation(0),
-      builder: (context, _) => LayoutBuilder(builder: (context, bounds) {
-        final ui = UiScope.of(context);
-        final wide = bounds.maxWidth >= 980 &&
-            MediaQuery.textScalerOf(context).scale(14) <= 17;
-        final modules = <String, Widget>{
-          'traffic': _traffic(context),
-          'profile': _profile(context),
-          'runtime': _runtime(context),
-        };
-        final order = [
-          for (final key in ui.order)
-            if (modules.containsKey(key)) key,
-        ];
-        final details = [
-          for (final key in order)
-            Padding(
-                padding: const EdgeInsets.only(bottom: 14),
-                child: MotionEntrance(
-                    key: ValueKey(key),
-                    order: order.indexOf(key),
-                    child: _editable(key, modules[key]!))),
-        ];
-        final clock = wide
-            ? const MechanicalClock(size: 150, dashboard: true)
-            : const MechanicalClock(
-                size: 150, initiallyOpen: false, dashboard: true);
-        return SingleChildScrollView(
-          padding: EdgeInsets.fromLTRB(wide ? 26 : 17, 17, wide ? 26 : 17, 22),
+    return LayoutBuilder(builder: (context, bounds) {
+      final ui = UiScope.of(context);
+      final wide = bounds.maxWidth >= 790 &&
+          MediaQuery.textScalerOf(context).scale(14) <= 17;
+      final gutter = bounds.maxWidth < 600 ? 12.0 : 16.0;
+      final header = Row(children: [
+        Expanded(
           child:
-              Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-            Row(children: [
-              Expanded(
-                  child: Text('连接工作台',
-                      style: Theme.of(context)
-                          .textTheme
-                          .headlineSmall
-                          ?.copyWith(fontWeight: FontWeight.w600))),
-              if (_editing)
-                TextButton(
-                    onPressed: () => UiScope.change(
-                        context,
-                        ui.copyWith(order: const [
-                          'status',
-                          'traffic',
-                          'profile',
-                          'runtime'
-                        ])),
-                    child: const Text('恢复布局')),
-              OutlinedButton(
-                  onPressed: () => setState(() => _editing = !_editing),
-                  child: Text(_editing ? '完成调整' : '调整组件')),
-            ]),
-            const SizedBox(height: 12),
-            if (wide)
-              Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Expanded(child: _hero(context)),
-                const SizedBox(width: 12),
-                SizedBox(width: 226, child: clock),
-              ])
+              Text('连接工作台', style: Theme.of(context).textTheme.headlineSmall),
+        ),
+        if (_editing)
+          TextButton(
+            onPressed: () => UiScope.change(
+                context,
+                ui.copyWith(
+                    order: const ['status', 'traffic', 'profile', 'runtime'])),
+            child: const Text('恢复布局'),
+          ),
+        OutlinedButton(
+          onPressed: () => setState(() => _editing = !_editing),
+          child: Text(_editing ? '完成调整' : '调整组件'),
+        ),
+      ]);
+      return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        Padding(
+          padding: EdgeInsets.fromLTRB(gutter, 8, gutter, 8),
+          child: header,
+        ),
+        const Divider(height: 1),
+        Expanded(
+          child: SingleChildScrollView(
+            key: const PageStorageKey('dashboard-scroll'),
+            padding: EdgeInsets.all(gutter),
+            child: ListenableBuilder(
+              listenable: monitor ?? const AlwaysStoppedAnimation(0),
+              builder: (context, _) {
+                final modules = <String, Widget>{
+                  'traffic': _traffic(context),
+                  'profile': _profile(context),
+                  'runtime': _runtime(context),
+                };
+                final order = ui.order.where(modules.containsKey).toList();
+                Widget panel(String id) => _editable(id, modules[id]!);
+                final contentWidth = bounds.maxWidth - gutter * 2;
+                final left = wide
+                    ? ((contentWidth - 12) * 7 / 12).floorToDouble()
+                    : contentWidth;
+                final right = wide ? contentWidth - 12 - left : contentWidth;
+                return TweenAnimationBuilder<double>(
+                  tween: Tween(end: wide ? 1.0 : 0.0),
+                  duration: UiScope.duration(context),
+                  curve: Curves.easeOutCubic,
+                  builder: (context, transition, child) => Transform.translate(
+                    offset: Offset(0, math.sin(transition * math.pi) * 5),
+                    child: child,
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      _hero(context),
+                      const SizedBox(height: 12),
+                      _metricBand(context),
+                      const SizedBox(height: 12),
+                      Wrap(spacing: 12, runSpacing: 12, children: [
+                        SizedBox(
+                            key: ValueKey(order.first),
+                            width: left,
+                            child: panel(order.first)),
+                        SizedBox(
+                            key: const ValueKey('quality'),
+                            width: right,
+                            child: _quality(context)),
+                        SizedBox(
+                            key: const ValueKey('ranking'),
+                            width: left,
+                            child: _ranking(context)),
+                        SizedBox(
+                            key: const ValueKey('mechanical-clock'),
+                            width: right,
+                            child: const MechanicalClock(
+                                size: 94, dashboard: true)),
+                        SizedBox(
+                            key: ValueKey(order[1]),
+                            width: left,
+                            child: panel(order[1])),
+                        SizedBox(
+                            key: ValueKey(order[2]),
+                            width: right,
+                            child: panel(order[2])),
+                      ]),
+                    ],
+                  ),
+                );
+              },
+            ),
+          ),
+        ),
+      ]);
+    });
+  }
+
+  Widget _quality(BuildContext context) {
+    final node = widget.selected;
+    final sample = widget.onQualitySample;
+    final checked = widget.selectedMeasured;
+    return SizedBox(
+        height: 200,
+        child: Panel(
+            child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _title(
+                '出口质量',
+                _link(
+                    '测量 ↗',
+                    node != null && sample != null && widget.running
+                        ? () => showDialog<void>(
+                              context: context,
+                              builder: (dialogContext) => AlertDialog(
+                                title: const Text('出口质量'),
+                                content: SizedBox(
+                                    width: 550,
+                                    child: SingleChildScrollView(
+                                        child: NodeQualityPanel(
+                                            node: node, measure: sample))),
+                                actions: [
+                                  TextButton(
+                                      onPressed: () =>
+                                          Navigator.pop(dialogContext),
+                                      child: const Text('关闭'))
+                                ],
+                              ),
+                            )
+                        : null)),
+            if (node != null)
+              Text(node.name, maxLines: 1, overflow: TextOverflow.ellipsis),
+            const Spacer(),
+            Text(
+              widget.selectedLatency != null
+                  ? '${widget.selectedLatency} ms'
+                  : checked
+                      ? '测量失败'
+                      : '尚未测量',
+              style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                  fontFamily: mono.fontFamily,
+                  fontFamilyFallback: mono.fontFamilyFallback),
+            ),
+            const SizedBox(height: 4),
+            Text('多次测量可查看延迟、抖动和超时。',
+                style: Theme.of(context).textTheme.bodySmall),
+          ],
+        )));
+  }
+
+  Widget _ranking(BuildContext context) {
+    final totals = <String, int>{};
+    for (final row
+        in widget.monitor?.connections ?? const <Map<String, dynamic>>[]) {
+      final meta = row['metadata'];
+      if (meta is! Map) continue;
+      final path = meta['processName'] ??
+          meta['processPath'] ??
+          meta['process_path'] ??
+          meta['process'];
+      if (path is! String || path.trim().isEmpty) continue;
+      final name = path.split(RegExp(r'[/\\]')).last;
+      final bytes =
+          ((row['download'] as num?) ?? 0) + ((row['upload'] as num?) ?? 0);
+      totals.update(name, (current) => current + bytes.toInt(),
+          ifAbsent: () => bytes.toInt());
+    }
+    final ranked = totals.entries.toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+    return SizedBox(
+        height: 168,
+        child: Panel(
+            child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _title('应用流量', _link('连接 ↗', widget.onConnections)),
+            if (ranked.isEmpty)
+              Text('暂无可识别进程的活动连接', style: Theme.of(context).textTheme.bodySmall)
             else
-              _hero(context),
-            const SizedBox(height: 11),
-            _metricBand(context),
-            const SizedBox(height: 12),
-            if (wide)
-              Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Expanded(flex: 5, child: details.first),
-                const SizedBox(width: 13),
-                Expanded(
-                    flex: 4,
-                    child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: details.skip(1).toList())),
-              ])
-            else ...[
-              ...details,
-              clock,
-            ],
-          ]),
-        );
-      }),
-    );
+              for (final app in ranked.take(3))
+                Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Row(children: [
+                      Expanded(
+                          flex: 3,
+                          child: Text(app.key,
+                              maxLines: 1, overflow: TextOverflow.ellipsis)),
+                      const SizedBox(width: 8),
+                      Expanded(
+                          flex: 5,
+                          child: LinearProgressIndicator(
+                            value: ranked.first.value > 0
+                                ? app.value / ranked.first.value
+                                : 0,
+                            minHeight: 4,
+                            borderRadius: BorderRadius.circular(2),
+                          )),
+                      const SizedBox(width: 8),
+                      Text(bytesLabel(app.value), style: mono),
+                    ])),
+          ],
+        )));
   }
 
   Widget _hero(BuildContext context) {
@@ -342,32 +468,42 @@ class _DashboardPageState extends State<DashboardPage> {
       ('活动连接', ready ? '${monitor!.connections.length} 条' : '—'),
       ('会话用量', ready ? bytesLabel(monitor!.download + monitor.upload) : '—'),
     ];
-    return Panel(
-        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
-        child: LayoutBuilder(builder: (context, bounds) {
-          final columns = bounds.maxWidth < 420 ||
-                  MediaQuery.textScalerOf(context).scale(14) > 17
-              ? 2
-              : 4;
-          return Wrap(runSpacing: 8, children: [
-            for (final (label, value) in metrics)
-              SizedBox(
-                  width: bounds.maxWidth / columns,
-                  child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(label,
-                            style: Theme.of(context).textTheme.labelMedium),
-                        Text(value,
-                            style: Theme.of(context)
-                                .textTheme
-                                .titleMedium
-                                ?.copyWith(
-                                    fontFeatures: mono.fontFeatures,
-                                    fontWeight: FontWeight.w600)),
-                      ])),
-          ]);
-        }));
+    return LayoutBuilder(builder: (context, bounds) {
+      final columns = bounds.maxWidth < 560 ||
+              MediaQuery.textScalerOf(context).scale(14) > 17
+          ? 2
+          : 4;
+      const gap = 8.0;
+      final width = (bounds.maxWidth - gap * (columns - 1)) / columns;
+      return Wrap(spacing: gap, runSpacing: gap, children: [
+        for (final (label, value) in metrics)
+          SizedBox(
+              width: width,
+              child: Panel(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(label,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.labelMedium),
+                    Text(value,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context)
+                            .textTheme
+                            .titleMedium
+                            ?.copyWith(
+                                fontFamily: mono.fontFamily,
+                                fontFamilyFallback: mono.fontFamilyFallback,
+                                fontWeight: FontWeight.w600)),
+                  ],
+                ),
+              )),
+      ]);
+    });
   }
 
   Widget _editable(String id, Widget panel) {
@@ -433,7 +569,7 @@ class _DashboardPageState extends State<DashboardPage> {
   Widget _traffic(BuildContext context) {
     final m = widget.monitor, ready = widget.running && (m?.available ?? false);
     return SizedBox(
-        height: 220,
+        height: 200,
         child: Panel(
             child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -469,7 +605,7 @@ class _DashboardPageState extends State<DashboardPage> {
         .where((s) => s.id == widget.selected?.source)
         .firstOrNull;
     return SizedBox(
-        height: 220,
+        height: 200,
         child: Panel(
             child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -518,7 +654,7 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   Widget _runtime(BuildContext context) => SizedBox(
-      height: 220,
+      height: 200,
       child: Panel(
           child: Column(children: [
         _title('运行详情', _link('日志 ↗', widget.onLogs)),

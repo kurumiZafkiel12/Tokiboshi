@@ -129,10 +129,10 @@ void main() {
       fixture.data.desktop =
           const DesktopSettings(autoRun: true, autoCheckUpdates: false);
       final store = await mount(t,
-          size: size, light: size.width < 900, withStore: fixture);
+          size: size, light: size.width < 1040, withStore: fixture);
       expect(find.text('内核待命'), findsOneWidget);
       await screenshot(t, 'dashboard-v013-${size.width.toInt()}');
-      await t.tap(size.width < 900
+      await t.tap(size.width < 1040
           ? find.byTooltip('分流规则').first
           : find.text('分流规则').first);
       await t.pumpAndSettle();
@@ -161,7 +161,7 @@ void main() {
         'reissue import and general settings surfaces fit ${size.width}',
         (t) async {
       await mount(t, size: size);
-      await t.tap(size.width < 900
+      await t.tap(size.width < 1040
           ? find.byTooltip('节点').first
           : find.text('节点').first);
       await t.pumpAndSettle();
@@ -184,7 +184,7 @@ void main() {
         await t.tap(find.text('取消').last);
         await t.pumpAndSettle();
       }
-      await t.tap(size.width < 900
+      await t.tap(size.width < 1040
           ? find.byTooltip('设置').first
           : find.text('设置').first);
       await t.pumpAndSettle();
@@ -215,7 +215,7 @@ void main() {
       expect(t.takeException(), isNull);
       await screenshot(t, 'dashboard-${size.width.toInt()}');
       for (final name in ['节点', '订阅', '分流规则', '请求', '运行日志', '设置']) {
-        await t.tap(size.width < 900
+        await t.tap(size.width < 1040
             ? find.byTooltip(name).first
             : find.text(name).first);
         await t.pumpAndSettle();
@@ -248,6 +248,30 @@ void main() {
     expect(find.text('停止代理'), findsOneWidget);
     expect(t.takeException(), isNull);
     await screenshot(t, 'dashboard-800-running-light-125percent');
+    await t.pumpWidget(const SizedBox());
+  });
+  testWidgets(
+      'red-black dashboard clock opens the detailed movement and survives resizing',
+      (t) async {
+    final fixture = MemoryStore();
+    fixture.data.desktop =
+        const DesktopSettings(autoRun: true, autoCheckUpdates: false);
+    await mount(t, withStore: fixture);
+    await screenshot(t, 'redblack-dashboard-1440');
+    final action = find.text('展开机芯');
+    await t.ensureVisible(action);
+    await t.tap(action);
+    await t.pumpAndSettle();
+    expect(find.byType(Dialog), findsOneWidget);
+    expect(find.descendant(of: find.byType(Dialog), matching: find.text('机械钟')),
+        findsOneWidget);
+    await screenshot(t, 'redblack-mechanical-clock');
+    t.view.physicalSize = const Size(800, 600);
+    await t.pumpAndSettle();
+    expect(t.takeException(), isNull);
+    Navigator.of(t.element(find.byType(Dialog))).pop();
+    await t.pumpAndSettle();
+    await screenshot(t, 'redblack-dashboard-800');
     await t.pumpWidget(const SizedBox());
   });
   testWidgets(

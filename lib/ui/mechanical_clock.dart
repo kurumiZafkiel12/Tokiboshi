@@ -5,6 +5,7 @@ import 'dart:ui' show FontFeature;
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'preferences.dart';
+import 'design.dart';
 
 /// 机械钟主题模块（委托：2026-11-22《Tokiboshi Windows 机械钟样稿与交接》）。
 ///
@@ -64,11 +65,12 @@ class _MechanicalClockState extends State<MechanicalClock>
 
   void _start() {
     _stop();
-    if (!_open || !_visible || !TickerMode.of(context)) return;
+    if ((!_open && !widget.dashboard) || !_visible || !TickerMode.of(context))
+      return;
     // 滑动秒针的连续 ticker 会让 widget 测试的 pumpAndSettle 永不收敛；
     // 测试环境（FLUTTER_TEST）自动降级为整秒跳，视觉行为等价。
     final isTest = Platform.environment.containsKey('FLUTTER_TEST');
-    if (_tier(context) == 'full' && !isTest) {
+    if (_tier(context) == 'full' && !isTest && !widget.dashboard) {
       _ticker = createTicker((_) {
         if (mounted) setState(() => _tick++);
       })
@@ -91,7 +93,7 @@ class _MechanicalClockState extends State<MechanicalClock>
   @override
   void didUpdateWidget(covariant MechanicalClock old) {
     super.didUpdateWidget(old);
-    _start();
+    if (old.dashboard != widget.dashboard) _start();
   }
 
   @override
@@ -119,16 +121,122 @@ class _MechanicalClockState extends State<MechanicalClock>
     return '${now.month}月${now.day}日 星期${wd[now.weekday - 1]}';
   }
 
+  Widget _dial(double size, String tier, DateTime now,
+          {bool compact = false}) =>
+      SizedBox(
+        width: size,
+        height: size,
+        child: ExcludeSemantics(
+            child: Stack(fit: StackFit.expand, children: [
+          RepaintBoundary(
+            child: CustomPaint(
+                painter: _ClockPainter(
+                    tier: tier,
+                    now: now,
+                    tick: _tick,
+                    compact: compact,
+                    staticLayer: true)),
+          ),
+          RepaintBoundary(
+            child: CustomPaint(
+                painter: _ClockPainter(
+                    tier: tier, now: now, tick: _tick, compact: compact)),
+          ),
+        ])),
+      );
+
+  Future<void> _showMovement() async {
+    _stop();
+    try {
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) => Dialog(
+          clipBehavior: Clip.antiAlias,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 440),
+            child: WorkbenchGlass(
+              radius: 20,
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+                child: Column(mainAxisSize: MainAxisSize.min, children: [
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: IconButton(
+                      tooltip: '关闭机芯',
+                      onPressed: () => Navigator.pop(dialogContext),
+                      icon: const Icon(Icons.close),
+                    ),
+                  ),
+                  LayoutBuilder(
+                      builder: (context, bounds) => MechanicalClock(
+                          size: math.min(300, bounds.maxWidth - 22))),
+                ]),
+              ),
+            ),
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) _start();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final tier = _tier(context);
     final now = DateTime.now();
+    if (widget.dashboard) {
+      return SizedBox(
+          height: 168,
+          child: Panel(
+              child: Column(children: [
+            Row(children: [
+              const Expanded(
+                  child: Text('机械钟',
+                      style: TextStyle(fontWeight: FontWeight.w600))),
+              OutlinedButton(
+                  onPressed: _showMovement, child: const Text('展开机芯')),
+            ]),
+            const SizedBox(height: 4),
+            Expanded(
+              child: LayoutBuilder(
+                  builder: (context, bounds) => Row(children: [
+                        _dial(
+                            math.min(
+                                widget.size,
+                                math.min(
+                                    bounds.maxHeight, bounds.maxWidth * .41)),
+                            tier == 'full' ? 'standard' : tier,
+                            now),
+                        const SizedBox(width: 12),
+                        Expanded(
+                            child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(_textTime(),
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .titleLarge
+                                    ?.copyWith(fontFeatures: const [
+                                  FontFeature.tabularFigures()
+                                ])),
+                            Text(_textDate(),
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: Theme.of(context).textTheme.bodySmall),
+                          ],
+                        )),
+                      ])),
+            ),
+          ])));
+    }
     return Container(
       decoration: BoxDecoration(
         gradient: const LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: [Color(0xFF2A1420), Color(0xFF1B1521), Color(0xFF3A1F2E)],
+          colors: [Color(0xFF30171D), Color(0xFF211317), Color(0xFF472029)],
         ),
         borderRadius: BorderRadius.circular(16),
         border:
@@ -157,15 +265,7 @@ class _MechanicalClockState extends State<MechanicalClock>
         ]),
         const SizedBox(height: 4),
         if (_open) ...[
-          Center(
-            child: SizedBox(
-              width: widget.size,
-              height: widget.size,
-              child: CustomPaint(
-                  painter: _ClockPainter(
-                      tier: tier, now: now, tick: _tick, compact: false)),
-            ),
-          ),
+          Center(child: _dial(widget.size, tier, now)),
           const SizedBox(height: 6),
           Text(_textTime(),
               style: const TextStyle(
@@ -179,12 +279,7 @@ class _MechanicalClockState extends State<MechanicalClock>
                     const TextStyle(fontSize: 10.5, color: Color(0xFFBDB0BD))),
         ] else ...[
           Row(children: [
-            SizedBox(
-                width: 56,
-                height: 56,
-                child: CustomPaint(
-                    painter: _ClockPainter(
-                        tier: tier, now: now, tick: _tick, compact: true))),
+            _dial(64, tier, now, compact: true),
             const SizedBox(width: 10),
             Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Text(_textTime(),
@@ -218,15 +313,17 @@ class _ClockPainter extends CustomPainter {
       {required this.tier,
       required this.now,
       required this.tick,
-      required this.compact});
+      required this.compact,
+      this.staticLayer = false});
   final String tier;
   final DateTime now;
   final int tick;
   final bool compact;
+  final bool staticLayer;
 
   static const rose = Color(0xFFFFC1D5);
   static const ink = Color(0xFFF8EFF5);
-  static const face = Color(0xFF1B1521);
+  static const face = Color(0xFF211317);
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -238,165 +335,177 @@ class _ClockPainter extends CustomPainter {
     final hour = now.hour % 12 + minute / 60;
     final secs = now.minute * 60 + now.second + t;
 
-    // ---- 金属边环 ----
-    final ring = Paint()
-      ..shader = SweepGradient(
-          startAngle: -math.pi / 2,
-          endAngle: 3 * math.pi / 2,
-          colors: const [
-            Color(0xFFB4678A),
-            rose,
-            Color(0xFF8E4E70),
-            rose,
-            Color(0xFFB4678A)
-          ]).createShader(Rect.fromCircle(center: c, radius: R));
-    canvas.drawCircle(c, R, ring);
-    canvas.drawCircle(c, R - 3, Paint()..color = const Color(0xFF2A1420));
-    if (!compact) {
-      // 外圈滚花：60 条径向短刻
-      final knurl = Paint()
-        ..color = rose.withValues(alpha: .5)
-        ..strokeWidth = math.max(1, R * .012)
+    final faceR = R - R * .10;
+    if (staticLayer) {
+      // ---- 金属边环 ----
+      final ring = Paint()
+        ..shader = SweepGradient(
+            startAngle: -math.pi / 2,
+            endAngle: 3 * math.pi / 2,
+            colors: const [
+              Color(0xFFBE6676),
+              rose,
+              Color(0xFF823B4A),
+              rose,
+              Color(0xFFBE6676)
+            ]).createShader(Rect.fromCircle(center: c, radius: R));
+      canvas.drawCircle(c, R, ring);
+      canvas.drawCircle(c, R - 3, Paint()..color = const Color(0xFF30171D));
+      if (!compact) {
+        // 外圈滚花：60 条径向短刻
+        final knurl = Paint()
+          ..color = rose.withValues(alpha: .5)
+          ..strokeWidth = math.max(1, R * .012)
+          ..strokeCap = StrokeCap.round;
+        for (var i = 0; i < 60; i++) {
+          final a = i * math.pi / 30;
+          final r1 = R - 3.5, r2 = R - 3.5 - R * .045;
+          canvas.drawLine(c + Offset(math.sin(a) * r1, -math.cos(a) * r1),
+              c + Offset(math.sin(a) * r2, -math.cos(a) * r2), knurl);
+        }
+      }
+
+      // ---- 盘面 ----
+      canvas.drawCircle(
+          c,
+          faceR,
+          Paint()
+            ..shader = RadialGradient(colors: const [
+              Color(0xFF2D1A20),
+              face,
+              Color(0xFF160F13),
+            ], stops: const [
+              0,
+              .55,
+              1
+            ]).createShader(Rect.fromCircle(center: c, radius: faceR)));
+      final ring2 = Paint()
+        ..style = PaintingStyle.stroke
+        ..color = rose.withValues(alpha: .16)
+        ..strokeWidth = 1;
+      for (final rr in [.92, .80, .66]) {
+        canvas.drawCircle(c, faceR * rr, ring2);
+      }
+
+      // ---- 60 刻线 ----
+      final major = Paint()
+        ..color = ink.withValues(alpha: .85)
+        ..strokeWidth = compact ? 1.4 : 2
         ..strokeCap = StrokeCap.round;
+      final minor = Paint()
+        ..color = ink.withValues(alpha: .38)
+        ..strokeWidth = 1;
       for (var i = 0; i < 60; i++) {
         final a = i * math.pi / 30;
-        final r1 = R - 3.5, r2 = R - 3.5 - R * .045;
-        canvas.drawLine(c + Offset(math.sin(a) * r1, -math.cos(a) * r1),
-            c + Offset(math.sin(a) * r2, -math.cos(a) * r2), knurl);
+        final isMajor = i % 5 == 0;
+        final len = isMajor ? faceR * .10 : faceR * .05;
+        final r1 = faceR * .93;
+        canvas.drawLine(
+            c + Offset(math.sin(a) * r1, -math.cos(a) * r1),
+            c + Offset(math.sin(a) * (r1 - len), -math.cos(a) * (r1 - len)),
+            isMajor ? major : minor);
       }
-    }
 
-    // ---- 盘面 ----
-    final faceR = R - R * .10;
-    canvas.drawCircle(
-        c,
-        faceR,
-        Paint()
-          ..shader = RadialGradient(colors: const [
-            Color(0xFF241C2C),
-            face,
-            Color(0xFF14101A),
-          ], stops: const [
-            0,
-            .55,
-            1
-          ]).createShader(Rect.fromCircle(center: c, radius: faceR)));
-    final ring2 = Paint()
-      ..style = PaintingStyle.stroke
-      ..color = rose.withValues(alpha: .16)
-      ..strokeWidth = 1;
-    for (final rr in [.92, .80, .66]) {
-      canvas.drawCircle(c, faceR * rr, ring2);
-    }
-
-    // ---- 60 刻线 ----
-    final major = Paint()
-      ..color = ink.withValues(alpha: .85)
-      ..strokeWidth = compact ? 1.4 : 2
-      ..strokeCap = StrokeCap.round;
-    final minor = Paint()
-      ..color = ink.withValues(alpha: .38)
-      ..strokeWidth = 1;
-    for (var i = 0; i < 60; i++) {
-      final a = i * math.pi / 30;
-      final isMajor = i % 5 == 0;
-      final len = isMajor ? faceR * .10 : faceR * .05;
-      final r1 = faceR * .93;
-      canvas.drawLine(
-          c + Offset(math.sin(a) * r1, -math.cos(a) * r1),
-          c + Offset(math.sin(a) * (r1 - len), -math.cos(a) * (r1 - len)),
-          isMajor ? major : minor);
-    }
-
-    // ---- 罗马数字 ----
-    if (!compact) {
-      const numerals = [
-        'XII',
-        'I',
-        'II',
-        'III',
-        'IV',
-        'V',
-        'VI',
-        'VII',
-        'VIII',
-        'IX',
-        'X',
-        'XI'
-      ];
-      for (var i = 0; i < 12; i++) {
-        final a = i * math.pi / 6;
-        final r = faceR * .76;
-        final tp = c + Offset(math.sin(a) * r, -math.cos(a) * r);
-        final isMain = i % 3 == 0;
-        final tp2 = TextPainter(
-            text: TextSpan(
-                text: numerals[i],
+      // ---- 罗马数字 ----
+      if (!compact) {
+        const numerals = [
+          'XII',
+          'I',
+          'II',
+          'III',
+          'IV',
+          'V',
+          'VI',
+          'VII',
+          'VIII',
+          'IX',
+          'X',
+          'XI'
+        ];
+        for (var i = 0; i < 12; i++) {
+          final a = i * math.pi / 6;
+          final r = faceR * .76;
+          final tp = c + Offset(math.sin(a) * r, -math.cos(a) * r);
+          final isMain = i % 3 == 0;
+          final tp2 = TextPainter(
+              text: TextSpan(
+                  text: numerals[i],
+                  style: TextStyle(
+                      fontFamily: 'Segoe UI',
+                      fontSize: (isMain ? faceR * .12 : faceR * .085)
+                          .clamp(8.0, 22.0),
+                      color: ink.withValues(alpha: isMain ? .92 : .55),
+                      fontWeight: isMain ? FontWeight.w700 : FontWeight.w500)),
+              textDirection: TextDirection.ltr);
+          tp2.layout();
+          tp2.paint(canvas, tp - Offset(tp2.width / 2, tp2.height / 2));
+        }
+        final brand = TextPainter(
+            text: const TextSpan(
+                text: 'TOKIBOSHI',
                 style: TextStyle(
                     fontFamily: 'Segoe UI',
-                    fontSize:
-                        (isMain ? faceR * .12 : faceR * .085).clamp(8.0, 22.0),
-                    color: ink.withValues(alpha: isMain ? .92 : .55),
-                    fontWeight: isMain ? FontWeight.w700 : FontWeight.w500)),
+                    fontSize: 8,
+                    color: rose,
+                    letterSpacing: 1.4,
+                    fontWeight: FontWeight.w600)),
             textDirection: TextDirection.ltr);
-        tp2.layout();
-        tp2.paint(canvas, tp - Offset(tp2.width / 2, tp2.height / 2));
+        brand.layout();
+        brand.paint(canvas, c - Offset(brand.width / 2, faceR * .42));
+        final sub = TextPainter(
+            text: TextSpan(
+                text: '時の星',
+                style: TextStyle(
+                    fontFamily: 'Segoe UI',
+                    fontSize: 8,
+                    color: rose.withValues(alpha: .6))),
+            textDirection: TextDirection.ltr);
+        sub.layout();
+        sub.paint(canvas, c + Offset(-sub.width / 2, faceR * .38));
       }
-      final brand = TextPainter(
-          text: const TextSpan(
-              text: 'TOKIBOSHI',
-              style: TextStyle(
-                  fontFamily: 'Segoe UI',
-                  fontSize: 8,
-                  color: rose,
-                  letterSpacing: 1.4,
-                  fontWeight: FontWeight.w600)),
-          textDirection: TextDirection.ltr);
-      brand.layout();
-      brand.paint(canvas, c - Offset(brand.width / 2, faceR * .42));
-      final sub = TextPainter(
-          text: TextSpan(
-              text: '時の星',
-              style: TextStyle(
-                  fontFamily: 'Segoe UI',
-                  fontSize: 8,
-                  color: rose.withValues(alpha: .6))),
-          textDirection: TextDirection.ltr);
-      sub.layout();
-      sub.paint(canvas, c + Offset(-sub.width / 2, faceR * .38));
-    }
 
-    if (!compact) {
-      // ---- 弧形夹板 + 螺钉 ----
-      canvas.drawArc(
-          Rect.fromCircle(center: c, radius: faceR),
-          math.pi * 1.05,
-          math.pi * .9,
-          false,
-          Paint()
-            ..style = PaintingStyle.stroke
-            ..strokeWidth = faceR * .12
-            ..color = rose.withValues(alpha: .07));
-      canvas.drawArc(
-          Rect.fromCircle(center: c, radius: faceR),
-          math.pi * 1.05,
-          math.pi * .9,
-          false,
-          Paint()
-            ..style = PaintingStyle.stroke
-            ..strokeWidth = 1
-            ..color = rose.withValues(alpha: .22));
-      for (final (dx, dy) in [(-.42, -.55), (.34, -.62)]) {
-        final sp = c + Offset(faceR * dx, faceR * dy);
-        canvas.drawCircle(
-            sp, faceR * .045, Paint()..color = rose.withValues(alpha: .5));
-        canvas.drawLine(
-            sp - Offset(faceR * .03, 0),
-            sp + Offset(faceR * .03, 0),
+      if (!compact) {
+        // ---- 弧形夹板 + 螺钉 ----
+        canvas.drawArc(
+            Rect.fromCircle(center: c, radius: faceR),
+            math.pi * 1.05,
+            math.pi * .9,
+            false,
             Paint()
-              ..color = const Color(0xFF14101A)
-              ..strokeWidth = 1.4);
+              ..style = PaintingStyle.stroke
+              ..strokeWidth = faceR * .12
+              ..color = rose.withValues(alpha: .07));
+        canvas.drawArc(
+            Rect.fromCircle(center: c, radius: faceR),
+            math.pi * 1.05,
+            math.pi * .9,
+            false,
+            Paint()
+              ..style = PaintingStyle.stroke
+              ..strokeWidth = 1
+              ..color = rose.withValues(alpha: .22));
+        for (final (dx, dy) in [(-.42, -.55), (.34, -.62)]) {
+          final sp = c + Offset(faceR * dx, faceR * dy);
+          canvas.drawCircle(
+              sp, faceR * .045, Paint()..color = rose.withValues(alpha: .5));
+          canvas.drawLine(
+              sp - Offset(faceR * .03, 0),
+              sp + Offset(faceR * .03, 0),
+              Paint()
+                ..color = const Color(0xFF160F13)
+                ..strokeWidth = 1.4);
+        }
       }
+
+      if (!compact) {
+        for (var i = 0; i < 90; i++) {
+          final a = i * math.pi / 45;
+          final axis = Offset(math.cos(a), math.sin(a));
+          canvas.drawLine(c + axis * (faceR * .51), c + axis * (faceR * .63),
+              Paint()..color = rose.withValues(alpha: i.isEven ? .06 : .03));
+        }
+      }
+      return;
     }
 
     // ---- 可见机芯：五枚慢转齿轮 ----
@@ -442,7 +551,7 @@ class _ClockPainter extends CustomPainter {
             ..color = rose.withValues(alpha: .5)
             ..strokeWidth = 1);
       canvas.drawCircle(gc, gr * .30,
-          Paint()..color = const Color(0xFF14101A).withValues(alpha: .8));
+          Paint()..color = const Color(0xFF160F13).withValues(alpha: .8));
       canvas.drawCircle(
           gc, gr * .12, Paint()..color = rose.withValues(alpha: .6));
       for (var i = 0; i < 3; i++) {
@@ -477,10 +586,12 @@ class _ClockPainter extends CustomPainter {
 
     canvas.drawCircle(c, faceR * .05, Paint()..color = rose);
     canvas.drawCircle(
-        c, faceR * .022, Paint()..color = const Color(0xFF14101A));
+        c, faceR * .022, Paint()..color = const Color(0xFF160F13));
   }
 
   @override
   bool shouldRepaint(covariant _ClockPainter old) =>
-      old.tick != tick || old.tier != tier || old.compact != compact;
+      old.staticLayer != staticLayer ||
+      old.compact != compact ||
+      (!staticLayer && (old.tick != tick || old.tier != tier));
 }
