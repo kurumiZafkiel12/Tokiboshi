@@ -123,8 +123,10 @@ fn occupied_port_is_reported_and_real_core_forwards_after_reconfiguration() {
     drop(chain_guard);
     // A previous selector choice in cache.db must never win over the
     // endpoint explicitly selected in the new application config.
+    // Each verification connects to the current process. On Windows,
+    // reusing a pooled socket from before stop can return WSAECONNRESET.
     let agent = ureq::AgentBuilder::new().try_proxy_from_env(false)
-        .timeout(Duration::from_secs(3)).build();
+        .max_idle_connections(0).timeout(Duration::from_secs(3)).build();
     let endpoint = format!("http://127.0.0.1:{}/proxies/proxy", settings.clash_api_port);
     config["outbounds"][0]["outbounds"] = serde_json::json!(["proxy-2", "exit"]);
     config["experimental"]["clash_api"]["secret"] = serde_json::json!("fixture-selector-secret");
