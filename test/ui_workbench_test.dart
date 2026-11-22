@@ -501,7 +501,7 @@ void main() {
     await t.pumpAndSettle();
     await t.tap(find.widgetWithText(ChoiceChip, '星海 · 主订阅'));
     await t.pumpAndSettle();
-    await t.tap(find.byTooltip('节点详情').first);
+    await t.tap(find.byTooltip('节点操作').first);
     await t.pumpAndSettle();
     expect(find.text('凭据默认隐藏。详情不展示密码、UUID 或完整配置。'), findsOneWidget);
     await screenshot(t, 'node-drawer');
