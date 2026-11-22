@@ -201,7 +201,7 @@ class _MechanicalClockState extends State<MechanicalClock>
     final now = DateTime.now();
     if (widget.dashboard) {
       return SizedBox(
-          height: 168,
+          height: widget.size + 74,
           child: Panel(
               child: Column(children: [
             Row(children: [

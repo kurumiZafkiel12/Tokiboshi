@@ -7,6 +7,7 @@ import 'package:file_selector/file_selector.dart';
 import 'services/client_preferences.dart';
 import 'services/config_backup.dart';
 import 'services/node_selection.dart';
+import 'services/quality_history.dart';
 import 'ui/subscription_editor.dart';
 import 'dart:io';
 import 'package:flutter/services.dart';
@@ -339,6 +340,20 @@ class _ShellPageState extends State<ShellPage>
       _proxyActive && (_data.systemProxy || !_data.enableTun);
   bool _busy = false;
   bool _measuring = false;
+  late final _qualityHistory = QualityHistory(widget.store.dir);
+  String? _qualityKey(NodeInfo node) {
+    final uri = Uri.tryParse(_data.client.testUrl);
+    if (uri == null ||
+        uri.hasQuery ||
+        uri.userInfo.isNotEmpty ||
+        uri.hasFragment) return null;
+    final ref = routeNodeReference(node);
+    if (_data.nodes.where((n) => routeNodeReference(n) == ref).length != 1)
+      return null;
+    return _qualityHistory.key(
+        node, uri.toString(), _data.client.testTimeoutMs);
+  }
+
   int _page = 0;
   int _settingsSection = 0;
   bool _navCollapsed = false;
@@ -666,8 +681,10 @@ class _ShellPageState extends State<ShellPage>
     if (_busy || _profileChanging || _settingsBusy) return;
     final request = await showDialog<ImportRequest>(
         context: context,
-        builder: (context) =>
-            ImportDialog(io: widget.importIo, initialMethod: initialMethod));
+        builder: (context) => ImportDialog(
+            canPreview: true,
+            io: widget.importIo,
+            initialMethod: initialMethod));
     if (request == null ||
         !mounted ||
         _busy ||
@@ -686,7 +703,8 @@ class _ShellPageState extends State<ShellPage>
       for (final line in lines) {
         if (isSubscriptionUrl(line)) {
           await _addSubscription(
-              request.name.isEmpty ? Uri.parse(line).host : request.name, line);
+              request.name.isEmpty ? Uri.parse(line).host : request.name, line,
+              preview: request.preview);
           if (_importCancelling || !mounted) return;
         } else {
           remaining.add(line);
@@ -694,10 +712,15 @@ class _ShellPageState extends State<ShellPage>
       }
       if (remaining.isNotEmpty)
         await _addSubscription(request.name.isEmpty ? '本地导入' : request.name, '',
-            content: remaining.join('\n'), manual: true);
+            content: remaining.join('\n'),
+            manual: true,
+            preview: request.preview);
     } else {
       await _addSubscription(request.name.isEmpty ? '本地导入' : request.name, '',
-          content: text, localPath: request.localPath, manual: request.manual);
+          content: text,
+          localPath: request.localPath,
+          manual: request.manual,
+          preview: request.preview);
     }
   }
 
@@ -835,8 +858,53 @@ class _ShellPageState extends State<ShellPage>
     return false;
   }
 
+  Future<void> _previewSource(
+      String name, List<NodeInfo> fresh, List<String> skipped,
+      {String? sourceId}) async {
+    if (!mounted || _importCancelling) throw const ImportCancelled();
+    final old = _data.nodes.where((n) => n.source == sourceId).toList();
+    final counts = subscriptionChanges(old, fresh);
+    final names = fresh.map((n) => n.name).toSet();
+    final overlaps = <String>{
+      for (final n in _data.nodes)
+        if (n.source != sourceId && names.contains(n.name))
+          '${n.name} · ${sourceLabel(n, _data.subscriptions)}'
+    };
+    final selected = _data.selected;
+    final losesExit = selected != null &&
+        selected.source == sourceId &&
+        restoredNodeIndex(selected, old, fresh) < 0;
+    final yes = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+                title: Text('仅节点预览 · $name'),
+                content: SingleChildScrollView(
+                    child: Text([
+                  '新增 ${counts.added}　更新 ${counts.changed}　移除 ${counts.removed}',
+                  if (losesExit) '当前出口将移除或无法唯一匹配，需要重新选择。',
+                  if (overlaps.isNotEmpty)
+                    '同名节点分别保留。已有来源：\n${overlaps.take(12).join("\n")}',
+                  if (skipped.isNotEmpty)
+                    redactDiagnostics(_skippedNote(skipped)),
+                  if (_running) '保存后需应用配置，新节点才进入运行内核。',
+                ].join('\n\n'))),
+                actions: [
+                  TextButton(
+                      onPressed: () => Navigator.pop(ctx),
+                      child: const Text('取消')),
+                  FilledButton(
+                      onPressed: () => Navigator.pop(ctx, true),
+                      child: const Text('确认保存'))
+                ]));
+    if (yes != true || !mounted || _importCancelling)
+      throw const ImportCancelled();
+  }
+
   Future<void> _addSubscription(String name, String url,
-      {String? content, String? localPath, bool manual = false}) async {
+      {String? content,
+      String? localPath,
+      bool manual = false,
+      bool preview = false}) async {
     final before = _data.copyWith();
     setState(() {
       _busy = true;
@@ -848,6 +916,7 @@ class _ShellPageState extends State<ShellPage>
     try {
       // 用户设定（2026-11-21）：订阅只导入节点，不再尝试识别来源规则 / DNS。
       final outcome = await _fetchParseExpand(url, content: content);
+      if (preview) await _previewSource(name, outcome.nodes, outcome.skipped);
       if (manual) {
         if (_importCancelling) throw const ImportCancelled();
         _importCommitting = true;
@@ -907,7 +976,8 @@ class _ShellPageState extends State<ShellPage>
     }
   }
 
-  Future<void> _updateSubscription(Subscription sub) async {
+  Future<void> _updateSubscription(Subscription sub,
+      {bool preview = false}) async {
     if (_busy || _profileChanging || _settingsBusy || _proxyActive) return;
     _lastSourceAttempt[sub.id] = DateTime.now();
     final before = _data.copyWith();
@@ -940,6 +1010,9 @@ class _ShellPageState extends State<ShellPage>
           outcome.failedGroups);
       fresh.addAll(retained);
       fresh = fresh.where(isIndependentSubscriptionNode).toList();
+      if (preview)
+        await _previewSource(sub.name, fresh, outcome.skipped,
+            sourceId: sub.id);
       setState(() {
         _data.nodes = [
           for (final n in _data.nodes)
@@ -2426,6 +2499,9 @@ class _ShellPageState extends State<ShellPage>
           onCreateChain: _createChainDialog,
           onMeasureNode: _measureNode,
           onQualitySample: _sampleNodeQuality,
+          qualityKey: _qualityKey,
+          qualityHistory: _qualityHistory,
+          qualityHost: Uri.tryParse(_data.client.testUrl)?.host,
         );
       case 3:
         page = SubscriptionsPage(
@@ -2435,7 +2511,7 @@ class _ShellPageState extends State<ShellPage>
           busy: _busy || _profileChanging || _settingsBusy,
           onAdd: _addSubscriptionDialog,
           onImportMethod: (method) => _importDialog(initialMethod: method),
-          onUpdate: _updateSubscription,
+          onUpdate: (sub) => _updateSubscription(sub, preview: true),
           onDelete: _deleteSubscription,
           onUpdateAll: _updateAllSubscriptions,
           onEdit: _editSubscription,
@@ -2482,6 +2558,25 @@ class _ShellPageState extends State<ShellPage>
             onTemplateRouting: _setTemplateRouting,
             activeProcesses: _activeProcesses(),
             onAddProcessRule: _addProcessRule,
+            onVerify: (name, processes, target) => showDialog<void>(
+                context: context,
+                builder: (ctx) => Dialog(
+                    child: SizedBox(
+                        width: 860,
+                        height: 540,
+                        child: Column(children: [
+                          ListTile(
+                              title: Text('$name · 验证实际出口'),
+                              subtitle: Text('当前规则出口 · $target'),
+                              trailing: CloseButton(
+                                  onPressed: () => Navigator.pop(ctx))),
+                          Expanded(
+                              child: ConnectionsPage(
+                                  monitor: _monitor,
+                                  running: _running,
+                                  compact: true,
+                                  processes: processes))
+                        ])))),
             onAppRoute: _setProcessRoutes);
       case 8:
         page = ToolboxPage(
@@ -2587,6 +2682,9 @@ class _ShellPageState extends State<ShellPage>
           onSystemProxyChanged: _busy ? null : _setSystemProxy,
           onModeChanged: _setMode,
           onQualitySample: _sampleNodeQuality,
+          qualityKey: _qualityKey,
+          qualityHistory: _qualityHistory,
+          qualityHost: Uri.tryParse(_data.client.testUrl)?.host,
           onConnections: () => setState(() => _page = 7),
           onMeasureSelected: () {
             final node = _data.selected;

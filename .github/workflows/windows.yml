@@ -189,12 +189,12 @@ jobs:
         shell: powershell
         run: |
           $assets = Join-Path $env:RUNNER_TEMP 'tokiboshi-upgrade-previous'
-          gh release download v0.1.2 --repo $env:GITHUB_REPOSITORY --pattern 'Tokiboshi-Setup-0.1.2.exe' --dir $assets
+          gh release download v0.1.3 --repo $env:GITHUB_REPOSITORY --pattern 'Tokiboshi-Setup-0.1.3.exe' --dir $assets
           if ($LASTEXITCODE -ne 0) { throw 'Could not download the previous installer' }
           $setup = (Get-ChildItem -Filter 'Tokiboshi-Setup-*.exe' | Select-Object -First 1).FullName
           $payload = (Resolve-Path 'build/windows/x64/runner/Release').Path
           $proof = Join-Path $env:RUNNER_TEMP 'tokiboshi-release-audit/installer-upgrade'
-          & ./installer/tests/upgrade-install.ps1 -Installer $setup -OldInstaller (Join-Path $assets 'Tokiboshi-Setup-0.1.2.exe') -Payload $payload -OutputDir $proof
+          & ./installer/tests/upgrade-install.ps1 -Installer $setup -OldInstaller (Join-Path $assets 'Tokiboshi-Setup-0.1.3.exe') -Payload $payload -OutputDir $proof
 
       - name: Record package checksums
         shell: pwsh

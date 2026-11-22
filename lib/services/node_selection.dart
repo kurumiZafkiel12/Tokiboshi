@@ -54,3 +54,31 @@ int restoredNodeIndex(
       oldSource.where((n) => !n.isPolicy && _endpoint(n) == endpoint).length;
   return located.length == 1 && old == 1 ? located.single.$1 : -1;
 }
+
+/// Pair identical entries first, then compare unambiguous endpoint changes.
+({int added, int changed, int removed}) subscriptionChanges(
+    List<NodeInfo> old, List<NodeInfo> fresh) {
+  final byContent = <(String, String, String), List<NodeInfo>>{};
+  for (final n in old) {
+    (byContent[(n.name, n.group, _content(n))] ??= []).add(n);
+  }
+  final added = <String, int>{}, removed = <String, int>{};
+  for (final n in fresh) {
+    final same = byContent[(n.name, n.group, _content(n))];
+    if (same != null && same.isNotEmpty) {
+      same.removeLast();
+      continue;
+    }
+    added.update(_endpoint(n), (v) => v + 1, ifAbsent: () => 1);
+  }
+  for (final n in byContent.values.expand((v) => v)) {
+    removed.update(_endpoint(n), (v) => v + 1, ifAbsent: () => 1);
+  }
+  final changed =
+      added.keys.where((k) => added[k] == 1 && removed[k] == 1).length;
+  return (
+    added: added.values.fold<int>(0, (a, b) => a + b) - changed,
+    changed: changed,
+    removed: removed.values.fold<int>(0, (a, b) => a + b) - changed
+  );
+}

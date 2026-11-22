@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import '../bridge/core_bridge.dart';
 import '../ui/design.dart';
+import '../services/quality_history.dart';
 import '../ui/node_widgets.dart';
 
 Future<void> showNodeQuality(BuildContext context, NodeInfo node,
-        Future<int?> Function(NodeInfo) measure) =>
+        Future<int?> Function(NodeInfo) measure,
+        {QualityHistory? history, String? historyKey, String? host}) =>
     showDialog<void>(
       context: context,
       builder: (context) => AlertDialog(
@@ -12,7 +14,12 @@ Future<void> showNodeQuality(BuildContext context, NodeInfo node,
         content: SizedBox(
             width: 500,
             child: SingleChildScrollView(
-              child: NodeQualityPanel(node: node, measure: measure),
+              child: NodeQualityPanel(
+                  node: node,
+                  measure: measure,
+                  history: history,
+                  historyKey: historyKey,
+                  host: host),
             )),
         actions: [
           TextButton(
@@ -25,7 +32,14 @@ Future<void> showNodeQuality(BuildContext context, NodeInfo node,
 
 class NodeQualityPanel extends StatefulWidget {
   const NodeQualityPanel(
-      {super.key, required this.node, required this.measure});
+      {super.key,
+      required this.node,
+      required this.measure,
+      this.history,
+      this.historyKey,
+      this.host});
+  final QualityHistory? history;
+  final String? historyKey, host;
   final NodeInfo node;
   final Future<int?> Function(NodeInfo) measure;
 
@@ -48,11 +62,26 @@ class _NodeQualityPanelState extends State<NodeQualityPanel> {
     }
   }
 
+  DateTime? _at;
+  bool _saveFailed = false;
+  @override
+  void initState() {
+    super.initState();
+    final key = widget.historyKey;
+    final last = key == null ? null : widget.history?.lookup(key);
+    if (last != null) {
+      _samples.addAll(last.samples);
+      _at = last.at;
+    }
+  }
+
   Future<void> _start() async {
     final run = ++_run;
     final node = widget.node;
     setState(() {
       _samples.clear();
+      _at = null;
+      _saveFailed = false;
       _busy = true;
     });
     try {
@@ -65,6 +94,15 @@ class _NodeQualityPanelState extends State<NodeQualityPanel> {
         }
         if (!mounted || run != _run) return;
         setState(() => _samples.add(delay));
+      }
+      final key = widget.historyKey;
+      _at = DateTime.now();
+      if (key != null) {
+        try {
+          await widget.history?.save(key, _samples);
+        } catch (_) {
+          if (mounted && run == _run) setState(() => _saveFailed = true);
+        }
       }
     } finally {
       if (mounted && run == _run) setState(() => _busy = false);
@@ -98,6 +136,10 @@ class _NodeQualityPanelState extends State<NodeQualityPanel> {
             RegionMark(widget.node),
             Text('节点质量 · ${nodeDisplayName(widget.node)}',
                 overflow: TextOverflow.ellipsis, maxLines: 1),
+            if (widget.host != null) Text('内核 URL 测试 · ${widget.host}'),
+            if (_at != null)
+              Text('最近测量 · ${_at!.toLocal().toString().split(".").first}'),
+            if (_saveFailed) const Text('历史记录保存失败'),
             if (_samples.isNotEmpty) ...[
               Tag('${delays.length}/${_samples.length} 成功',
                   color: delays.isEmpty ? danger : good),

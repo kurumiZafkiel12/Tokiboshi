@@ -172,6 +172,10 @@ void main() {
     await t.pumpAndSettle();
     fetcher.responses['https://fixture.example/root'] = 'plain';
     await t.tap(find.byTooltip('更新'));
+    await t.pump();
+    await t.pump(const Duration(milliseconds: 350));
+    expect(find.textContaining('仅节点预览'), findsOneWidget);
+    await t.tap(find.text('确认保存'));
     await t.pumpAndSettle();
     expect(store.data.subscriptions.single.profileJson, isNull);
     expect(store.data.subscriptions.single.profileState, 'nodes-only');

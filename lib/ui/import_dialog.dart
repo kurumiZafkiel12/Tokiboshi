@@ -11,15 +11,20 @@ class ImportRequest {
       this.name = '',
       this.localPath,
       this.forceUrl = false,
+      this.preview = false,
       this.manual = false});
   final String text, name;
   final String? localPath;
-  final bool forceUrl, manual;
+  final bool forceUrl, manual, preview;
 }
 
 class ImportDialog extends StatefulWidget {
   const ImportDialog(
-      {super.key, this.io = const ImportIo(), this.initialMethod = 'link'});
+      {super.key,
+      this.io = const ImportIo(),
+      this.initialMethod = 'link',
+      this.canPreview = false});
+  final bool canPreview;
   final ImportIo io;
   final String initialMethod;
   @override
@@ -154,7 +159,7 @@ class _ImportDialogState extends State<ImportDialog> {
     });
   }
 
-  void _submit() {
+  void _submit({bool preview = false}) {
     if (_submitted || _working) return;
     try {
       if (_method == 'file' && (_path == null || _fileContent == null))
@@ -176,6 +181,7 @@ class _ImportDialogState extends State<ImportDialog> {
           context,
           ImportRequest(
               text: text,
+              preview: preview,
               name: _name.text.trim(),
               localPath: _method == 'file' ? _path : null,
               manual: _method == 'custom',
@@ -264,7 +270,8 @@ class _ImportDialogState extends State<ImportDialog> {
                                               _fileContent = null;
                                               _text.clear();
                                             }),
-                                    icon: const Icon(Icons.qr_code_2, size: 19)),
+                                    icon:
+                                        const Icon(Icons.qr_code_2, size: 19)),
                                 IconButton(
                                     tooltip: '自定义节点 JSON',
                                     onPressed: _working
@@ -463,7 +470,8 @@ class _ImportDialogState extends State<ImportDialog> {
                                     minLines: 3,
                                     decoration: InputDecoration(
                                         labelText: '订阅 / 节点链接 / 配置内容（自动识别）',
-                                        hintText: 'https://example.com/subscription\nhy2://user@host:443#JP\n或直接粘贴 Clash YAML / sing-box JSON')),
+                                        hintText:
+                                            'https://example.com/subscription\nhy2://user@host:443#JP\n或直接粘贴 Clash YAML / sing-box JSON')),
                               ],
                               const SizedBox(height: 18),
                               if (_working) ...[
@@ -492,9 +500,16 @@ class _ImportDialogState extends State<ImportDialog> {
                               _working ? null : () => Navigator.pop(context),
                           child: const Text('取消')),
                       const SizedBox(width: 8),
+                      if (widget.canPreview)
+                        TextButton(
+                            onPressed:
+                                _working || _submitted ? null : () => _submit(),
+                            child: const Text('导入')),
                       FilledButton(
-                          onPressed: _working || _submitted ? null : _submit,
-                          child: const Text('导入'))
+                          onPressed: _working || _submitted
+                              ? null
+                              : () => _submit(preview: widget.canPreview),
+                          child: Text(widget.canPreview ? '预览并导入' : '导入'))
                     ]))
               ]))));
 }

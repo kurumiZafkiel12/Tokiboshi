@@ -10,7 +10,9 @@ class ConnectionsPage extends StatefulWidget {
     required this.monitor,
     required this.running,
     this.compact = false,
+    this.processes = const [],
   });
+  final List<String> processes;
   final RuntimeMonitor monitor;
   final bool running, compact;
   @override
@@ -64,6 +66,14 @@ class _ConnectionsPageState extends State<ConnectionsPage> {
           final base = _paused ? _snapshot : monitor.connections;
           final rows = base.where((r) {
             final m = r['metadata'] as Map? ?? {};
+            if (widget.processes.isNotEmpty &&
+                !['processPath', 'process'].any((k) {
+                  final exe = '${m[k] ?? ''}'
+                      .split(RegExp(r'[\\/]'))
+                      .last
+                      .toLowerCase();
+                  return widget.processes.any((p) => p.toLowerCase() == exe);
+                })) return false;
             if (_network.isNotEmpty &&
                 '${m['network']}'.toLowerCase() != _network) return false;
             return '${m['host']} ${m['destinationIP']} ${m['destinationPort']} ${m['processPath']} ${r['rule']} ${r['rulePayload']} ${r['chains']}'
@@ -112,15 +122,16 @@ class _ConnectionsPageState extends State<ConnectionsPage> {
                         style: Theme.of(context).textTheme.bodySmall,
                       ),
                     const SizedBox(width: 12),
-                    OutlinedButton(
-                      onPressed: widget.running &&
-                              monitor.available &&
-                              monitor.connections.isNotEmpty &&
-                              !_closing
-                          ? () => _close()
-                          : null,
-                      child: const Text('关闭全部'),
-                    ),
+                    if (widget.processes.isEmpty)
+                      OutlinedButton(
+                        onPressed: widget.running &&
+                                monitor.available &&
+                                monitor.connections.isNotEmpty &&
+                                !_closing
+                            ? () => _close()
+                            : null,
+                        child: const Text('关闭全部'),
+                      ),
                   ],
                 ),
                 const SizedBox(height: 12),
@@ -196,7 +207,11 @@ class _ConnectionsPageState extends State<ConnectionsPage> {
                         : !monitor.available && !_paused
                             ? EmptyView('控制器暂不可达', monitor.error ?? '正在等待请求数据')
                             : rows.isEmpty
-                                ? const EmptyView('没有匹配的连接', '请求会在应用产生流量时自动出现。')
+                                ? EmptyView(
+                                    '没有匹配的连接',
+                                    widget.processes.isEmpty
+                                        ? '请求会在应用产生流量时自动出现。'
+                                        : '等待软件产生可识别的新连接。内核未提供进程名的请求无法归属。')
                                 : widget.compact
                                     ? ListView.builder(
                                         itemCount: rows.length,

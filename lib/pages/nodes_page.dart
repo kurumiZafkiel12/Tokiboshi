@@ -8,6 +8,7 @@ import '../ui/preferences.dart';
 import '../ui/import_menu.dart';
 import '../ui/motion.dart';
 import 'node_quality_panel.dart';
+import '../services/quality_history.dart';
 
 class NodesPage extends StatefulWidget {
   const NodesPage(
@@ -26,6 +27,9 @@ class NodesPage extends StatefulWidget {
       this.onCreateChain,
       this.onMeasureNode,
       this.onQualitySample,
+      this.qualityHistory,
+      this.qualityKey,
+      this.qualityHost,
       this.onImportMethod,
       this.pendingNodes = const {}});
   final List<NodeInfo> nodes;
@@ -40,6 +44,9 @@ class NodesPage extends StatefulWidget {
   final VoidCallback? onCreateChain;
   final ValueChanged<NodeInfo>? onMeasureNode;
   final Future<int?> Function(NodeInfo)? onQualitySample;
+  final QualityHistory? qualityHistory;
+  final String? Function(NodeInfo)? qualityKey;
+  final String? qualityHost;
   final ValueChanged<String>? onImportMethod;
   @override
   State<NodesPage> createState() => _NodesPageState();
@@ -69,7 +76,10 @@ class _NodesPageState extends State<NodesPage> {
         onMeasure: widget.busy ? null : () => widget.onMeasureNode?.call(n),
         onQuality: !widget.running || widget.onQualitySample == null
             ? null
-            : () => showNodeQuality(context, n, widget.onQualitySample!),
+            : () => showNodeQuality(context, n, widget.onQualitySample!,
+                history: widget.qualityHistory,
+                historyKey: widget.qualityKey?.call(n),
+                host: widget.qualityHost),
         onDelete: widget.running || widget.busy ? null : () => _delete(index));
   }
 
@@ -174,7 +184,10 @@ class _NodesPageState extends State<NodesPage> {
                           alignment: Alignment.centerLeft,
                           child: TextButton.icon(
                             onPressed: () => showNodeQuality(
-                                context, selected, widget.onQualitySample!),
+                                context, selected, widget.onQualitySample!,
+                                history: widget.qualityHistory,
+                                historyKey: widget.qualityKey?.call(selected),
+                                host: widget.qualityHost),
                             icon: const Icon(Icons.speed, size: 17),
                             label:
                                 Row(mainAxisSize: MainAxisSize.min, children: [

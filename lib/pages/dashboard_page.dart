@@ -9,6 +9,7 @@ import '../ui/traffic_chart.dart';
 import '../ui/mechanical_clock.dart';
 import '../ui/node_widgets.dart';
 import 'node_quality_panel.dart';
+import '../services/quality_history.dart';
 
 class DashboardPage extends StatefulWidget {
   const DashboardPage(
@@ -39,6 +40,9 @@ class DashboardPage extends StatefulWidget {
       this.onSystemProxyChanged,
       this.onModeChanged,
       this.onQualitySample,
+      this.qualityHistory,
+      this.qualityKey,
+      this.qualityHost,
       this.onConnections,
       this.subscriptions = const [],
       this.monitor,
@@ -63,6 +67,9 @@ class DashboardPage extends StatefulWidget {
   final ValueChanged<bool>? onTunChanged, onSystemProxyChanged;
   final ValueChanged<String>? onModeChanged;
   final Future<int?> Function(NodeInfo)? onQualitySample;
+  final QualityHistory? qualityHistory;
+  final String? Function(NodeInfo)? qualityKey;
+  final String? qualityHost;
   final VoidCallback? onConnections;
   final List<Subscription> subscriptions;
   final RuntimeMonitor? monitor;
@@ -175,8 +182,8 @@ class _DashboardPageState extends State<DashboardPage> {
                         SizedBox(
                             key: const ValueKey('mechanical-clock'),
                             width: right,
-                            child: const MechanicalClock(
-                                size: 94, dashboard: true)),
+                            child: MechanicalClock(
+                                size: wide ? 132 : 76, dashboard: true)),
                         SizedBox(
                             key: ValueKey(order[1]),
                             width: left,
@@ -212,7 +219,10 @@ class _DashboardPageState extends State<DashboardPage> {
                 _link(
                     '测量 5 次 ↗',
                     node != null && sample != null && widget.running
-                        ? () => showNodeQuality(context, node, sample)
+                        ? () => showNodeQuality(context, node, sample,
+                            history: widget.qualityHistory,
+                            historyKey: widget.qualityKey?.call(node),
+                            host: widget.qualityHost)
                         : null)),
             if (node != null)
               Tooltip(

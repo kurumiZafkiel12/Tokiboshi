@@ -29,6 +29,7 @@ class RulesPage extends StatefulWidget {
       this.onTemplateRouting,
       this.activeProcesses = const [],
       this.onAddProcessRule,
+      this.onVerify,
       this.onAppRoute,
       this.appliedProcessPreferences,
       this.appliedProcessOutlets,
@@ -57,6 +58,7 @@ class RulesPage extends StatefulWidget {
   /// 活跃进程（来自内核连接元数据；内核未启用进程识别时为空）。
   final List<String> activeProcesses;
   final void Function(String process, String target)? onAddProcessRule;
+  final void Function(String, List<String>, String)? onVerify;
   final void Function(List<String> processes, String target)? onAppRoute;
   @override
   State<RulesPage> createState() => _RulesPageState();
@@ -293,6 +295,7 @@ class _RulesPageState extends State<RulesPage> {
                     Padding(
                         padding: const EdgeInsets.only(bottom: 14),
                         child: _PerAppRoutingCard(
+                          onVerify: widget.onVerify,
                           targets: widget.targets,
                           activeProcesses: widget.activeProcesses,
                           pending: pending,
@@ -628,6 +631,7 @@ class _PerAppRoutingCard extends StatefulWidget {
     required this.pending,
     required this.applied,
     required this.onAdd,
+    required this.onVerify,
     required this.onAppRoute,
     required this.busy,
   });
@@ -638,6 +642,7 @@ class _PerAppRoutingCard extends StatefulWidget {
   final Map<String, String>? applied;
   final bool busy;
   final void Function(String process, String target) onAdd;
+  final void Function(String, List<String>, String)? onVerify;
   final void Function(List<String> processes, String target)? onAppRoute;
   @override
   State<_PerAppRoutingCard> createState() => _PerAppRoutingCardState();
@@ -684,6 +689,14 @@ class _PerAppRoutingCardState extends State<_PerAppRoutingCard> {
             padding: const EdgeInsets.fromLTRB(24, 0, 24, 8),
             child: Text(app.processes.join(' · ')),
           ),
+          if (widget.onVerify != null)
+            ListTile(
+                leading: const Icon(Icons.route_outlined),
+                title: const Text('验证实际出口'),
+                onTap: () {
+                  Navigator.pop(context);
+                  widget.onVerify!(app.name, app.processes, _current(app));
+                }),
           SizedBox(
             width: 420,
             height: 280,

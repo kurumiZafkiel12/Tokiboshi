@@ -194,6 +194,10 @@ void main() {
     await t.tap(find.text('订阅').first);
     await t.pumpAndSettle();
     await t.tap(find.byTooltip('更新'));
+    await t.pump();
+    await t.pump(const Duration(milliseconds: 350));
+    expect(find.textContaining('仅节点预览'), findsOneWidget);
+    await t.tap(find.text('确认保存'));
     await t.pumpAndSettle();
     expect(store.data.nodes.length, 1);
     expect(fetch.requested.length, 2);

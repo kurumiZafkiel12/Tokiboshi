@@ -1,5 +1,5 @@
 import 'dart:math' as math;
-import 'dart:ui' show ImageFilter;
+import 'dart:ui' show ImageFilter, FontFeature;
 import 'package:flutter/material.dart';
 import 'preferences.dart';
 
@@ -9,6 +9,7 @@ const gold = Color(0xFFDBBB80);
 const good = Color(0xFF60DCB2);
 const danger = Color(0xFFF19592);
 const mono = TextStyle(
+    fontFeatures: [FontFeature.tabularFigures()],
     fontFamily: 'Cascadia Code',
     fontFamilyFallback: ['Consolas', 'monospace'],
     fontSize: 11);
@@ -124,36 +125,59 @@ ThemeData workbenchTheme(UiPreferences ui) {
 }
 
 /// Restricts the glass material to a small, clipped surface.
-class WorkbenchGlass extends StatelessWidget {
+class WorkbenchGlass extends StatefulWidget {
   const WorkbenchGlass({super.key, required this.child, this.radius = 0});
   final Widget child;
   final double radius;
 
   @override
+  State<WorkbenchGlass> createState() => _WorkbenchGlassState();
+}
+
+class _WorkbenchGlassState extends State<WorkbenchGlass> {
+  bool _hovered = false;
+  @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final light = scheme.brightness == Brightness.light;
-    final borderRadius = BorderRadius.circular(radius);
-    return ClipRRect(
-      borderRadius: borderRadius,
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 9, sigmaY: 9),
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-            borderRadius: borderRadius,
-            border: Border.all(color: scheme.outline.withValues(alpha: .85)),
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: light
-                  ? [const Color(0xF5FFF5F5), const Color(0xEDF8E9EC)]
-                  : [const Color(0xDE3B1D25), const Color(0xEC22161A)],
+    final borderRadius = BorderRadius.circular(widget.radius);
+    return MouseRegion(
+        onEnter: (_) => setState(() => _hovered = true),
+        onExit: (_) => setState(() => _hovered = false),
+        child: ClipRRect(
+          borderRadius: borderRadius,
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 9, sigmaY: 9),
+            child: AnimatedContainer(
+              duration: UiScope.duration(context, _hovered ? 160 : 240),
+              curve: Curves.easeOutCubic,
+              decoration: BoxDecoration(
+                borderRadius: borderRadius,
+                border: Border.all(
+                    color: _hovered
+                        ? scheme.primary.withValues(alpha: .52)
+                        : scheme.outline.withValues(alpha: .85)),
+                gradient: LinearGradient(
+                  begin:
+                      _hovered ? const Alignment(-.35, -1) : Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: light
+                      ? [
+                          const Color(0xE8FFF5F5),
+                          const Color(0xBFF8E9EC),
+                          const Color(0xE6FFFFFF)
+                        ]
+                      : [
+                          const Color(0xDA532832),
+                          const Color(0xB322161A),
+                          const Color(0xDA321820)
+                        ],
+                ),
+              ),
+              child: widget.child,
             ),
           ),
-          child: child,
-        ),
-      ),
-    );
+        ));
   }
 }
 
