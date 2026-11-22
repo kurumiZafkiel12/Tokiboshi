@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 import 'dart:ui' show lerpDouble;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'preferences.dart';
 import 'design.dart';
 
@@ -134,4 +135,92 @@ class _TrafficPainter extends CustomPainter {
       up != old.up ||
       color != old.color ||
       grid != old.grid;
+}
+
+/// A small readout for a shared sample index, available to mouse and keyboard.
+class TrafficReadout extends StatefulWidget {
+  const TrafficReadout(
+      {super.key,
+      required this.down,
+      required this.up,
+      this.throughput = false});
+  final List<double> down, up;
+  final bool throughput;
+  @override
+  State<TrafficReadout> createState() => _TrafficReadoutState();
+}
+
+class _TrafficReadoutState extends State<TrafficReadout> {
+  double? _cursor;
+  bool _focused = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final down = widget.down, up = widget.up;
+    final count = math.max(down.length, up.length);
+    String value(double raw) => widget.throughput
+        ? '${(raw * 8 / 1000000).toStringAsFixed(1)} Mb/s'
+        : '${bytesLabel(raw)}/s';
+    final max = [...down, ...up, 1024.0].reduce(math.max);
+    if (count == 0) return const Center(child: Text('暂无有效采样'));
+    final index = ((_cursor ?? 1.0) * (count - 1)).round();
+    String at(List<double> values) =>
+        index < values.length ? value(values[index]) : '—';
+    void nudge(int offset) => setState(() => _cursor =
+        ((index + offset).clamp(0, count - 1)) / math.max(1, count - 1));
+    final caption = '↓ ${at(down)}   ↑ ${at(up)}';
+    return CallbackShortcuts(
+      bindings: {
+        const SingleActivator(LogicalKeyboardKey.arrowLeft): () => nudge(-1),
+        const SingleActivator(LogicalKeyboardKey.arrowRight): () => nudge(1),
+      },
+      child: Focus(
+        onFocusChange: (value) => setState(() {
+          _focused = value;
+          if (!value) _cursor = null;
+        }),
+        child: Semantics(
+            label: '流量采样 $caption',
+            child: LayoutBuilder(
+              builder: (context, bounds) => MouseRegion(
+                onHover: (event) => setState(() => _cursor =
+                    (event.localPosition.dx / math.max(1, bounds.maxWidth))
+                        .clamp(0, 1)
+                        .toDouble()),
+                onExit: (_) => setState(() => _cursor = null),
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                      border: _focused
+                          ? Border.all(
+                              color: Theme.of(context).colorScheme.primary)
+                          : null,
+                      borderRadius: BorderRadius.circular(5)),
+                  child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Row(children: [
+                          Text(value(max),
+                              style: Theme.of(context).textTheme.labelSmall),
+                          const SizedBox(width: 7),
+                          Expanded(
+                              child: Text(caption,
+                                  textAlign: TextAlign.right,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style:
+                                      Theme.of(context).textTheme.labelSmall)),
+                        ]),
+                        Expanded(child: SmoothTrafficChart(down: down, up: up)),
+                        Text(
+                            _cursor == null
+                                ? '最近采样 → 当前'
+                                : '样本 ${index + 1}/$count',
+                            style: Theme.of(context).textTheme.labelSmall),
+                      ]),
+                ),
+              ),
+            )),
+      ),
+    );
+  }
 }

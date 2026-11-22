@@ -13,6 +13,14 @@ String sourceLabel(NodeInfo node, List<Subscription> subscriptions) {
 }
 
 String regionLabel(NodeInfo node) {
+  const regionalStart = 0x1f1e6;
+  final runes = node.name.runes.toList();
+  for (var i = 0; i + 1 < runes.length; i++) {
+    final first = runes[i] - regionalStart, second = runes[i + 1] - regionalStart;
+    if (first >= 0 && first < 26 && second >= 0 && second < 26) {
+      return String.fromCharCodes([first + 65, second + 65]);
+    }
+  }
   final name = node.name.toUpperCase();
   for (final pair in const [
     ('日本', 'JP'),
@@ -47,17 +55,19 @@ class RegionMark extends StatelessWidget {
   const RegionMark(this.node, {super.key});
   final NodeInfo node;
   @override
-  Widget build(BuildContext context) => Container(
-      width: 31,
-      height: 31,
-      alignment: Alignment.center,
+  Widget build(BuildContext context) {
+    final code = regionLabel(node);
+    final fallback = Text(code, style: mono.copyWith(
+      color: Theme.of(context).colorScheme.primary, fontSize: 11));
+    return Container(width: 31, height: 29, alignment: Alignment.center,
       decoration: BoxDecoration(
-          color: Theme.of(context).colorScheme.surfaceContainerHighest,
-          border: Border.all(color: Theme.of(context).dividerColor),
-          borderRadius: BorderRadius.circular(5)),
-      child: Text(regionLabel(node),
-          style: mono.copyWith(
-              color: Theme.of(context).colorScheme.primary, fontSize: 11)));
+        color: Theme.of(context).colorScheme.surfaceContainerHighest,
+        border: Border.all(color: Theme.of(context).dividerColor),
+        borderRadius: BorderRadius.circular(7)),
+      child: code.length != 2 ? fallback : Image.asset('assets/flags/$code.png',
+        width: 20, height: 20, semanticLabel: '地区 $code',
+        errorBuilder: (_, __, ___) => fallback));
+  }
 }
 
 class LatencyText extends StatelessWidget {
@@ -89,6 +99,7 @@ Future<void> showNodeDetails(BuildContext context, NodeInfo node,
         List<Subscription> subscriptions, Map<NodeInfo, int?> latency,
         {VoidCallback? onSelect,
         VoidCallback? onMeasure,
+        VoidCallback? onQuality,
         VoidCallback? onDelete}) =>
     showGeneralDialog<void>(
         context: context,
@@ -204,6 +215,11 @@ Future<void> showNodeDetails(BuildContext context, NodeInfo node,
                                         onMeasure();
                                       },
                                       child: const Text('测试延迟')),
+                                if (onQuality != null)
+                                  OutlinedButton(onPressed: () {
+                                    Navigator.pop(context);
+                                    onQuality();
+                                  }, child: const Text('查看节点质量')),
                                 if (onDelete != null)
                                   TextButton(
                                       onPressed: () {

@@ -151,7 +151,14 @@ void main() {
     expect(store.data.nodes, hasLength(1));
     expect(store.data.nodes.single.source, '');
 
-    // Add a subscription by URL from the subscriptions page.
+    await tester.tap(find.text('连接').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('启动代理'));
+    await tester.pumpAndSettle();
+    expect(bridge.running, isTrue);
+    final activeConfig = store.runtimeConfig;
+
+    // Add a subscription by URL while the connected core keeps its config.
     await tester.tap(find.text('订阅').first);
     await tester.pumpAndSettle();
     await tester.tap(find.text('添加订阅'));
@@ -172,10 +179,11 @@ void main() {
     expect(store.data.nodes, hasLength(3));
     expect(store.data.nodes.where((n) => n.source.isNotEmpty), hasLength(2));
 
-    // Back on the dashboard: start and stop.
+    expect(bridge.running, isTrue);
+    expect(store.runtimeConfig, activeConfig);
+
+    // Back on the dashboard: inspect the current session and stop.
     await tester.tap(find.text('连接').first);
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('启动代理'));
     await tester.pumpAndSettle();
     expect(find.text('内核已运行'), findsOneWidget);
     expect(bridge.running, isTrue);

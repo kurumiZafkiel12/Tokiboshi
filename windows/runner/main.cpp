@@ -5,8 +5,31 @@
 #include "flutter_window.h"
 #include "utils.h"
 
+namespace {
+bool Elevated() {
+  HANDLE token = nullptr;
+  if (!::OpenProcessToken(::GetCurrentProcess(), TOKEN_QUERY, &token)) {
+    return false;
+  }
+  TOKEN_ELEVATION elevation = {};
+  DWORD size = 0;
+  const bool ok = ::GetTokenInformation(token, TokenElevation, &elevation,
+                                        sizeof(elevation), &size) != FALSE;
+  ::CloseHandle(token);
+  return ok && elevation.TokenIsElevated != 0;
+}
+}  // namespace
+
 int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
                       _In_ wchar_t *command_line, _In_ int show_command) {
+  if (!Elevated()) {
+    ::MessageBoxW(nullptr, L"Tokiboshi requires an administrator token.",
+                  L"Tokiboshi", MB_OK | MB_ICONWARNING);
+    return ERROR_ELEVATION_REQUIRED;
+  }
+
+  ::SetEnvironmentVariableW(L"TOKIBOSHI_ELEVATED_RUNNER", L"1");
+
   // Attach to console when present (e.g., 'flutter run') or create a
   // new console when running with a debugger.
   if (!::AttachConsole(ATTACH_PARENT_PROCESS) && ::IsDebuggerPresent()) {

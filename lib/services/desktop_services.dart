@@ -2,17 +2,33 @@ import 'dart:convert';
 import 'dart:io';
 import 'desktop_settings.dart';
 
-/// Only current-user startup registration, never a service or scheduled admin task.
+/// Current-user logon registration for the desktop executable.
 class WindowsStartup {
   WindowsStartup(
       {Future<ProcessResult> Function(String, List<String>)? runner,
-      String? executable})
+      String? executable,
+      this.requestElevation = false})
       : _run = runner ?? ((p, a) => Process.run(p, a)),
         _executable = executable ?? Platform.resolvedExecutable;
   final Future<ProcessResult> Function(String, List<String>) _run;
   final String _executable;
+  final bool requestElevation;
+
+  String get _command {
+    if (!requestElevation) return '"$_executable" --autostart';
+    final path = _executable.replaceAll("'", "''");
+    final systemRoot = Platform.environment['SystemRoot'] ?? r'C:\Windows';
+    final shell =
+        '$systemRoot' r'\System32\WindowsPowerShell\v1.0\powershell.exe';
+    final script = "Start-Process '$path' '--autostart' -Verb RunAs";
+    return '"$shell" -NoProfile -WindowStyle Hidden -Command "$script"';
+  }
+
   static const key = r'HKCU\Software\Microsoft\Windows\CurrentVersion\Run';
   Future<void> setEnabled(bool enabled) async {
+    if (enabled && _command.length > 259) {
+      throw const FileSystemException('Windows 登录启动命令过长，请缩短安装路径');
+    }
     final result = await _run(
         'reg',
         enabled
@@ -24,7 +40,7 @@ class WindowsStartup {
                 '/t',
                 'REG_SZ',
                 '/d',
-                '"$_executable" --autostart',
+                _command,
                 '/f'
               ]
             : ['delete', key, '/v', 'Tokiboshi', '/f']);
@@ -41,7 +57,7 @@ class WindowsStartup {
     if (result.exitCode == 1) return false;
     if (result.exitCode != 0) throw const FileSystemException('无法读取自启状态');
     final lines = result.stdout.toString();
-    return lines.contains('"$_executable" --autostart');
+    return lines.contains(_command);
   }
 }
 

@@ -1,3 +1,4 @@
+import 'routing_targets.dart';
 import 'dart:convert';
 import 'dart:io';
 
@@ -118,12 +119,17 @@ String applyTemplateRouting(String configJson, Map<String, String> settings,
     final rs = rule['rule_set'];
     if (rs is List) {
       if (rs.contains('geosite-category-ads-all')) return 'ads';
-      if (rs.contains('geosite-cn')) return 'cn';
+      if (rs.contains('geosite-cn') || rs.contains('geoip-cn')) return 'cn';
     }
     if (rule['ip_is_private'] != null) return 'private';
     return null;
   }
 
+  final outbounds = (config['outbounds'] as List? ?? const [])
+      .whereType<Map>()
+      .map((row) => row['tag'])
+      .whereType<String>()
+      .toSet();
   final out = <dynamic>[];
   for (final raw in rules) {
     if (raw is! Map) {
@@ -142,11 +148,77 @@ String applyTemplateRouting(String configJson, Map<String, String> settings,
       rule.remove('outbound');
       rule['action'] = 'reject';
     } else if (setting.isNotEmpty && setting != 'default') {
-      rule.remove('action');
-      rule['outbound'] = tagByName[setting] ?? setting;
+      applyRouteTarget(rule, setting, tagByName, outbounds);
     }
     out.add(rule);
   }
   route['rules'] = out;
   return jsonEncode(config);
+}
+
+const serviceRuleNames = {
+  'geosite-netflix': 'Netflix',
+  'geosite-disney': 'Disney+',
+  'geosite-youtube': 'YouTube',
+  'geosite-hbo': 'HBO / Max',
+  'geosite-openai': 'OpenAI',
+  'geosite-anthropic': 'Claude',
+  'geosite-gemini': 'Gemini',
+  'geosite-bing': 'Bing',
+  'geosite-telegram': 'Telegram',
+  'geosite-twitter': 'X / Twitter',
+  'geosite-apple': 'Apple',
+  'geosite-microsoft': 'Microsoft',
+  'geosite-steam': 'Steam',
+  'geosite-geolocation-!cn': '非中国大陆站点',
+};
+
+String applyServiceRouting(String raw, Map<String, String> settings,
+    Map<String, String> targets, List<RuleResource> resources, String dataDir) {
+  final selected = resources.where((resource) {
+    final target = settings[resource.tag];
+    return serviceRuleNames.containsKey(resource.tag) &&
+        target != null &&
+        target != 'off' &&
+        File(resource.path(dataDir)).existsSync();
+  }).toList();
+  if (selected.isEmpty) return raw;
+  final root = jsonDecode(raw) as Map<String, dynamic>;
+  final route = root['route'] as Map<String, dynamic>;
+  final sets = List.of(route['rule_set'] as List? ?? const []);
+  final used = sets.whereType<Map>().map((entry) => entry['tag']).toSet();
+  final outbounds = (root['outbounds'] as List? ?? const [])
+      .whereType<Map>()
+      .map((entry) => entry['tag'])
+      .whereType<String>()
+      .toSet();
+  final rules = List.of(route['rules'] as List? ?? const []);
+  final priority = <Map<String, dynamic>>[];
+  for (final resource in selected) {
+    var tag = 'tokiboshi-override-${resource.tag}';
+    while (!used.add(tag)) {
+      tag += '-local';
+    }
+    sets.add({
+      'type': 'local',
+      'tag': tag,
+      'format': 'binary',
+      'path': resource.path(dataDir)
+    });
+    final setting = settings[resource.tag]!;
+    final rule = <String, dynamic>{
+      'rule_set': [tag]
+    };
+    applyRouteTarget(
+        rule, setting == 'default' ? 'proxy' : setting, targets, outbounds);
+    priority.add(rule);
+  }
+  final index = rules.indexWhere((r) =>
+      r is! Map ||
+      (!r.containsKey('clash_mode') &&
+          !const {'sniff', 'hijack-dns'}.contains(r['action'])));
+  rules.insertAll(index < 0 ? rules.length : index, priority);
+  route['rules'] = rules;
+  route['rule_set'] = sets;
+  return jsonEncode(root);
 }

@@ -1,7 +1,6 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import '../bridge/core_bridge.dart';
-import '../app_version.dart';
 import '../services/store.dart';
 import '../ui/design.dart';
 import '../ui/preferences.dart';
@@ -9,6 +8,7 @@ import '../ui/runtime.dart';
 import '../ui/motion.dart';
 import '../ui/traffic_chart.dart';
 import '../ui/mechanical_clock.dart';
+import '../ui/node_widgets.dart';
 
 class DashboardPage extends StatefulWidget {
   const DashboardPage(
@@ -29,6 +29,9 @@ class DashboardPage extends StatefulWidget {
       this.lastExit,
       this.clashMode,
       this.onRestart,
+      this.onPickNode,
+      this.onCancelConnect,
+      this.controlsBlocked = false,
       this.onOpenPanel,
       this.tun = false,
       this.onTunChanged,
@@ -50,6 +53,8 @@ class DashboardPage extends StatefulWidget {
   final String? coreVersion, lastExit, clashMode, failure;
   final VoidCallback onToggle, onMeasureSelected;
   final VoidCallback? onRestart, onOpenPanel, onSubscriptions, onLogs;
+  final VoidCallback? onPickNode, onCancelConnect;
+  final bool controlsBlocked;
   final ValueChanged<Subscription>? onUpdate;
   final ValueChanged<bool>? onTunChanged, onSystemProxyChanged;
   final ValueChanged<String>? onModeChanged;
@@ -89,154 +94,260 @@ class _DashboardPageState extends State<DashboardPage> {
   Widget build(BuildContext context) {
     final monitor = widget.monitor;
     return ListenableBuilder(
-        listenable: monitor ?? const AlwaysStoppedAnimation(0),
-        builder: (context, _) => LayoutBuilder(builder: (context, c) {
-              final narrow = c.maxWidth < 650;
-              final ui = UiScope.of(context);
-              final modules = <String, Widget>{
-                'status': _status(context),
-                'traffic': _traffic(context),
-                'profile': _profile(context),
-                'runtime': _runtime(context)
-              };
-              // 机械钟主题模块（可折叠）：宽屏放右侧独立列，窄屏移到下方。
-              // 注意：卡片宽度的 LayoutBuilder 在 Expanded 内部（见下方布局）。
-              final clockModule = Column(children: [
-                Row(children: [
-                  Text('主题钟',
-                      style: TextStyle(
-                          fontSize: 12,
-                          color: Theme.of(context).colorScheme.onSurfaceVariant)),
-                  const Spacer(),
-                  TextButton(
-                      onPressed: () =>
-                          setState(() => _clockOpen = !_clockOpen),
-                      child: Text(_clockOpen ? '折叠' : '展开')),
+      listenable: monitor ?? const AlwaysStoppedAnimation(0),
+      builder: (context, _) => LayoutBuilder(builder: (context, bounds) {
+        final ui = UiScope.of(context);
+        final wide = bounds.maxWidth >= 980 &&
+            MediaQuery.textScalerOf(context).scale(14) <= 17;
+        final modules = <String, Widget>{
+          'traffic': _traffic(context),
+          'profile': _profile(context),
+          'runtime': _runtime(context),
+        };
+        final order = [
+          for (final key in ui.order)
+            if (modules.containsKey(key)) key,
+        ];
+        final details = [
+          for (final key in order)
+            Padding(
+                padding: const EdgeInsets.only(bottom: 14),
+                child: MotionEntrance(
+                    key: ValueKey(key),
+                    order: order.indexOf(key),
+                    child: _editable(key, modules[key]!))),
+        ];
+        final clock = Panel(
+            padding: const EdgeInsets.all(9),
+            child: Column(children: [
+              Row(children: [
+                const SizedBox(width: 8),
+                const Expanded(child: Text('主题钟')),
+                TextButton(
+                    onPressed: () => setState(() => _clockOpen = !_clockOpen),
+                    child: Text(_clockOpen ? '折叠' : '展开')),
+              ]),
+              if (_clockOpen)
+                const MechanicalClock(size: 200, initiallyOpen: true),
+            ]));
+        return SingleChildScrollView(
+          padding: EdgeInsets.fromLTRB(wide ? 26 : 17, 17, wide ? 26 : 17, 22),
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            Row(children: [
+              Expanded(
+                  child: Text('连接工作台',
+                      style: Theme.of(context)
+                          .textTheme
+                          .headlineSmall
+                          ?.copyWith(fontWeight: FontWeight.w600))),
+              if (_editing)
+                TextButton(
+                    onPressed: () => UiScope.change(
+                        context,
+                        ui.copyWith(order: const [
+                          'status',
+                          'traffic',
+                          'profile',
+                          'runtime'
+                        ])),
+                    child: const Text('恢复布局')),
+              OutlinedButton(
+                  onPressed: () => setState(() => _editing = !_editing),
+                  child: Text(_editing ? '完成调整' : '调整组件')),
+            ]),
+            const SizedBox(height: 12),
+            if (wide)
+              Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Expanded(child: _hero(context)),
+                const SizedBox(width: 12),
+                SizedBox(width: 226, child: clock),
+              ])
+            else
+              _hero(context),
+            const SizedBox(height: 11),
+            _metricBand(context),
+            const SizedBox(height: 12),
+            if (wide)
+              Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Expanded(flex: 5, child: details.first),
+                const SizedBox(width: 13),
+                Expanded(
+                    flex: 4,
+                    child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: details.skip(1).toList())),
+              ])
+            else ...[
+              ...details,
+              clock,
+            ],
+          ]),
+        );
+      }),
+    );
+  }
+
+  Widget _hero(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    final error = widget.failure != null && !widget.running && !widget.busy;
+    final title = widget.busy
+        ? '正在准备代理'
+        : widget.running
+            ? '内核已运行'
+            : error
+                ? '连接失败'
+                : '代理已停止';
+    final hint = widget.busy
+        ? '准备配置与本地控制器'
+        : error
+            ? widget.failure!
+            : widget.running
+                ? (widget.tun
+                    ? 'TUN 网卡已启用'
+                    : widget.systemProxy
+                        ? '系统代理已启用'
+                        : '按应用代理设置接入')
+                : widget.selected == null
+                    ? '导入订阅后选择出口'
+                    : '当前出口已保留';
+    final color = error
+        ? colors.error
+        : widget.running
+            ? good
+            : colors.onSurfaceVariant;
+    final node = widget.selected;
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(23),
+          border: Border.all(color: colors.primary.withValues(alpha: .32)),
+          gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                Color.alphaBlend(
+                    colors.primary.withValues(alpha: .13), colors.surface),
+                colors.surface,
+                Color.alphaBlend(
+                    colors.primary.withValues(alpha: .09), colors.surface)
+              ])),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        LayoutBuilder(builder: (context, bounds) {
+          final status =
+              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            StatusDot('代理状态', color: color),
+            const SizedBox(height: 4),
+            Text(title, style: Theme.of(context).textTheme.headlineSmall),
+            Text(hint,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.bodySmall),
+            const SizedBox(height: 9),
+            FilledButton(
+                onPressed: widget.controlsBlocked
+                    ? null
+                    : widget.busy
+                        ? widget.onCancelConnect
+                        : widget.onToggle,
+                child: Text(widget.busy
+                    ? '取消连接'
+                    : widget.running
+                        ? '停止代理'
+                        : '启动代理')),
+          ]);
+          final outlet =
+              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('当前出口', style: Theme.of(context).textTheme.labelMedium),
+            const SizedBox(height: 4),
+            Row(children: [
+              if (node != null) ...[RegionMark(node), const SizedBox(width: 7)],
+              Expanded(
+                  child: InkWell(
+                      onTap: widget.controlsBlocked ? null : widget.onPickNode,
+                      child: Text(node?.name ?? '未选择节点',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context).textTheme.titleMedium))),
+            ]),
+            if (node != null)
+              Text(sourceLabel(node, widget.subscriptions),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.bodySmall),
+            Wrap(
+                spacing: 8,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  if (widget.onPickNode != null)
+                    TextButton(
+                        onPressed:
+                            widget.controlsBlocked ? null : widget.onPickNode,
+                        child: const Text('选择节点')),
+                  if (node != null)
+                    TextButton(
+                        onPressed:
+                            widget.busy ? null : widget.onMeasureSelected,
+                        child: Text(widget.selectedLatency == null
+                            ? widget.selectedMeasured
+                                ? '测速超时 · 重测'
+                                : '测量延迟'
+                            : '${widget.selectedLatency} ms · 重测')),
                 ]),
-                MechanicalClock(
-                    size: narrow ? 232 : 236, initiallyOpen: _clockOpen),
-              ]);
-              return SingleChildScrollView(
-                  padding: EdgeInsets.fromLTRB(
-                      narrow ? 16 : 22, 20, narrow ? 16 : 22, 18),
+          ]);
+          if (bounds.maxWidth < 450 ||
+              MediaQuery.textScalerOf(context).scale(14) > 17) {
+            return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [status, const Divider(height: 18), outlet]);
+          }
+          return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Expanded(child: status),
+            const SizedBox(width: 22),
+            Expanded(child: outlet),
+          ]);
+        }),
+        const Divider(height: 14),
+        _controls(context),
+      ]),
+    );
+  }
+
+  Widget _metricBand(BuildContext context) {
+    final monitor = widget.monitor;
+    final ready = widget.running && monitor?.available == true;
+    final metrics = [
+      ('↓ 下载', ready ? '${bytesLabel(monitor!.downSpeed)}/s' : '—'),
+      ('↑ 上传', ready ? '${bytesLabel(monitor!.upSpeed)}/s' : '—'),
+      ('活动连接', ready ? '${monitor!.connections.length} 条' : '—'),
+      ('会话用量', ready ? bytesLabel(monitor!.download + monitor.upload) : '—'),
+    ];
+    return Panel(
+        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
+        child: LayoutBuilder(builder: (context, bounds) {
+          final columns = bounds.maxWidth < 420 ||
+                  MediaQuery.textScalerOf(context).scale(14) > 17
+              ? 2
+              : 4;
+          return Wrap(runSpacing: 8, children: [
+            for (final (label, value) in metrics)
+              SizedBox(
+                  width: bounds.maxWidth / columns,
                   child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Row(children: [
-                          const Expanded(
-                              child: Text('我的工作台',
-                                  style: TextStyle(
-                                      fontSize: 23,
-                                      height: 1.3,
-                                      fontWeight: FontWeight.w600,
-                                      letterSpacing: -.6))),
-                          Text('WORKSPACE / $kAppVersion',
-                              style: mono.copyWith(
-                                  fontSize: 9,
-                                  color: Theme.of(context)
-                                      .colorScheme
-                                      .onSurfaceVariant))
-                        ]),
-                        const SizedBox(height: 12),
-                        Row(children: [
-                          Expanded(
-                              child: Text('查看当前出口、系统接管与实时流量',
-                                  style:
-                                      Theme.of(context).textTheme.bodySmall)),
-                          if (_editing)
-                            TextButton(
-                                onPressed: () => UiScope.change(
-                                    context,
-                                    ui.copyWith(order: const [
-                                      'status',
-                                      'traffic',
-                                      'profile',
-                                      'runtime'
-                                    ])),
-                                child: const Text('恢复布局')),
-                          OutlinedButton(
-                              onPressed: () =>
-                                  setState(() => _editing = !_editing),
-                              child: Text(_editing ? '完成调整' : '调整组件'))
-                        ]),
-                        const SizedBox(height: 12),
-                        _controls(context),
-                        const SizedBox(height: 16),
-                        narrow
-                            ? LayoutBuilder(builder: (context, grid) {
-                                return Column(children: [
-                                  SizedBox(
-                                      height: 918,
-                                      child: Stack(children: [
-                                        for (final key in ui.order)
-                                          AnimatedPositioned(
-                                            key: ValueKey('position-$key'),
-                                            duration:
-                                                UiScope.duration(context, 350),
-                                            curve: Curves.easeOutCubic,
-                                            left: ui.order.indexOf(key) *
-                                                (grid.maxWidth + 14),
-                                            top: ui.order.indexOf(key) * 234.0,
-                                            width: grid.maxWidth,
-                                            height: 222,
-                                            child: MotionEntrance(
-                                                order: ui.order.indexOf(key),
-                                                child: MotionHover(
-                                                    lift: true,
-                                                    child: _editable(
-                                                        key, modules[key]!))),
-                                          )
-                                      ])),
-                                  const SizedBox(height: 14),
-                                  clockModule,
-                                ]);
-                              })
-                            : Row(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Expanded(
-                                    child: LayoutBuilder(
-                                        builder: (context, grid) {
-                                      final width = (grid.maxWidth - 14) / 2;
-                                      return SizedBox(
-                                          height: 458,
-                                          child: Stack(children: [
-                                            for (final key in ui.order)
-                                              AnimatedPositioned(
-                                                key: ValueKey('position-$key'),
-                                                duration: UiScope.duration(
-                                                    context, 350),
-                                                curve: Curves.easeOutCubic,
-                                                left: ui.order.indexOf(key) %
-                                                        2 *
-                                                    (width + 14),
-                                                top: (ui.order.indexOf(key) ~/
-                                                        2) *
-                                                    234.0,
-                                                width: width,
-                                                height: 222,
-                                                child: MotionEntrance(
-                                                    order: ui.order
-                                                        .indexOf(key),
-                                                    child: MotionHover(
-                                                        lift: true,
-                                                        child: _editable(key,
-                                                            modules[key]!))),
-                                              )
-                                          ]));
-                                    }),
-                                  ),
-                                  const SizedBox(width: 16),
-                                  SizedBox(width: 268, child: clockModule),
-                                ]),
-                        if (_editing)
-                          Padding(
-                              padding: const EdgeInsets.only(top: 8),
-                              child: Text('拖动组件，或用箭头调整。状态组件固定在左上。',
-                                  style:
-                                      Theme.of(context).textTheme.bodySmall)),
-                      ]));
-            }));
+                        Text(label,
+                            style: Theme.of(context).textTheme.labelMedium),
+                        Text(value,
+                            style: Theme.of(context)
+                                .textTheme
+                                .titleMedium
+                                ?.copyWith(
+                                    fontFeatures: mono.fontFeatures,
+                                    fontWeight: FontWeight.w600)),
+                      ])),
+          ]);
+        }));
   }
 
   Widget _editable(String id, Widget panel) {
@@ -299,163 +410,8 @@ class _DashboardPageState extends State<DashboardPage> {
                     fontSize: 13, fontWeight: FontWeight.w600))),
         trailing
       ]));
-  Widget _status(BuildContext context) {
-    final failed = widget.failure != null && !widget.running && !widget.busy;
-    final color = failed
-        ? Theme.of(context).colorScheme.error
-        : widget.running
-            ? good
-            : Theme.of(context).colorScheme.onSurfaceVariant;
-    final duration = widget.monitor?.startedAt == null
-        ? null
-        : DateTime.now().difference(widget.monitor!.startedAt!);
-    final uptime = duration == null
-        ? '—'
-        : '${duration.inHours.toString().padLeft(2, '0')}:${(duration.inMinutes % 60).toString().padLeft(2, '0')}:${(duration.inSeconds % 60).toString().padLeft(2, '0')}';
-    return SizedBox(
-        height: 220,
-        child: ClipRRect(
-            borderRadius: BorderRadius.circular(12),
-            child: Stack(fit: StackFit.expand, children: [
-              Panel(accent: widget.running, child: const SizedBox()),
-              Positioned.fill(child: FlowLines(active: widget.running)),
-              if (UiScope.of(context).character)
-                Positioned(
-                    left: 7,
-                    top: 7,
-                    child: CustomPaint(
-                        size: const Size(14, 7),
-                        painter: _CornerPainter(gold.withValues(alpha: .4)))),
-              Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        _title(
-                            '连接状态',
-                            Text('LOCAL SESSION',
-                                style: mono.copyWith(
-                                    fontSize: 9,
-                                    color: Theme.of(context)
-                                        .colorScheme
-                                        .onSurfaceVariant))),
-                        StatusDot(
-                            widget.busy
-                                ? (widget.running
-                                    ? 'DISCONNECTING'
-                                    : 'CONNECTING')
-                                : failed
-                                    ? 'CONNECTION FAILED'
-                                    : widget.running
-                                        ? 'CORE RUNNING'
-                                        : 'CORE STOPPED',
-                            color: color),
-                        const SizedBox(height: 5),
-                        Text(
-                            widget.busy
-                                ? (widget.running ? '正在断开' : '正在连接')
-                                : failed
-                                    ? '连接失败'
-                                    : widget.running
-                                        ? '内核已运行'
-                                        : '未连接',
-                            style: const TextStyle(
-                                fontSize: 27,
-                                fontWeight: FontWeight.w500,
-                                height: 1.25)),
-                        const SizedBox(height: 5),
-                        Text(
-                            widget.busy
-                                ? (widget.running
-                                    ? '正在停止内核并恢复系统代理。'
-                                    : '正在准备内核与配置，请稍候。')
-                                : failed
-                                    ? '请查看错误详情或日志，再重试连接。'
-                                    : widget.selected == null
-                                        ? '导入订阅，选择你的第一个出口节点。'
-                                        : widget.running
-                                            ? '${widget.tun ? 'TUN 已建立' : widget.systemProxy ? '系统代理已启用' : '手动代理'} · 出口连通性以测试结果为准'
-                                            : '节点已选好，可以启动。',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: Theme.of(context).textTheme.bodySmall),
-                        const Spacer(),
-                        const Divider(height: 14),
-                        Row(children: [
-                          Expanded(
-                              child: StatusDot(
-                                  widget.selectedMeasured
-                                      ? widget.selectedLatency == null
-                                          ? (widget.running
-                                              ? '连通性测试超时'
-                                              : 'TCP 端口探测失败')
-                                          : '${widget.running ? '连通性' : 'TCP 端口'} ${widget.selectedLatency} ms'
-                                      : (widget.running
-                                          ? '连通性未测试'
-                                          : '未测试 · 连接后可测出口'),
-                                  color: !widget.selectedMeasured
-                                      ? Theme.of(context)
-                                          .colorScheme
-                                          .onSurfaceVariant
-                                      : widget.selectedLatency == null
-                                          ? danger
-                                          : widget.running
-                                              ? good
-                                              : gold)),
-                          Text(uptime,
-                              style: mono.copyWith(
-                                  color: Theme.of(context)
-                                      .colorScheme
-                                      .onSurfaceVariant))
-                        ])
-                      ]))
-            ])));
-  }
-
   Widget _traffic(BuildContext context) {
     final m = widget.monitor, ready = widget.running && (m?.available ?? false);
-    Widget speed(String label, double value) {
-      final text = bytesLabel(value);
-      final split = text.lastIndexOf(' ');
-      return Expanded(
-          child:
-              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text(label, style: Theme.of(context).textTheme.bodySmall),
-        const SizedBox(height: 5),
-        Row(
-            crossAxisAlignment: CrossAxisAlignment.baseline,
-            textBaseline: TextBaseline.alphabetic,
-            children: [
-              if (ready)
-                AnimatedMetric(
-                    value: value,
-                    format: (v) {
-                      final divisor = value >= 1073741824
-                          ? 1073741824.0
-                          : value >= 1048576
-                              ? 1048576.0
-                              : value >= 1024
-                                  ? 1024.0
-                                  : 1.0;
-                      return (v / divisor).toStringAsFixed(divisor >= 1048576
-                          ? 2
-                          : divisor >= 1024
-                              ? 1
-                              : 0);
-                    },
-                    style: const TextStyle(
-                        fontSize: 27, fontWeight: FontWeight.w400))
-              else
-                const Text('—',
-                    style:
-                        TextStyle(fontSize: 27, fontWeight: FontWeight.w400)),
-              const SizedBox(width: 4),
-              Text(ready ? '${text.substring(split + 1)}/s' : 'B/s',
-                  style: mono.copyWith(fontSize: 9))
-            ])
-      ]));
-    }
-
     return SizedBox(
         height: 220,
         child: Panel(
@@ -463,7 +419,7 @@ class _DashboardPageState extends State<DashboardPage> {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
               _title(
-                  '流量',
+                  '流量趋势 · 最近 60 次',
                   Tag(
                       !widget.running
                           ? '未连接'
@@ -471,13 +427,10 @@ class _DashboardPageState extends State<DashboardPage> {
                               ? '实时'
                               : '暂不可用',
                       color: ready ? good : null)),
-              Row(children: [
-                speed('↓ 下载', m?.downSpeed ?? 0),
-                speed('↑ 上传', m?.upSpeed ?? 0)
-              ]),
+              Wrap(spacing: 14, children: const [Text('↓ 下载'), Text('↑ 上传')]),
               const SizedBox(height: 10),
               Expanded(
-                  child: SmoothTrafficChart(
+                  child: TrafficReadout(
                       down: m?.downHistory ?? const [],
                       up: m?.upHistory ?? const [])),
               const SizedBox(height: 8),
@@ -624,50 +577,40 @@ class _DashboardPageState extends State<DashboardPage> {
                         style: mono.copyWith(fontSize: 11)))
               ]))
       ])));
-  Widget _controls(BuildContext context) => Panel(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      child: LayoutBuilder(builder: (context, c) {
+  Widget _controls(BuildContext context) =>
+      LayoutBuilder(builder: (context, constraints) {
         final mode = _modePicker(context);
-        final toggles = Row(children: [
-          Expanded(
-              child: Row(children: [
-            const Text('系统代理', style: TextStyle(fontSize: 12)),
-            const SizedBox(width: 5),
-            Transform.scale(
-                scale: .7,
-                child: Switch(
+        final toggles = Wrap(
+            spacing: 12,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              Row(mainAxisSize: MainAxisSize.min, children: [
+                const Text('系统代理'),
+                Switch(
                     value: widget.systemProxy,
-                    onChanged: widget.onSystemProxyChanged))
-          ])),
-          const Text('TUN 网卡', style: TextStyle(fontSize: 12)),
-          Transform.scale(
-              scale: .7,
-              child: Switch(
-                  value: widget.tun,
-                  onChanged: widget.busy ? null : widget.onTunChanged))
-        ]);
-        final title =
-            Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          const Text('代理设置',
-              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
-          const SizedBox(height: 3),
-          Text('规则 / 全局 / 直连', style: Theme.of(context).textTheme.bodySmall)
-        ]);
-        return c.maxWidth < 760
-            ? Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-                title,
-                const SizedBox(height: 10),
-                mode,
-                const SizedBox(height: 6),
-                toggles
-              ])
-            : Row(children: [
-                SizedBox(width: 145, child: title),
+                    onChanged: widget.controlsBlocked
+                        ? null
+                        : widget.onSystemProxyChanged),
+              ]),
+              Row(mainAxisSize: MainAxisSize.min, children: [
+                const Text('TUN 网卡'),
+                Switch(
+                    value: widget.tun,
+                    onChanged: widget.busy || widget.controlsBlocked
+                        ? null
+                        : widget.onTunChanged),
+              ]),
+            ]);
+        return constraints.maxWidth >= 565
+            ? Row(children: [
                 Expanded(child: mode),
                 const SizedBox(width: 18),
-                Expanded(child: toggles)
-              ]);
-      }));
+                toggles
+              ])
+            : Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [mode, toggles]);
+      });
   Widget _modePicker(BuildContext context) => Segments<String>(
       values: const {'Rule': '规则', 'Global': '全局', 'Direct': '直连'},
       value: widget.clashMode ?? 'Rule',
@@ -748,21 +691,4 @@ class Segments<T> extends StatelessWidget {
                                             : null))))))
             ])
           ])));
-}
-
-class _CornerPainter extends CustomPainter {
-  _CornerPainter(this.color);
-  final Color color;
-  @override
-  void paint(Canvas c, Size s) => c.drawPath(
-      Path()
-        ..moveTo(0, s.height)
-        ..lineTo(0, 0)
-        ..lineTo(s.width, 0),
-      Paint()
-        ..color = color
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = .7);
-  @override
-  bool shouldRepaint(_CornerPainter old) => old.color != color;
 }

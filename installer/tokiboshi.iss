@@ -54,7 +54,7 @@ Name: "{group}\Tokiboshi"; Filename: "{app}\tokiboshi.exe"
 Name: "{autodesktop}\Tokiboshi"; Filename: "{app}\tokiboshi.exe"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\tokiboshi.exe"; Description: "启动 Tokiboshi"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\tokiboshi.exe"; Description: "启动 Tokiboshi"; Flags: shellexec nowait postinstall skipifsilent
 
 [Code]
 var

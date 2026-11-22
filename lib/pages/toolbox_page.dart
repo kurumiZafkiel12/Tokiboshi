@@ -4,6 +4,9 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import '../services/network_checks.dart';
+import 'service_audit_panel.dart';
+import '../ui/design.dart';
+import '../ui/traffic_chart.dart';
 import '../services/system_proxy.dart';
 
 /// 工具箱页：下载/上传测速 + 延迟质量 + 目标连通 + 检测与修复。
@@ -18,6 +21,7 @@ class ToolboxPage extends StatefulWidget {
     required this.resources,
     this.proxyCredentials,
     this.systemProxy,
+    this.session,
   });
 
   final bool running;
@@ -26,6 +30,7 @@ class ToolboxPage extends StatefulWidget {
   final Widget networkInfo, resources;
   final (String, String)? proxyCredentials;
   final SystemProxy? systemProxy;
+  final Object? session;
 
   @override
   State<ToolboxPage> createState() => _ToolboxPageState();
@@ -47,7 +52,10 @@ class _ToolboxPageState extends State<ToolboxPage> {
   String? _latErr;
   int _dlProgress = 0; // 0-100
   int _dlSeconds = 10;
-  String _dlService = 'hetzner';
+  String _dlService = 'vultr';
+  HttpClient? _downloadClient;
+  final _speedSamples = <double>[];
+  final _downloadErrors = <String>[];
   String? _dlEndpoint;
 
   // 检测与修复（Hotaru 移植）：出口对照 + 系统代理残留。
@@ -78,9 +86,16 @@ class _ToolboxPageState extends State<ToolboxPage> {
   /// 下载测速服务：Cloudflare 对数据中心出口 IP 常见 403（TLS 指纹
   /// 层拦截，换 UA 无效），所以提供多服务并在所选端点失败时自动回退。
   static const dlServices = <String, (String, String)>{
-    'hetzner': ('Hetzner 德国', 'https://speed.hetzner.de/100MB.bin'),
-    'tele2': ('Tele2 荷兰', 'http://speedtest.tele2.net/100MB.zip'),
-    'cloudflare': ('Cloudflare', 'https://speed.cloudflare.com/__down?bytes=104857600'),
+    'vultr': ('Vultr 东京', 'https://hnd-jp-ping.vultr.com/vultr.com.100MB.bin'),
+    'cachefly': ('CacheFly', 'https://cachefly.cachefly.net/100mb.test'),
+    'google': (
+      'Google CDN',
+      'https://dl.google.com/dl/chrome/install/googlechromestandaloneenterprise64.msi'
+    ),
+    'cloudflare': (
+      'Cloudflare',
+      'https://speed.cloudflare.com/__down?bytes=25000000'
+    ),
   };
 
   /// 延迟质量探测端点：gstatic 204 无 bot 拦截、全球 anycast。
@@ -118,108 +133,144 @@ class _ToolboxPageState extends State<ToolboxPage> {
     return c;
   }
 
+  @override
+  void dispose() {
+    _downloadClient?.close(force: true);
+    super.dispose();
+  }
+
+  void _cancelDownload() {
+    _downloadClient?.close(force: true);
+    setState(() {
+      _downloadClient = null;
+      _dlBusy = false;
+      _dlErr = '已取消';
+    });
+  }
+
+  @override
+  void didUpdateWidget(ToolboxPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!widget.running ||
+        oldWidget.mixedPort != widget.mixedPort ||
+        oldWidget.session != widget.session) {
+      _downloadClient?.close(force: true);
+      _downloadClient = null;
+      if (_dlBusy) _dlErr = '内核或出口已变化，测试已结束';
+      _dlBusy = false;
+    }
+  }
+
   Future<void> _runDownload() async {
     if (_dlBusy) return;
+    final client = _proxyClient();
     setState(() {
+      _downloadClient = client;
       _dlBusy = true;
       _dlErr = null;
       _dlProgress = 0;
       _dlLive = null;
       _dlPeak = null;
+      _downMbps = null;
       _dlTotal = 0;
       _dlEndpoint = null;
+      _downloadErrors.clear();
+      _speedSamples.clear();
     });
-    final client = _proxyClient();
-    final watch = Stopwatch()..start();
-    var received = 0;
-    double? peak;
-    Object? lastError;
-    final tried = <String>[];
-    // 候选：用户所选端点优先，其余按表顺序自动回退（Cloudflare 对
-    // 数据中心出口 IP 常见 403——TLS 指纹层拦截，换 UA 无效）。
-    final order = [
-      _dlService,
-      for (final key in dlServices.keys)
-        if (key != _dlService) key,
-    ];
-    HttpClientResponse? resp;
-    String used = _dlService;
-    for (final key in order) {
-      final (name, url) = dlServices[key]!;
-      tried.add(name);
-      try {
-        final req = await client.getUrl(Uri.parse(url));
-        req.headers.set(HttpHeaders.userAgentHeader, speedUa);
-        final candidate =
-            await req.close().timeout(const Duration(seconds: 15));
-        if (candidate.statusCode != 200) {
-          throw HttpException('HTTP ${candidate.statusCode}');
-        }
-        resp = candidate;
-        used = key;
-        break;
-      } catch (e) {
-        lastError = e;
-      }
-    }
+    const budget = 48 * 1024 * 1024;
+    bool current() => mounted && identical(_downloadClient, client);
     try {
-      if (resp == null) {
-        throw HttpException(
-            '全部端点失败（${tried.join('、')}）：${lastError is HttpException ? lastError.message : '$lastError'}');
-      }
-      if (used != _dlService) {
-        setState(() => _dlEndpoint = '${dlServices[used]!.$1}（自动回退）');
-      } else {
-        setState(() => _dlEndpoint = dlServices[used]!.$1);
-      }
-      // 时长上限只对 Cloudflare（无限流式）生效；文件型端点（默认）
-      // 跑满 100MB 文件，进度按已下载量估算。
-      final seconds = used == 'cloudflare' ? _dlSeconds : 0;
-      // 瞬时速率：最近 1s 滑窗样本
-      final window = <int, int>{}; // elapsedMs -> cumulative bytes
-      await for (final chunk in resp.timeout(const Duration(seconds: 15))) {
-        received += chunk.length;
-        final ms = watch.elapsedMilliseconds;
-        window[ms] = received;
-        window.removeWhere((k, _) => k < ms - 1000);
-        if (window.isNotEmpty) {
-          final oldest = window.keys.reduce(math.min);
-          final instant =
-              (received - (window[oldest] ?? 0)) * 8 / ((ms - oldest) / 1000) / 1e6;
-          peak = math.max(peak ?? 0, instant);
-          if (mounted) {
-            setState(() {
-              _dlLive = instant;
-              _dlPeak = peak;
-              _dlTotal = received;
-              _dlProgress = used == 'cloudflare'
-                  ? (ms / (seconds * 1000)).clamp(0, 99).round()
-                  : (received / (100 * 1024 * 1024) * 100)
-                      .clamp(0, 99)
-                      .round();
-            });
+      HttpClientResponse? response;
+      final order = [
+        _dlService,
+        ...dlServices.keys.where((key) => key != _dlService)
+      ];
+      for (final key in order) {
+        final (name, url) = dlServices[key]!;
+        try {
+          final request = await client
+              .getUrl(Uri.parse(url))
+              .timeout(const Duration(seconds: 7));
+          request.followRedirects = false;
+          request.headers.set(HttpHeaders.userAgentHeader, speedUa);
+          if (key != 'cloudflare')
+            request.headers
+                .set(HttpHeaders.rangeHeader, 'bytes=0-${budget - 1}');
+          final candidate =
+              await request.close().timeout(const Duration(seconds: 7));
+          if (!current()) return;
+          if (candidate.statusCode != 200 && candidate.statusCode != 206) {
+            _downloadErrors.add('$name · HTTP ${candidate.statusCode}');
+            final stream = candidate.listen(null);
+            await stream.cancel();
+            continue;
           }
+          final contentType = candidate.headers.contentType?.mimeType;
+          if (contentType == 'text/html' || contentType == 'application/json') {
+            _downloadErrors.add('$name · 返回非测试文件');
+            final stream = candidate.listen(null);
+            await stream.cancel();
+            continue;
+          }
+          response = candidate;
+          setState(() => _dlEndpoint = key == _dlService ? name : '$name（回退）');
+          break;
+        } catch (_) {
+          if (!current()) return;
+          _downloadErrors.add('$name · 连接失败或超时');
         }
-        if (used == 'cloudflare' &&
-            watch.elapsed >= Duration(seconds: seconds)) break;
       }
-      final secs = watch.elapsedMilliseconds / 1000;
-      if (secs > 0.5 && received > 0) {
-        final mbps = received * 8 / secs / 1e6;
-        if (mounted)
+      if (response == null) {
+        if (current()) setState(() => _dlErr = '当前路径无法访问测速端点');
+        return;
+      }
+      final watch = Stopwatch()..start();
+      var received = 0, windowStart = 0, windowBytes = 0;
+      var peak = 0.0;
+      await for (final chunk in response.timeout(const Duration(seconds: 8))) {
+        if (!current()) return;
+        received += math.min(chunk.length, budget - received);
+        final elapsed = watch.elapsedMilliseconds;
+        if (elapsed - windowStart >= 400) {
+          final live =
+              (received - windowBytes) * 8 / (elapsed - windowStart) / 1000;
+          peak = math.max(peak, live);
+          windowStart = elapsed;
+          windowBytes = received;
           setState(() {
-            _downMbps = mbps;
-            _dlProgress = 100;
+            _dlLive = live;
+            _dlPeak = peak;
             _dlTotal = received;
+            _speedSamples.add(live);
+            _dlProgress = (math
+                        .max(elapsed / (_dlSeconds * 1000), received / budget)
+                        .clamp(0, .99) *
+                    100)
+                .round();
           });
-      } else {
-        if (mounted) setState(() => _dlErr = '样本不足（${received} B）');
+        }
+        if (received >= budget || elapsed >= _dlSeconds * 1000) break;
       }
-    } catch (e) {
-      if (mounted) setState(() => _dlErr = '$e');
+      if (!current()) return;
+      final elapsed = watch.elapsedMicroseconds;
+      setState(() {
+        _dlTotal = received;
+        if (elapsed >= 200000 && received > 0) {
+          _downMbps = received * 8 / elapsed;
+          _dlProgress = 100;
+        } else {
+          _dlErr = '样本不足（${_bytes(received)}）';
+        }
+      });
+    } catch (_) {
+      if (current()) setState(() => _dlErr = '读取测试数据失败或超时');
     } finally {
       client.close(force: true);
-      if (mounted) setState(() => _dlBusy = false);
+      if (current())
+        setState(() {
+          _downloadClient = null;
+          _dlBusy = false;
+        });
     }
   }
 
@@ -243,7 +294,8 @@ class _ToolboxPageState extends State<ToolboxPage> {
       await req.flush().timeout(const Duration(seconds: 12));
       final resp = await req.close().timeout(const Duration(seconds: 10));
       if (resp.statusCode == 403) {
-        throw HttpException('端点拒绝（403）：该出口 IP 被 Cloudflare 限制（上传端点暂无免费替代），换个节点再试');
+        throw HttpException(
+            '端点拒绝（403）：该出口 IP 被 Cloudflare 限制（上传端点暂无免费替代），换个节点再试');
       }
       if (resp.statusCode < 200 || resp.statusCode >= 300) {
         throw HttpException('HTTP ${resp.statusCode}');
@@ -326,7 +378,8 @@ class _ToolboxPageState extends State<ToolboxPage> {
         req.followRedirects = false;
         final resp = await req.close().timeout(const Duration(seconds: 8));
         await resp.drain<void>().timeout(const Duration(seconds: 5));
-        if (mounted) setState(() => _targetMs[entry.key] = watch.elapsedMilliseconds);
+        if (mounted)
+          setState(() => _targetMs[entry.key] = watch.elapsedMilliseconds);
       } catch (e) {
         if (mounted) setState(() => _targetErr[entry.key] = '$e');
       } finally {
@@ -347,11 +400,14 @@ class _ToolboxPageState extends State<ToolboxPage> {
     });
     try {
       final proxied = _proxyClient();
-      final direct = HttpClient()..connectionTimeout = const Duration(seconds: 6);
+      final direct = HttpClient()
+        ..connectionTimeout = const Duration(seconds: 6);
       final results = await Future.wait([
         queryExitIp(proxied),
         queryExitIp(direct),
-        probePhysicalIp().then((v) => v as InternetAddress?).catchError((_) => null),
+        probePhysicalIp()
+            .then((v) => v as InternetAddress?)
+            .catchError((_) => null),
       ]);
       final server = await widget.systemProxy?.readProxyServer();
       final pac = await readAutoConfigUrl();
@@ -421,8 +477,8 @@ class _ToolboxPageState extends State<ToolboxPage> {
   }
 
   Widget _matrix() {
-    final groups = <String,
-        List<(String, String, String, IconData, VoidCallback)>>{
+    final groups =
+        <String, List<(String, String, String, IconData, VoidCallback)>>{
       '测速': [
         (
           'speed',
@@ -439,6 +495,13 @@ class _ToolboxPageState extends State<ToolboxPage> {
           '出口泄漏对照 · 系统代理残留清理',
           Icons.health_and_safety_outlined,
           () => setState(() => _openTool = 'checks')
+        ),
+        (
+          'audit',
+          '服务解锁测试',
+          'Netflix、Disney+、YouTube、ChatGPT 等',
+          Icons.travel_explore,
+          () => setState(() => _openTool = 'audit')
         ),
       ],
       '网络': [
@@ -527,6 +590,7 @@ class _ToolboxPageState extends State<ToolboxPage> {
     final title = switch (tool) {
       'speed' => '网络测速',
       'checks' => '检测与修复',
+      'audit' => '服务解锁测试',
       'topology' => '网络信息',
       _ => '规则集资源',
     };
@@ -544,11 +608,11 @@ class _ToolboxPageState extends State<ToolboxPage> {
         'speed' => Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              _downloadDashboard(),
               _toolCard(
                 icon: Icons.cloud_download_outlined,
                 title: '下载测速',
-                sub:
-                    '${dlServices[_dlService]!.$1} 下载端点 · 经当前出口 · 失败自动切换服务',
+                sub: '${dlServices[_dlService]!.$1} 下载端点 · 经当前出口 · 失败自动切换服务',
                 busy: _dlBusy,
                 progress: _dlProgress,
                 value: _fmt(_dlBusy && _dlLive != null ? _dlLive : _downMbps),
@@ -557,6 +621,7 @@ class _ToolboxPageState extends State<ToolboxPage> {
                 detail: _speedDetail(),
                 extra: _durationSelector(),
                 onStart: _runDownload,
+                onCancel: _cancelDownload,
               ),
               const SizedBox(height: 12),
               _toolCard(
@@ -581,26 +646,92 @@ class _ToolboxPageState extends State<ToolboxPage> {
             ],
           ),
         'checks' => _checksCard(),
+        'audit' => ServiceAuditPanel(createClient: _proxyClient),
         'topology' => widget.networkInfo,
         _ => widget.resources,
       };
     }
     return SingleChildScrollView(
         padding: const EdgeInsets.all(20),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        child:
+            Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
           Row(children: [
             IconButton(
                 tooltip: '返回工具箱',
-                onPressed: () => setState(() => _openTool = null),
+                onPressed: () {
+                  if (_dlBusy) _cancelDownload();
+                  setState(() => _openTool = null);
+                },
                 icon: const Icon(Icons.arrow_back, size: 19)),
             const SizedBox(width: 6),
             Text(title,
-                style: const TextStyle(
-                    fontSize: 20, fontWeight: FontWeight.w600)),
+                style:
+                    const TextStyle(fontSize: 20, fontWeight: FontWeight.w600)),
           ]),
           const SizedBox(height: 14),
           body,
         ]));
+  }
+
+  Widget _downloadDashboard() {
+    final value = _dlBusy ? _dlLive : _downMbps;
+    final scheme = Theme.of(context).colorScheme;
+    return Padding(
+        padding: const EdgeInsets.only(bottom: 14),
+        child: Panel(
+            accent: true,
+            child: LayoutBuilder(builder: (context, bounds) {
+              final gauge = SizedBox(
+                  width: 156,
+                  height: 142,
+                  child: Stack(alignment: Alignment.center, children: [
+                    SizedBox(
+                        width: 124,
+                        height: 124,
+                        child: CircularProgressIndicator(
+                            padding: const EdgeInsets.all(2),
+                            strokeWidth: 8,
+                            strokeCap: StrokeCap.round,
+                            backgroundColor: scheme.surfaceContainerHighest,
+                            value: value == null
+                                ? 0
+                                : (value / math.max(100, (_dlPeak ?? value)))
+                                    .clamp(0, 1)
+                                    .toDouble())),
+                    Column(mainAxisSize: MainAxisSize.min, children: [
+                      Text(value == null ? '—' : _fmt(value),
+                          style: Theme.of(context).textTheme.headlineSmall),
+                      const Text('Mb/s · 下载'),
+                    ]),
+                  ]));
+              final plot = Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text('吞吐采样',
+                        style: Theme.of(context).textTheme.titleMedium),
+                    Text(_dlEndpoint ?? '显示实际采样端点 · 下载预算 48 MiB'),
+                    const SizedBox(height: 8),
+                    SizedBox(
+                        height: 72,
+                        child: TrafficReadout(
+                            down: _speedSamples.map((v) => v * 125000).toList(),
+                            up: const [],
+                            throughput: true)),
+                    Text(
+                        '下载 ${_bytes(_dlTotal)} · 峰值 ${_fmt(_dlPeak)} Mb/s · 经本机代理入站'),
+                    for (final error in _downloadErrors)
+                      Text(error, style: TextStyle(color: scheme.error)),
+                  ]);
+              return bounds.maxWidth < 440
+                  ? Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [Center(child: gauge), plot])
+                  : Row(children: [
+                      gauge,
+                      const SizedBox(width: 16),
+                      Expanded(child: plot)
+                    ]);
+            })));
   }
 
   Widget? _speedDetail() {
@@ -643,9 +774,8 @@ class _ToolboxPageState extends State<ToolboxPage> {
             child: ChoiceChip(
               label: Text('${s}s'),
               selected: _dlSeconds == s,
-              onSelected: _dlBusy
-                  ? null
-                  : (_) => setState(() => _dlSeconds = s),
+              onSelected:
+                  _dlBusy ? null : (_) => setState(() => _dlSeconds = s),
             ),
           ),
         if (_dlEndpoint != null) ...[
@@ -684,7 +814,8 @@ class _ToolboxPageState extends State<ToolboxPage> {
               style: const TextStyle(fontSize: 12, color: Colors.grey)),
           const SizedBox(height: 10),
           if (_latErr != null)
-            Text(_latErr!, style: const TextStyle(fontSize: 12, color: Colors.redAccent))
+            Text(_latErr!,
+                style: const TextStyle(fontSize: 12, color: Colors.redAccent))
           else
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceAround,
@@ -732,8 +863,7 @@ class _ToolboxPageState extends State<ToolboxPage> {
               child: Row(children: [
                 SizedBox(
                     width: 110,
-                    child: Text(name,
-                        style: const TextStyle(fontSize: 13))),
+                    child: Text(name, style: const TextStyle(fontSize: 13))),
                 Expanded(
                   child: LinearProgressIndicator(
                     value: _targetMs[name] == null
@@ -746,9 +876,7 @@ class _ToolboxPageState extends State<ToolboxPage> {
                 SizedBox(
                     width: 64,
                     child: Text(
-                        _targetErr[name] != null
-                            ? '失败'
-                            : _ms(_targetMs[name]),
+                        _targetErr[name] != null ? '失败' : _ms(_targetMs[name]),
                         textAlign: TextAlign.end,
                         style: TextStyle(
                             fontSize: 12,
@@ -792,8 +920,8 @@ class _ToolboxPageState extends State<ToolboxPage> {
             const SizedBox(width: 10),
             const Expanded(
                 child: Text('检测与修复',
-                    style: TextStyle(
-                        fontSize: 15, fontWeight: FontWeight.w600))),
+                    style:
+                        TextStyle(fontSize: 15, fontWeight: FontWeight.w600))),
             if (_chkBusy)
               const SizedBox(
                   width: 8,
@@ -804,8 +932,7 @@ class _ToolboxPageState extends State<ToolboxPage> {
                 child: Text(_chkBusy ? '检测中…' : '开始检测')),
           ]),
           const SizedBox(height: 6),
-          Text(
-              '出口对照：经代理查询的出口 IP vs STUN 探测的物理出口。TUN 模式下两者一致属正常（UDP 已被接管）。',
+          Text('出口对照：经代理查询的出口 IP vs STUN 探测的物理出口。TUN 模式下两者一致属正常（UDP 已被接管）。',
               style: const TextStyle(fontSize: 12, color: Colors.grey)),
           const SizedBox(height: 10),
           if (_chkErr != null)
@@ -822,8 +949,8 @@ class _ToolboxPageState extends State<ToolboxPage> {
                     child: Text('  ${proxied.asn} · ${proxied.country}',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                            fontSize: 11, color: Colors.grey))),
+                        style:
+                            const TextStyle(fontSize: 11, color: Colors.grey))),
             ]),
             const SizedBox(height: 4),
             Row(children: [
@@ -834,15 +961,12 @@ class _ToolboxPageState extends State<ToolboxPage> {
               if (physical != null)
                 Expanded(
                     child: Text(
-                        leaking
-                            ? '  ⚠ 与代理出口一致（可能泄漏或 TUN）'
-                            : '  与代理不同：代理生效',
+                        leaking ? '  ⚠ 与代理出口一致（可能泄漏或 TUN）' : '  与代理不同：代理生效',
                         maxLines: 1,
                         style: TextStyle(
                             fontSize: 11,
-                            color: leaking
-                                ? Colors.orangeAccent
-                                : Colors.green))),
+                            color:
+                                leaking ? Colors.orangeAccent : Colors.green))),
             ]),
             const SizedBox(height: 4),
             Row(children: [
@@ -853,11 +977,10 @@ class _ToolboxPageState extends State<ToolboxPage> {
                   style: const TextStyle(fontSize: 13)),
               if (_directIp != null && _directIp!.asn.isNotEmpty)
                 Expanded(
-                    child: Text(
-                        '  直连与物理一致：${_directIp!.ip == physicalIp}',
+                    child: Text('  直连与物理一致：${_directIp!.ip == physicalIp}',
                         maxLines: 1,
-                        style: const TextStyle(
-                            fontSize: 11, color: Colors.grey))),
+                        style:
+                            const TextStyle(fontSize: 11, color: Colors.grey))),
             ]),
           ],
           const Divider(height: 20),
@@ -907,6 +1030,7 @@ class _ToolboxPageState extends State<ToolboxPage> {
     Widget? detail,
     Widget? extra,
     required VoidCallback onStart,
+    VoidCallback? onCancel,
   }) {
     return Card(
       margin: EdgeInsets.zero,
@@ -935,8 +1059,12 @@ class _ToolboxPageState extends State<ToolboxPage> {
                     const TextStyle(fontSize: 24, fontWeight: FontWeight.w600)),
             const Spacer(),
             FilledButton.tonal(
-                onPressed: busy ? null : onStart,
-                child: Text(busy ? '测速中…' : '开始')),
+                onPressed: busy ? onCancel : onStart,
+                child: Text(busy
+                    ? onCancel == null
+                        ? '测速中…'
+                        : '取消'
+                    : '开始')),
           ]),
           if (detail != null) detail,
           if (extra != null) extra,

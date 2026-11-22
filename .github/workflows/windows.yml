@@ -121,6 +121,21 @@ jobs:
           }
 
 
+      - name: Verify executable requires administrator
+        shell: pwsh
+        run: |
+          $tools = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Filter mt.exe -Recurse |
+            Where-Object { $_.Directory.Name -eq "x64" } | Select-Object -First 1
+          if (-not $tools) { throw "Windows SDK manifest tool is missing" }
+          $exe = (Resolve-Path 'build/windows/x64/runner/Release/tokiboshi.exe').Path
+          $manifest = Join-Path $env:RUNNER_TEMP 'tokiboshi-execution.manifest'
+          & $tools.FullName "-inputresource:$exe;#1" "-out:$manifest"
+          if ($LASTEXITCODE -ne 0) { throw 'The executable manifest could not be extracted' }
+          $xml = [xml] (Get-Content -LiteralPath $manifest -Raw)
+          $level = $xml.SelectSingleNode("//*[local-name()='requestedExecutionLevel']")
+          if (-not $level -or $level.GetAttribute('level') -ne 'requireAdministrator' -or
+              $level.GetAttribute('uiAccess') -ne 'false') { throw "Tokiboshi elevation manifest is invalid" }
+
       - name: Verify actual built DLL and elevated parent wait
         shell: pwsh
         run: |

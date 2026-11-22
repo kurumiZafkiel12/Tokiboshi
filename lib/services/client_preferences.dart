@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'routing_targets.dart';
 
 /// Desktop policies are applied only when the next core configuration is built.
 class RoutingRule {
@@ -24,12 +25,13 @@ class RoutingRule {
     // 用户需求"按软件分流、单独设置出口节点"）。
     if (!kinds.containsKey(kind) ||
         target.trim().isEmpty ||
-        target.length > 128 ||
-        target.contains(RegExp(r'[\s\x00-\x1f]')))
+        target.length > (target.startsWith('node:') ? 4096 : 512) ||
+        target.contains(RegExp(r'[\x00-\x1f]')))
       throw const FormatException('不支持的规则类型或出站目标');
     if (value.trim().isEmpty ||
         value.length > 512 ||
-        value.contains(RegExp(r'[\s\x00-\x1f]')))
+        value.contains(RegExp(
+            kind == 'process_name' ? r'[\x00-\x1f/\\]' : r'[\s\x00-\x1f]')))
       throw const FormatException('规则内容不能为空或含空白/控制字符');
     if (kind == 'port' &&
         ((int.tryParse(value) ?? 0) < 1 ||
@@ -89,6 +91,15 @@ class ClientPreferences {
   final bool dnsEnabled, dnsViaProxy;
   final String dnsEndpoint, testUrl;
   final int testTimeoutMs;
+  ClientPreferences withRules(List<RoutingRule> value) => ClientPreferences(
+        rules: value,
+        dnsEnabled: dnsEnabled,
+        dnsEndpoint: dnsEndpoint,
+        dnsViaProxy: dnsViaProxy,
+        testUrl: testUrl,
+        testTimeoutMs: testTimeoutMs,
+      );
+
   void validate() {
     if (rules.length > 500) throw const FormatException('自定义规则最多 500 条');
     for (final rule in rules) {
@@ -171,6 +182,7 @@ String applyClientPreferences(
   ClientPreferences preferences, {
   required bool hasProfile,
   Map<String, String> tagByName = const {},
+  bool lookupProcesses = false,
 }) {
   preferences.validate();
   if (!preferences.rules.any((r) => r.enabled) &&
@@ -179,6 +191,16 @@ String applyClientPreferences(
   final route = config['route'] as Map<String, dynamic>;
   final rules = (route['rules'] as List? ?? []).whereType<Map>().toList();
   if (preferences.rules.any((r) => r.enabled)) {
+    final outbounds = (config['outbounds'] as List? ?? const [])
+        .whereType<Map>()
+        .map((row) => row['tag'])
+        .whereType<String>()
+        .toSet();
+    if (lookupProcesses &&
+        preferences.rules
+            .any((rule) => rule.enabled && rule.kind == 'process_name')) {
+      route['find_process'] = true;
+    }
     // Preserve mandatory inbound inspection and DNS interception before routing.
     final inboundRules = rules
         .takeWhile((r) => r['action'] == 'sniff' || r['action'] == 'hijack-dns')
@@ -191,8 +213,8 @@ String applyClientPreferences(
       ...preferences.rules.where((r) => r.enabled).map((r) {
         final rule = Map<String, dynamic>.from(r.config);
         final outbound = rule['outbound'];
-        if (outbound is String && tagByName.containsKey(outbound)) {
-          rule['outbound'] = tagByName[outbound];
+        if (outbound is String) {
+          applyRouteTarget(rule, outbound, tagByName, outbounds);
         }
         return rule;
       }),

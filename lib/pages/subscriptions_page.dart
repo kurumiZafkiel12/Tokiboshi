@@ -124,7 +124,7 @@ class _SubscriptionsPageState extends State<SubscriptionsPage> {
                     label: const Text('更新全部')),
                 ImportMenuButton(
                     label: '添加订阅',
-                    enabled: !locked,
+                    enabled: !widget.busy,
                     onSelected: (method) => widget.onImportMethod == null
                         ? widget.onAdd()
                         : widget.onImportMethod!(method))
@@ -199,7 +199,7 @@ class _SubscriptionsPageState extends State<SubscriptionsPage> {
                   ? EmptyView('还没有订阅', '添加一个订阅源，集中管理节点与规则。',
                       icon: Icons.inventory_2_outlined,
                       action: FilledButton(
-                          onPressed: locked ? null : widget.onAdd,
+                          onPressed: widget.busy ? null : widget.onAdd,
                           child: const Text('添加第一个订阅')))
                   : sources.isEmpty
                       ? const EmptyView('没有匹配的来源', '请调整名称或更新状态筛选。')
@@ -214,7 +214,7 @@ class _SubscriptionsPageState extends State<SubscriptionsPage> {
           const SizedBox(height: 12),
           Text(
               widget.running
-                  ? '代理正在运行，更新与编辑将在停止后可用。定时更新不会主动中断当前连接。'
+                  ? '运行中可添加来源。新节点下次启动或应用配置后进入内核，现有连接继续运行。'
                   : '更新失败保留上次有效数据。订阅地址和凭据默认隐藏。',
               style: Theme.of(context).textTheme.bodySmall)
         ]));

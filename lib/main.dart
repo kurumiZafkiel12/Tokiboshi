@@ -46,6 +46,7 @@ import 'services/latency.dart';
 import 'services/local_ports.dart';
 import 'services/elevated_handoff.dart';
 import 'services/node_tags.dart';
+import 'services/routing_targets.dart';
 import 'services/proxy_chain.dart';
 import 'services/store.dart';
 import 'services/subscription_fetcher.dart';
@@ -77,7 +78,8 @@ enum _TunAction { relaunch, disableTun, cancel }
 /// (exit 0 = admin). Cheap, no extra dependencies. Non-Windows is
 /// always treated as elevated.
 Future<bool> _isElevated() async {
-  if (!Platform.isWindows) return true;
+  if (!Platform.isWindows ||
+      Platform.environment['TOKIBOSHI_ELEVATED_RUNNER'] == '1') return true;
   try {
     final r = await Process.run('net', ['session']);
     return r.exitCode == 0;
@@ -316,7 +318,7 @@ class _ShellPageState extends State<ShellPage>
   String? _updateStatus;
   ReleaseUpdate? _update;
   Timer? _demandTimer;
-  late final WindowsStartup _startup = widget.startup ?? WindowsStartup();
+  late final WindowsStartup _startup = widget.startup ?? WindowsStartup(requestElevation: true);
   bool _running = false;
   bool _busy = false;
   bool _measuring = false;
@@ -424,6 +426,9 @@ class _ShellPageState extends State<ShellPage>
       _loaded = true;
     });
     widget.appearance.value = data.ui;
+    if (data.desktop.launchAtLogin && Platform.isWindows && widget.startup == null) {
+      unawaited(_migrateLoginStartup());
+    }
     unawaited(_loadRuleResources());
     // Rule-set upkeep is decoupled from the core download (HF053-02):
     // the bundled core must never skip it. Fire-and-forget; the Rust
@@ -593,39 +598,58 @@ class _ShellPageState extends State<ShellPage>
     return names.toList()..sort();
   }
 
-  void _addProcessRule(String process, String target) {
+  Future<void> _addProcessRule(String process, String target) async {
+    if (_busy || _profileChanging || _settingsBusy) return;
+    final before = _data.copyWith();
+    final name = process.trim();
     try {
-      final rule = RoutingRule(
-          kind: 'process_name', value: process, target: target);
-      rule.validate();
+      final rule = RoutingRule(kind: 'process_name', value: name, target: target);
+      if (target.isNotEmpty) rule.validate();
       setState(() {
-        _data.client.rules.add(rule);
+        _settingsBusy = true;
+        _data.client = _data.client.withRules([
+          ..._data.client.rules.where((current) =>
+              current.kind != 'process_name' ||
+              current.value.toLowerCase() != name.toLowerCase()),
+          if (target.isNotEmpty) rule,
+        ]);
       });
-      unawaited(_persist());
-      _setMessage('已为「$process」添加分流（$target），重启内核后生效');
+      if (await _persistImport(before)) {
+        _setMessage('「$name」分流已保存，${_running ? '应用配置后生效' : '下次启动生效'}');
+      }
     } catch (e) {
-      _setMessage('添加失败：$e');
+      _setMessage('保存分流失败：${redactDiagnostics('$e')}');
+    } finally {
+      if (mounted) setState(() => _settingsBusy = false);
     }
   }
 
   /// 内置分流模板规则的用户配置（开关 + 每条独立出站）。
   /// value：'off' = 关闭；'' = 启用+默认出站；'reject' / 'direct' /
   /// 'proxy' / 节点名 = 启用+指定出站。
-  void _setTemplateRouting(String id, String value) {
+  Future<void> _setTemplateRouting(String id, String value) async {
+    if (_busy || _settingsBusy || _profileChanging) return;
+    final before = _data.copyWith();
     setState(() {
-      _data.templateRouting = Map.of(_data.templateRouting)..[id] = value;
+      _settingsBusy = true;
+      _data.templateRouting = {..._data.templateRouting, id: value};
     });
-    unawaited(_persist());
-    _setMessage('分流规则已更新，${_running ? '重启内核后生效' : '下次启动生效'}');
+    try {
+      if (await _persistImport(before)) {
+        _setMessage('分流模板已保存，${_running ? '应用配置后生效' : '下次启动生效'}');
+      }
+    } finally {
+      if (mounted) setState(() => _settingsBusy = false);
+    }
   }
 
   Future<void> _importDialog({String initialMethod = 'link'}) async {
-    if (_running || _busy || _profileChanging || _settingsBusy) return;
+    if (_busy || _profileChanging || _settingsBusy) return;
     final request = await showDialog<ImportRequest>(
         context: context,
         builder: (context) =>
             ImportDialog(io: widget.importIo, initialMethod: initialMethod));
-    if (request == null || !mounted) return;
+    if (request == null || !mounted || _busy || _settingsBusy || _profileChanging) return;
     final text = normalizeImportText(request.text);
     final lines = text
         .split('\n')
@@ -853,7 +877,7 @@ class _ShellPageState extends State<ShellPage>
         final saved = await _persistImport(before);
         if (!saved) return;
         _setMessage(
-            '已导入 ${nodes.where((n) => !n.isPolicy).length} 个节点${saved ? '' : '（尚未保存）'}${_skippedNote(outcome.skipped)}');
+            '已导入 ${nodes.where((n) => !n.isPolicy).length} 个节点${saved ? '' : '（尚未保存）'}${_skippedNote(outcome.skipped)}${_running ? '；应用配置后可切换新节点' : ''}');
         return;
       }
       if (_importCancelling) throw const ImportCancelled();
@@ -887,7 +911,7 @@ class _ShellPageState extends State<ShellPage>
       });
       if (!await _persistImport(before)) return;
       _setMessage(
-          '订阅「$name」已添加：${nodes.where((n) => !n.isPolicy).length} 个节点${_skippedNote(outcome.skipped)}');
+          '订阅「$name」已添加：${nodes.where((n) => !n.isPolicy).length} 个节点${_skippedNote(outcome.skipped)}${_running ? '；应用配置后可切换新节点' : ''}');
     } on ImportCancelled {
       _importCancelling = true;
       _setMessage('已取消导入，原配置保留');
@@ -1080,8 +1104,14 @@ class _ShellPageState extends State<ShellPage>
       if (live) {
         previousTag = await _clash.selectedOf('proxy');
         if (previousTag == null) throw const FormatException('无法确认当前出口');
+        final target = _nodeTag(node);
+        final group = (await _clash.proxies())['proxy'];
+        if (group is Map && group['all'] is List && !(group['all'] as List).contains(target)) {
+          _setMessage('此节点已保存。请在分流页应用配置后再切换。');
+          return;
+        }
         attempted = true;
-        await _clash.select('proxy', _nodeTag(node));
+        await _clash.select('proxy', target);
       }
       if (!mounted) return;
       setState(() => _data.selectedIndex = index);
@@ -1141,6 +1171,27 @@ class _ShellPageState extends State<ShellPage>
   /// protocols can be probed honestly — a TCP connect to a UDP
   /// (hy2/tuic) port says nothing, so those are skipped instead of
   /// being reported as failures.
+  Future<void> _migrateLoginStartup() async {
+    try {
+      if (!await _startup.isEnabled() && _data.desktop.launchAtLogin) {
+        await _startup.setEnabled(true);
+      }
+    } catch (_) {
+      _setMessage('无法迁移登录自启，请在常规设置重新启用');
+    }
+  }
+
+  Future<int?> _sampleNodeQuality(NodeInfo node) async {
+    if (!_running || !_data.nodes.contains(node)) return null;
+    final port = _data.clashApiPort;
+    final generation = _monitor.startedAt;
+    final ms = await _clash.delay(_nodeTag(node),
+        url: _data.client.testUrl, timeoutMs: _data.client.testTimeoutMs);
+    if (!mounted || !_running || port != _data.clashApiPort ||
+        generation != _monitor.startedAt) return null;
+    return ms;
+  }
+
   Future<void> _measureNode(NodeInfo node) async {
     if (_measuring) return;
     if (_running && !profileNodes(_data).contains(node)) {
@@ -1494,6 +1545,7 @@ class _ShellPageState extends State<ShellPage>
         throw const FormatException('当前节点不属于规则订阅，请选择该订阅的节点或策略组');
       }
       final nodeTags = assignNodeTags(configNodes.map((n) => n.name));
+      final routeTargets = RoutingTargets(configNodes).resolved;
       final config = await widget.bridge.buildConfig(
         nodes: configNodes
             .map((n) => NodeSpec(name: n.name, outboundJson: n.outboundJson))
@@ -1501,36 +1553,31 @@ class _ShellPageState extends State<ShellPage>
         mixedPort: _data.mixedPort,
         clashApiPort: _data.clashApiPort,
         enableTun: _data.enableTun,
-        blockAds: _data.blockAds,
-        bypassCn: _data.bypassCn,
+        blockAds: switch (_data.templateRouting['ads']) {
+          'off' => false, null => _data.blockAds, _ => true,
+        },
+        bypassCn: switch (_data.templateRouting['cn']) {
+          'off' => false, null => _data.bypassCn, _ => true,
+        },
         dataDir: _dataDir,
         selectedName:
             nodeTags[configNodes.indexOf(selected)],
         profileJson: profile?.profileJson ?? '',
       );
-      if (_data.routingPreset != 'balanced' && _ruleResources.isEmpty) {
+      if ((_data.routingPreset != 'balanced' || _data.templateRouting.keys.any(serviceRuleNames.containsKey)) && _ruleResources.isEmpty) {
         await _loadRuleResources();
         _checkConnectCancelled();
       }
+      final preset = applyResourcePreset(config, _data.routingPreset, _ruleResources, _dataDir);
+      final template = applyTemplateRouting(preset,
+          profile == null ? _data.templateRouting : const {}, routeTargets);
+      final services = applyServiceRouting(
+          template, _data.templateRouting, routeTargets, _ruleResources, _dataDir);
+      final network = applyNetworkSettings(
+          injectClashSecret(services, _data.clashApiSecret), _data.desktop);
       final configFile = await widget.store.writeRuntimeConfig(
-          applyClientPreferences(
-              applyNetworkSettings(
-                  injectClashSecret(
-                      applyTemplateRouting(
-                          applyResourcePreset(config, _data.routingPreset,
-                              _ruleResources, _dataDir),
-                          _data.templateRouting, {
-                        for (var i = 0; i < configNodes.length; i++)
-                          configNodes[i].name: nodeTags[i]
-                      }),
-                      _data.clashApiSecret),
-                  _data.desktop),
-              _data.client,
-              hasProfile: profile != null,
-              tagByName: {
-                for (var i = 0; i < configNodes.length; i++)
-                  configNodes[i].name: nodeTags[i]
-              }));
+          applyClientPreferences(network, _data.client, hasProfile: profile != null,
+            tagByName: routeTargets, lookupProcesses: Platform.isWindows));
       _checkConnectCancelled();
       // Rule-set downloads run in the background after app start; if
       // they have not landed yet this config carries no 分流 rules.
@@ -1952,6 +1999,25 @@ class _ShellPageState extends State<ShellPage>
     }
   }
 
+  Map<String, String> _routingOptions() {
+    List<NodeInfo> nodes;
+    try {
+      nodes = profileNodes(_data);
+    } on FormatException {
+      return const {};
+    }
+    return {
+      for (final node in RoutingTargets(nodes).available)
+        routeNodeReference(node): '${node.name} · ${[
+          for (final sub in _data.subscriptions)
+            if (sub.id == node.source) sub.name,
+          if (node.source.isEmpty) '本地节点',
+          if (node.group.isNotEmpty) node.group,
+          if (node.server.isNotEmpty) '${node.server}:${node.serverPort}',
+        ].join(' / ')}',
+    };
+  }
+
   // ---- layout ----
 
   @override
@@ -1989,6 +2055,7 @@ class _ShellPageState extends State<ShellPage>
           onMeasureAll: _measureAll,
           onCreateChain: _createChainDialog,
           onMeasureNode: _measureNode,
+          onQualitySample: _sampleNodeQuality,
         );
       case 3:
         page = SubscriptionsPage(
@@ -2036,10 +2103,9 @@ class _ShellPageState extends State<ShellPage>
             blockAds: _data.blockAds,
             bypassCn: _data.bypassCn,
             templateRouting: _data.templateRouting,
-            nodeNames: _data.nodes
-                .where((n) => !n.isPolicy)
-                .map((n) => n.name)
-                .toList(),
+            targets: _routingOptions(),
+            ruleResources: _ruleResources,
+            onResources: () => setState(() => _page = 8),
             onTemplateRouting: _setTemplateRouting,
             activeProcesses: _activeProcesses(),
             onAddProcessRule: _addProcessRule);
@@ -2047,6 +2113,7 @@ class _ShellPageState extends State<ShellPage>
         page = ToolboxPage(
           running: _running,
           mixedPort: _data.mixedPort,
+          session: selected,
           onStart: _toggleCore,
           systemProxy: widget.systemProxy,
           proxyCredentials: _data.desktop.proxyAuth
@@ -2136,6 +2203,9 @@ class _ShellPageState extends State<ShellPage>
           tun: _data.enableTun,
           onToggle: _toggleCore,
           onRestart: _restartCore,
+          onPickNode: _showNodePicker,
+          onCancelConnect: _requestCancelConnect,
+          controlsBlocked: _profileChanging || _settingsBusy || (_busy && !_coreBusy),
           onOpenPanel: () => setState(() => _page = 1),
           onTunChanged: _setTun,
           onSystemProxyChanged: _busy ? null : _setSystemProxy,
@@ -2503,7 +2573,7 @@ class _ShellPageState extends State<ShellPage>
                                               Icons.notifications_none_outlined,
                                               size: 17)))
                                 ])),
-                            if (_message != null) _messageBanner(context),
+                            if (_message != null && !_message!.startsWith('运行中：')) _messageBanner(context),
                             if (_busy || _profileChanging || _settingsBusy)
                               const LinearProgressIndicator(minHeight: 2),
                             Expanded(
@@ -2531,8 +2601,19 @@ class _ShellPageState extends State<ShellPage>
                                                     .animate(animation),
                                                 child: child)),
                                     child: KeyedSubtree(
-                                        key: ValueKey(_page), child: page))),
-                            ConnectionDock(
+                                        key: ValueKey(_loaded ? _page : -1),
+                                        child: _loaded ? page : Center(
+                                          child: Panel(accent: true,
+                                            child: Column(mainAxisSize: MainAxisSize.min, children: [
+                                              const Icon(Icons.hourglass_top_rounded, size: 30),
+                                              const SizedBox(height: 10),
+                                              Text('正在恢复工作区', style: Theme.of(context).textTheme.titleLarge),
+                                              const SizedBox(height: 8),
+                                              if (UiScope.duration(context) != Duration.zero)
+                                                const SizedBox(width: 158, child: LinearProgressIndicator(minHeight: 2)),
+                                            ])),
+                                        )))),
+                            if (_page != 0) ConnectionDock(
                                 node: selected,
                                 subscriptions: _data.subscriptions,
                                 latency: _latency,

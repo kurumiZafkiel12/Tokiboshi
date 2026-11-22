@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../services/clash_api.dart';
 import '../services/store.dart';
 import '../services/client_preferences.dart';
+import '../services/rule_resources.dart';
 import '../ui/design.dart';
 
 class RulesPage extends StatefulWidget {
@@ -19,7 +20,9 @@ class RulesPage extends StatefulWidget {
       required this.blockAds,
       required this.bypassCn,
       this.templateRouting = const {},
-      this.nodeNames = const [],
+      this.targets = const {},
+      this.ruleResources = const [],
+      this.onResources,
       this.onTemplateRouting,
       this.activeProcesses = const [],
       this.onAddProcessRule,
@@ -38,7 +41,9 @@ class RulesPage extends StatefulWidget {
 
   /// 内置模板规则的用户配置（见 Store.templateRouting 注释）。
   final Map<String, String> templateRouting;
-  final List<String> nodeNames;
+  final Map<String, String> targets;
+  final List<RuleResource> ruleResources;
+  final VoidCallback? onResources;
   final void Function(String id, String value)? onTemplateRouting;
 
   /// 活跃进程（来自内核连接元数据；内核未启用进程识别时为空）。
@@ -231,10 +236,12 @@ class _RulesPageState extends State<RulesPage> {
             Padding(
                 padding: const EdgeInsets.only(bottom: 14),
                 child: _PerAppRoutingCard(
-                  nodeNames: widget.nodeNames,
+                  targets: widget.targets,
                   activeProcesses: widget.activeProcesses,
-                  existing:
-                      widget.customRules.map((r) => r.value).toSet(),
+                  existing: widget.customRules
+                      .where((rule) => rule.kind == 'process_name')
+                      .toList(),
+                  busy: widget.busy,
                   onAdd: widget.onAddProcessRule!,
                 )),
           if (widget.onTemplateRouting != null && profiles.isEmpty && !conflict)
@@ -262,14 +269,59 @@ class _RulesPageState extends State<RulesPage> {
                           title: title,
                           desc: desc,
                           allowReject: id == 'ads',
-                          enabled: widget.templateRouting[id] != 'off',
-                          outbound:
-                              widget.templateRouting[id] ?? 'default',
-                          nodeNames: widget.nodeNames,
-                          onChanged: (enabled, outbound) => widget
-                              .onTemplateRouting!(id, enabled ? outbound : 'off'),
+                          enabled: widget.templateRouting.containsKey(id)
+                              ? widget.templateRouting[id] != 'off'
+                              : id == 'ads'
+                                  ? widget.blockAds
+                                  : id == 'cn'
+                                      ? widget.bypassCn
+                                      : true,
+                          outbound: widget.templateRouting[id] ?? 'default',
+                          targets: widget.targets,
+                          onChanged: (enabled, outbound) =>
+                              widget.onTemplateRouting!(
+                                  id, enabled ? outbound : 'off'),
                         ),
                     ])),
+          if (widget.onTemplateRouting != null &&
+              widget.ruleResources.isNotEmpty &&
+              !conflict)
+            Padding(
+                padding: const EdgeInsets.only(top: 14),
+                child: Panel(
+                  padding: EdgeInsets.zero,
+                  child: ExpansionTile(
+                    title: const Text('内置服务分流'),
+                    subtitle: const Text('流媒体、AI、通讯与软件服务可各自选择出口'),
+                    children: [
+                      for (final resource in widget.ruleResources
+                          .where((r) => serviceRuleNames.containsKey(r.tag)))
+                        if (widget.dataDir != null &&
+                            File(resource.path(widget.dataDir!)).existsSync())
+                          _TemplateRuleRow(
+                              id: resource.tag,
+                              title: serviceRuleNames[resource.tag]!,
+                              desc: resource.group,
+                              allowReject: true,
+                              targets: widget.targets,
+                              enabled: (widget.templateRouting[resource.tag] ??
+                                      'off') !=
+                                  'off',
+                              outbound: widget.templateRouting[resource.tag] ??
+                                  'default',
+                              onChanged: (enabled, outbound) =>
+                                  widget.onTemplateRouting!(
+                                      resource.tag, enabled ? outbound : 'off'))
+                        else
+                          ListTile(
+                              title: Text(serviceRuleNames[resource.tag]!),
+                              subtitle: const Text('需先下载本地规则集'),
+                              trailing: TextButton(
+                                  onPressed: widget.onResources,
+                                  child: const Text('打开工具箱'))),
+                    ],
+                  ),
+                )),
           const SizedBox(height: 16),
           if (conflict || _error != null || unsupported.isNotEmpty)
             Padding(
@@ -381,7 +433,6 @@ class _RulesPageState extends State<RulesPage> {
               ])));
 }
 
-
 /// 内置模板规则的可配置行：开关 + 出站选择。
 class _TemplateRuleRow extends StatelessWidget {
   const _TemplateRuleRow({
@@ -391,13 +442,13 @@ class _TemplateRuleRow extends StatelessWidget {
     required this.allowReject,
     required this.enabled,
     required this.outbound,
-    required this.nodeNames,
+    required this.targets,
     required this.onChanged,
   });
   final String id, title, desc;
   final bool allowReject, enabled;
   final String outbound;
-  final List<String> nodeNames;
+  final Map<String, String> targets;
   final void Function(bool enabled, String outbound) onChanged;
 
   @override
@@ -408,7 +459,7 @@ class _TemplateRuleRow extends StatelessWidget {
       if (allowReject) 'reject': '拒绝',
       'direct': '直连',
       'proxy': '默认出口（proxy）',
-      for (final name in nodeNames) name: name,
+      ...targets,
     };
     final current = options.containsKey(outbound) ? outbound : 'default';
     return Padding(
@@ -416,8 +467,11 @@ class _TemplateRuleRow extends StatelessWidget {
         child: Row(children: [
           Switch(
               value: enabled,
-              onChanged: (v) =>
-                  onChanged(v, v ? (options.containsKey(outbound) ? outbound : 'default') : 'off')),
+              onChanged: (v) => onChanged(
+                  v,
+                  v
+                      ? (options.containsKey(outbound) ? outbound : 'default')
+                      : 'off')),
           const SizedBox(width: 4),
           Expanded(
               child: Column(
@@ -427,9 +481,8 @@ class _TemplateRuleRow extends StatelessWidget {
                     style: TextStyle(
                         fontSize: 14,
                         fontWeight: FontWeight.w600,
-                        color: enabled
-                            ? null
-                            : Theme.of(context).disabledColor)),
+                        color:
+                            enabled ? null : Theme.of(context).disabledColor)),
                 Text(desc,
                     style: TextStyle(
                         fontSize: 11,
@@ -437,34 +490,66 @@ class _TemplateRuleRow extends StatelessWidget {
                             ? Colors.grey
                             : Theme.of(context).disabledColor)),
               ])),
-          DropdownButton<String>(
-              value: enabled ? current : null,
-              hint: enabled ? null : const Text('已关闭'),
-              items: [
-                for (final e in options.entries)
-                  DropdownMenuItem(value: e.key, child: Text(e.value)),
-              ],
-              onChanged: enabled
-                  ? (v) => onChanged(true, v ?? 'default')
-                  : null),
+          SizedBox(
+              width: 160,
+              child: DropdownButton<String>(
+                  isExpanded: true,
+                  value: enabled ? current : null,
+                  hint: enabled ? null : const Text('已关闭'),
+                  items: [
+                    for (final e in options.entries)
+                      DropdownMenuItem(
+                          value: e.key,
+                          child:
+                              Text(e.value, overflow: TextOverflow.ellipsis)),
+                  ],
+                  onChanged:
+                      enabled ? (v) => onChanged(true, v ?? 'default') : null)),
         ]));
   }
 }
 
+const _apps = <String, String>{
+  'Chrome': 'chrome.exe',
+  'Edge': 'msedge.exe',
+  'Firefox': 'firefox.exe',
+  'Brave': 'brave.exe',
+  'Vivaldi': 'vivaldi.exe',
+  'Discord': 'Discord.exe',
+  'Telegram': 'Telegram.exe',
+  '微信': 'WeChat.exe',
+  'QQ': 'QQ.exe',
+  'Slack': 'slack.exe',
+  'Signal': 'Signal.exe',
+  'Teams': 'ms-teams.exe',
+  'VS Code': 'Code.exe',
+  'Git': 'git.exe',
+  'GitHub Desktop': 'GitHubDesktop.exe',
+  'OneDrive': 'OneDrive.exe',
+  'Dropbox': 'Dropbox.exe',
+  'Postman': 'Postman.exe',
+  'Spotify': 'Spotify.exe',
+  'Steam': 'steam.exe',
+  'Epic Games': 'EpicGamesLauncher.exe',
+  'Battle.net': 'Battle.net.exe',
+  'EA App': 'EADesktop.exe',
+  'qBittorrent': 'qbittorrent.exe',
+  'aria2': 'aria2c.exe',
+};
 
-/// 按软件分流：为单个进程添加独立出站规则（PROCESS-NAME）。
 class _PerAppRoutingCard extends StatefulWidget {
   const _PerAppRoutingCard({
-    required this.nodeNames,
+    required this.targets,
     required this.activeProcesses,
     required this.existing,
     required this.onAdd,
+    required this.busy,
   });
-  final List<String> nodeNames;
+  final Map<String, String> targets;
   final List<String> activeProcesses;
-  final Set<String> existing;
+  final List<RoutingRule> existing;
+  final bool busy;
   final void Function(String process, String target) onAdd;
-
   @override
   State<_PerAppRoutingCard> createState() => _PerAppRoutingCardState();
 }
@@ -472,6 +557,7 @@ class _PerAppRoutingCard extends StatefulWidget {
 class _PerAppRoutingCardState extends State<_PerAppRoutingCard> {
   final _process = TextEditingController();
   String _target = 'proxy';
+  bool _catalog = true;
 
   @override
   void dispose() {
@@ -479,89 +565,102 @@ class _PerAppRoutingCardState extends State<_PerAppRoutingCard> {
     super.dispose();
   }
 
-  void _add() {
-    final name = _process.text.trim();
-    if (name.isEmpty) return;
-    widget.onAdd(name, _target);
-    _process.clear();
-  }
-
   @override
   Widget build(BuildContext context) {
     final options = <String, String>{
+      'proxy': '默认代理出口',
       'direct': '直连',
-      'proxy': '默认出口（proxy）',
       'reject': '拒绝',
-      for (final name in widget.nodeNames) name: name,
+      ...widget.targets,
     };
+    final selected = options.containsKey(_target) ? _target : 'proxy';
     return Panel(
-        padding: EdgeInsets.zero,
         child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Wrap(
+            alignment: WrapAlignment.spaceBetween,
+            crossAxisAlignment: WrapCrossAlignment.center,
             children: [
-              const Padding(
-                  padding: EdgeInsets.fromLTRB(18, 16, 18, 4),
-                  child: Text('按软件分流',
-                      style: TextStyle(fontWeight: FontWeight.w600))),
-              Padding(
-                  padding: const EdgeInsets.fromLTRB(18, 0, 18, 6),
-                  child: Text(
-                      '为单个程序指定出口：输入进程名（如 steam.exe / Telegram.exe），或从当前活跃连接里选。规则立即添加，重启内核生效。',
-                      style:
-                          const TextStyle(fontSize: 12, color: Colors.grey))),
-              Padding(
-                  padding: const EdgeInsets.fromLTRB(18, 4, 18, 8),
-                  child: Row(children: [
-                    Expanded(
-                        child: TextField(
-                            controller: _process,
-                            decoration: const InputDecoration(
-                                isDense: true,
-                                labelText: '进程名（exe）',
-                                hintText: 'steam.exe'),
-                            onSubmitted: (_) => _add())),
-                    const SizedBox(width: 10),
-                    Expanded(
-                        child: DropdownButtonFormField<String>(
-                            initialValue: _target,
-                            isDense: true,
-                            decoration: const InputDecoration(
-                                labelText: '出口'),
-                            items: [
-                              for (final e in options.entries)
-                                DropdownMenuItem(
-                                    value: e.key, child: Text(e.value)),
-                            ],
-                            onChanged: (v) =>
-                                setState(() => _target = v ?? 'proxy'))),
-                    const SizedBox(width: 10),
-                    FilledButton.icon(
-                        onPressed: _add,
-                        icon: const Icon(Icons.add, size: 16),
-                        label: const Text('添加')),
-                  ])),
-              if (widget.activeProcesses.isNotEmpty)
-                Padding(
-                    padding: const EdgeInsets.fromLTRB(18, 0, 18, 12),
-                    child: Wrap(
-                        spacing: 6,
-                        runSpacing: 6,
-                        children: [
-                          for (final proc
-                              in widget.activeProcesses.take(12))
-                            ActionChip(
-                                label: Text(proc,
-                                    style: const TextStyle(fontSize: 11)),
-                                onPressed: () =>
-                                    setState(() => _process.text = proc))
-                        ])),
-              if (widget.existing.isNotEmpty)
-                Padding(
-                    padding: const EdgeInsets.fromLTRB(18, 0, 18, 14),
-                    child: Text(
-                        '已有 ${widget.existing.length} 条自定义规则（含按软件），在"自定义规则"里管理。',
-                        style: const TextStyle(
-                            fontSize: 11, color: Colors.grey))),
-            ]));
+              Text('按软件分流', style: Theme.of(context).textTheme.titleMedium),
+              TextButton.icon(
+                  onPressed: () => setState(() => _catalog = !_catalog),
+                  icon: Icon(_catalog ? Icons.expand_less : Icons.expand_more),
+                  label: Text(_catalog ? '收起应用' : '打开内置应用')),
+            ]),
+        if (_catalog)
+          Wrap(spacing: 7, runSpacing: 7, children: [
+            for (final app in _apps.entries)
+              ActionChip(
+                  label: Text(app.key),
+                  onPressed: widget.busy
+                      ? null
+                      : () => setState(() => _process.text = app.value)),
+          ]),
+        const SizedBox(height: 12),
+        if (widget.activeProcesses.isNotEmpty)
+          Wrap(spacing: 7, children: [
+            for (final proc in widget.activeProcesses.take(12))
+              ActionChip(
+                  avatar: const Icon(Icons.monitor_heart_outlined, size: 14),
+                  label: Text(proc),
+                  onPressed: widget.busy
+                      ? null
+                      : () => setState(() => _process.text = proc)),
+          ]),
+        Row(children: [
+          Expanded(
+              child: TextField(
+                  controller: _process,
+                  decoration: const InputDecoration(
+                      labelText: '软件进程（exe）', hintText: '从上方选择或手工填写'))),
+          const SizedBox(width: 10),
+          Expanded(
+              child: DropdownButton<String>(
+                  value: selected,
+                  isExpanded: true,
+                  items: [
+                    for (final option in options.entries)
+                      DropdownMenuItem(
+                          value: option.key,
+                          child: Text(option.value,
+                              overflow: TextOverflow.ellipsis)),
+                  ],
+                  onChanged: widget.busy
+                      ? null
+                      : (value) => setState(() => _target = value ?? 'proxy'))),
+          const SizedBox(width: 10),
+          FilledButton(
+              onPressed: widget.busy
+                  ? null
+                  : () {
+                      if (_process.text.trim().isNotEmpty)
+                        widget.onAdd(_process.text.trim(), selected);
+                    },
+              child: const Text('保存分流')),
+        ]),
+        const SizedBox(height: 8),
+        const Text('在规则模式和可识别进程的流量上匹配。保存后点「应用配置」，跟随常规规则可删除单项。'),
+        for (final rule in widget.existing)
+          ListTile(
+              contentPadding: EdgeInsets.zero,
+              title: Text(rule.value),
+              subtitle: Text(options[rule.target] ??
+                  (rule.target.startsWith('node:')
+                      ? '出口已缺失或歧义，重新选择'
+                      : rule.target)),
+              onTap: widget.busy
+                  ? null
+                  : () => setState(() {
+                        _process.text = rule.value;
+                        _target = rule.target;
+                      }),
+              trailing: IconButton(
+                  tooltip: '移除软件规则',
+                  icon: const Icon(Icons.delete_outline),
+                  onPressed:
+                      widget.busy ? null : () => widget.onAdd(rule.value, ''))),
+      ],
+    ));
   }
 }

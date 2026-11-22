@@ -1,10 +1,8 @@
 import 'dart:async';
-import 'dart:convert';
-import 'dart:io';
-import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import '../services/connection_topology.dart';
+import '../services/asn_lookup.dart';
 import '../ui/runtime.dart';
 import '../ui/design.dart';
 
@@ -33,6 +31,7 @@ class _NetworkInfoState extends State<NetworkInfo> {
     ('rule', '规则'),
     ('byIp', '来源 IP'),
     ('byPort', '来源端口'),
+    ('asn', 'ASN 归属'),
   ];
   static const colors = [
     Color(0xffb43c62),
@@ -42,13 +41,13 @@ class _NetworkInfoState extends State<NetworkInfo> {
   ];
   static const layerNames = ['代理组', '出站节点', '匹配规则'];
 
-  // 上一帧的节点聚合流量，用于差分出实时速率（1s 采样）。
-  final _prevTotals = <TopologyKey, (int, int)>{};
-  DateTime? _prevAt;
-  final _rates = <TopologyKey, (double, double)>{};
-
-  // IP 归属缓存（含失败标记 ''）；仅对公网来源 IP 在线查询一次。
-  final _ipOwners = <String, String>{};
+  final _sampler = ConnectionRateSampler();
+  final _clock = Stopwatch()..start();
+  List<Map<String, dynamic>>? _paused;
+  Map<String, (double, double)> _frozenRates = {};
+  final _origins = <String, List<AsnOrigin>>{};
+  final _asnErrors = <String>{};
+  bool _asnBusy = false;
 
   void details(BuildContext context, String label, TopologyStats stats) =>
       showDialog<void>(
@@ -57,27 +56,26 @@ class _NetworkInfoState extends State<NetworkInfo> {
                 title: Text(label),
                 content: SingleChildScrollView(
                     child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                      SelectableText(
-                          '${stats.count} 条连接\n上传 ${bytesLabel(stats.upload)}\n下载 ${bytesLabel(stats.download)}\n\n命中规则\n${stats.rules.join('\n')}'),
-                      if (stats.destinations.isNotEmpty) ...[
-                        const SizedBox(height: 10),
-                        Text('目标（去重前 ${stats.destinations.length} 个）',
-                            style: Theme.of(context).textTheme.bodySmall),
-                        SelectableText(stats.destinations.join('\n')),
-                      ],
-                      if (_looksLikeIp(label)) ...[
-                        const SizedBox(height: 10),
-                        FutureBuilder<String>(
-                            future: _ownerFor(label),
-                            builder: (_, snap) => Text(
-                                snap.data ?? 'IP 归属查询中…',
-                                style:
-                                    Theme.of(context).textTheme.bodySmall)),
-                      ],
-                    ])),
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    SelectableText(
+                        '${stats.count} 条连接 · ↑ ${bytesLabel(stats.upload)} · ↓ ${bytesLabel(stats.download)}'
+                        '\n命中规则\n${stats.rules.join('\n')}'),
+                    if (stats.destinations.isNotEmpty) ...[
+                      const SizedBox(height: 10),
+                      const Text('连接目标'),
+                      SelectableText(stats.destinations.join('\n')),
+                    ],
+                    if (stats.addresses.any(isPublicAsnAddress))
+                      TextButton(
+                          onPressed: () {
+                            Navigator.pop(dialog);
+                            setState(() => view = 'asn');
+                          },
+                          child: const Text('查看公网 ASN')),
+                  ],
+                )),
                 actions: [
                   TextButton(
                       onPressed: () => Navigator.pop(dialog),
@@ -85,105 +83,112 @@ class _NetworkInfoState extends State<NetworkInfo> {
                 ],
               ));
 
-  bool _looksLikeIp(String label) {
-    final ip = label.split(':').first;
-    return InternetAddress.tryParse(ip) != null;
+  Future<void> _lookup(List<String> addresses) async {
+    final approved = await showDialog<bool>(
+        context: context,
+        builder: (dialog) => AlertDialog(
+              title: const Text('查询公开 ASN 归属'),
+              content: Text(
+                  '将下列公网 IP 经 HTTPS 提交给 RIPEstat。该查询用于前缀归属分析。\n${addresses.join('、')}'),
+              actions: [
+                TextButton(
+                    onPressed: () => Navigator.pop(dialog, false),
+                    child: const Text('取消')),
+                FilledButton(
+                    onPressed: () => Navigator.pop(dialog, true),
+                    child: const Text('查询')),
+              ],
+            ));
+    if (approved != true || !mounted || _asnBusy) return;
+    setState(() => _asnBusy = true);
+    try {
+      for (final ip in addresses) {
+        try {
+          final result = await lookupAsn(ip);
+          if (!mounted) return;
+          setState(() {
+            if (_origins.length >= 256) _origins.remove(_origins.keys.first);
+            _origins[ip] = result;
+            _asnErrors.remove(ip);
+          });
+        } catch (_) {
+          if (!mounted) return;
+          setState(() {
+            if (_asnErrors.length >= 256) _asnErrors.remove(_asnErrors.first);
+            _asnErrors.add(ip);
+          });
+        }
+      }
+    } finally {
+      if (mounted) setState(() => _asnBusy = false);
+    }
   }
 
-  String _classifyLocal(String ip) {
-    final addr = InternetAddress.tryParse(ip);
-    if (addr == null) return '';
-    if (addr.isLoopback) return '回环地址（本机内部流量）';
-    if (addr.isLinkLocal) return '链路本地地址（无公网归属）';
-    final v4 = addr.type == InternetAddressType.IPv4
-        ? addr.address.split('.').map(int.parse).toList()
-        : null;
-    if (v4 != null &&
-        (v4[0] == 10 ||
-            (v4[0] == 172 && v4[1] >= 16 && v4[1] <= 31) ||
-            (v4[0] == 192 && v4[1] == 168))) {
-      return '私有网络（LAN/TUN 内来源，无公网 ASN）';
-    }
-    if (addr.type == InternetAddressType.IPv6) {
-      final parts = addr.address.split(':').first.toLowerCase();
-      if (parts.startsWith('fc') || parts.startsWith('fd')) {
-        return 'IPv6 ULA 私有网络';
+  Widget _asnView(List<Map<String, dynamic>> rows) {
+    final counts = <String, int>{};
+    for (final row in rows) {
+      final meta = row['metadata'];
+      if (meta is! Map) continue;
+      final candidates = {meta['sourceIP'], meta['destinationIP']}
+          .whereType<String>()
+          .where(isPublicAsnAddress);
+      for (final ip in candidates) {
+        counts.update(ip, (count) => count + 1, ifAbsent: () => 1);
       }
     }
-    return '';
-  }
-
-  /// 来源 IP 归属：私网直接判定；公网走 ip-api 免费接口（直连、明文 http、
-  /// 结果与失败都缓存，避免打爆每分钟配额）。sing-box 的 connections
-  /// 元数据不含 ASN，这是无依赖下的最轻归属方案。
-  Future<String> _ownerFor(String label) async {
-    final cached = _ipOwners[label];
-    if (cached != null) return cached;
-    final ip = label.split(':').first;
-    final local = _classifyLocal(ip);
-    if (local.isNotEmpty) {
-      return _ipOwners[label] = local;
-    }
-    try {
-      final client = HttpClient()..connectionTimeout = const Duration(seconds: 4);
-      final req = await client.getUrl(Uri.parse(
-          'http://ip-api.com/json/$ip?fields=as,isp,country,city&lang=zh-CN'))
-        ..followRedirects = false;
-      final resp = await req.close().timeout(const Duration(seconds: 5));
-      final body = await resp.transform(utf8.decoder).join();
-      client.close(force: true);
-      final v = body.isNotEmpty ? jsonDecode(body) as Map : null;
-      final asField = (v?['as'] ?? '') as String;
-      final isp = (v?['isp'] ?? '') as String;
-      final place = [
-        (v?['country'] ?? '') as String,
-        (v?['city'] ?? '') as String
-      ].where((s) => s.isNotEmpty).join(' · ');
-      final verdict = [
-        if (asField.isNotEmpty) asField else if (isp.isNotEmpty) isp,
-        if (place.isNotEmpty) place,
-      ].join(' · ');
-      return _ipOwners[label] =
-          verdict.isEmpty ? '公网来源，归属查询无结果' : verdict;
-    } catch (_) {
-      return _ipOwners[label] = '公网来源，归属查询失败（离线或被墙）';
-    }
+    final keys = counts.keys.toList()
+      ..sort((a, b) => counts[b]!.compareTo(counts[a]!));
+    final visible = keys.take(24).toList();
+    final unresolved =
+        visible.where((ip) => !_origins.containsKey(ip)).take(8).toList();
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      const Text('公网来源 / 目标 IP 的 BGP 起源 ASN · RIPEstat'),
+      if (unresolved.isNotEmpty)
+        OutlinedButton.icon(
+            onPressed: _asnBusy ? null : () => _lookup(unresolved),
+            icon: const Icon(Icons.travel_explore),
+            label:
+                Text(_asnBusy ? '查询中…' : '查询前 ${unresolved.length} 个未知公网 IP')),
+      if (visible.isEmpty) const Text('当前活动连接无公开的来源或目标 IP。'),
+      if (keys.length > visible.length)
+        Text('按连接数显示前 ${visible.length} 个地址，共 ${keys.length} 个。'),
+      for (final ip in visible)
+        ListTile(
+            contentPadding: EdgeInsets.zero,
+            title: SelectableText(ip),
+            subtitle: Text(_origins[ip]
+                        ?.map((item) => 'AS${item.$1}  ${item.$2}')
+                        .join(' / ')
+                        .isNotEmpty ==
+                    true
+                ? _origins[ip]!
+                    .map((item) => 'AS${item.$1}  ${item.$2}')
+                    .join(' / ')
+                : _origins.containsKey(ip)
+                    ? '没有公开起源 ASN'
+                    : _asnErrors.contains(ip)
+                        ? '查询失败，可重试'
+                        : '尚未查询'),
+            trailing: Text('${counts[ip]} 条连接')),
+    ]);
   }
 
   Widget graph(BuildContext context) {
     final monitor = widget.monitor;
-    if (!monitor.available || monitor.connections.isEmpty) {
+    final rows = _paused ?? monitor.connections;
+    if (_paused == null && !monitor.available) _sampler.reset();
+    if (view == 'asn') return _asnView(rows);
+    if ((_paused == null && !monitor.available) || rows.isEmpty) {
       return Padding(
           padding: const EdgeInsets.all(18),
-          child: Text(monitor.error == null
-              ? '暂无活动连接。通过代理访问网络后，链路会出现在这里。'
-              : '暂时无法读取连接，正在重试。'));
+          child: Text(monitor.error == null ? '暂无活动连接。' : '暂时无法读取连接，正在重试。'));
     }
-    final topology =
-        ConnectionTopology(monitor.connections, byIp: view == 'byIp');
-    // 实时速率：与上一帧（约 1s 前）差分。首帧不计。
-    final now = DateTime.now();
-    _rates.clear();
-    if (_prevAt != null) {
-      final secs =
-          now.difference(_prevAt!).inMilliseconds / 1000;
-      if (secs > 0.2) {
-        for (final e in topology.nodes.entries) {
-          final prev = _prevTotals[e.key];
-          if (prev != null) {
-            _rates[e.key] = (
-              math.max(0, e.value.upload - prev.$1) / secs,
-              math.max(0, e.value.download - prev.$2) / secs,
-            );
-          }
-        }
-      }
-    }
-    _prevTotals
-      ..clear()
-      ..addEntries(topology.nodes.entries
-          .map((e) => MapEntry(e.key, (e.value.upload, e.value.download))));
-    _prevAt = now;
+    final topology = ConnectionTopology(rows,
+        byIp: view == 'byIp' || (view == 'graph' && byIp),
+        deltas: _paused == null
+            ? _sampler.update(rows, _clock.elapsed)
+            : _frozenRates);
+    final rates = topology.rates;
     final columns = List.generate(
         4,
         (layer) => topology.nodes.keys.where((key) => key.$1 == layer).toList()
@@ -199,11 +204,9 @@ class _NetworkInfoState extends State<NetworkInfo> {
         'rule' => 2,
         _ => 3,
       };
-      final keys = topology.nodes.keys
-          .where((key) => key.$1 == layer)
-          .toList()
-        ..sort((a, b) => topology.nodes[b]!.count
-            .compareTo(topology.nodes[a]!.count));
+      final keys = topology.nodes.keys.where((key) => key.$1 == layer).toList()
+        ..sort((a, b) =>
+            topology.nodes[b]!.count.compareTo(topology.nodes[a]!.count));
       return Column(children: [
         for (final key in keys)
           Padding(
@@ -217,10 +220,9 @@ class _NetworkInfoState extends State<NetworkInfo> {
                           maxLines: 1, overflow: TextOverflow.ellipsis),
                       subtitle: Text(
                           '${topology.nodes[key]!.count} 条连接'
-                          '${_rates[key] == null ? '' : ' · ${_rateLabel(_rates[key])}'}',
+                          '${rates[key] == null ? '' : ' · ${_rateLabel(rates[key])}'}',
                           style: const TextStyle(fontSize: 11)),
-                      trailing: Text(
-                          bytesLabel(topology.nodes[key]!.download),
+                      trailing: Text(bytesLabel(topology.nodes[key]!.download),
                           style: const TextStyle(fontSize: 12))))),
       ]);
     }
@@ -240,10 +242,7 @@ class _NetworkInfoState extends State<NetworkInfo> {
             width: width,
             child: Column(children: [
               Row(children: [
-                for (final name in [
-                  ...layerNames,
-                  byIp ? '来源 IP' : '来源端口'
-                ])
+                for (final name in [...layerNames, byIp ? '来源 IP' : '来源端口'])
                   Expanded(child: Text(name)),
               ]),
               const SizedBox(height: 10),
@@ -292,11 +291,9 @@ class _NetworkInfoState extends State<NetworkInfo> {
                                             fontSize: 11,
                                             fontWeight: FontWeight.w600)),
                                   ]),
-                                  Text(
-                                      _rateLabel(_rates[e.key]),
+                                  Text(_rateLabel(rates[e.key]),
                                       style: const TextStyle(
-                                          fontSize: 10,
-                                          color: Colors.white70)),
+                                          fontSize: 10, color: Colors.white70)),
                                 ]),
                           )),
                   ])),
@@ -333,6 +330,21 @@ class _NetworkInfoState extends State<NetworkInfo> {
                         Text('网络信息',
                             style: Theme.of(context).textTheme.titleLarge),
                         Wrap(spacing: 6, children: [
+                          OutlinedButton.icon(
+                              onPressed: () => setState(() {
+                                    if (_paused == null) {
+                                      _paused = widget.monitor.connections;
+                                      _frozenRates = _sampler.update(
+                                          _paused!, _clock.elapsed);
+                                    } else {
+                                      _paused = null;
+                                      _sampler.reset();
+                                    }
+                                  }),
+                              icon: Icon(_paused == null
+                                  ? Icons.pause
+                                  : Icons.play_arrow),
+                              label: Text(_paused == null ? '暂停快照' : '恢复实时')),
                           for (final (mode, label) in viewTabs)
                             ChoiceChip(
                                 label: Text(label),
@@ -341,13 +353,16 @@ class _NetworkInfoState extends State<NetworkInfo> {
                                       view = mode;
                                       if (mode == 'byIp') byIp = true;
                                       if (mode == 'byPort') byIp = false;
-                                      if (mode != 'graph') {
-                                        _prevTotals.clear();
-                                        _prevAt = null;
-                                      }
                                     })),
                         ]),
                       ]),
+                  if (view == 'graph')
+                    Align(
+                        alignment: Alignment.centerLeft,
+                        child: TextButton(
+                            onPressed: () => setState(() => byIp = !byIp),
+                            child: Text(
+                                byIp ? '按来源 IP · 切换端口' : '按来源端口 · 切换 IP'))),
                   const SizedBox(height: 14),
                   ListenableBuilder(
                       listenable: widget.monitor,

@@ -7,6 +7,7 @@ import '../ui/node_widgets.dart';
 import '../ui/preferences.dart';
 import '../ui/import_menu.dart';
 import '../ui/motion.dart';
+import 'node_quality_panel.dart';
 
 class NodesPage extends StatefulWidget {
   const NodesPage(
@@ -23,6 +24,7 @@ class NodesPage extends StatefulWidget {
       required this.onMeasureAll,
       this.onCreateChain,
       this.onMeasureNode,
+      this.onQualitySample,
       this.onImportMethod});
   final List<NodeInfo> nodes;
   final List<Subscription> subscriptions;
@@ -33,6 +35,7 @@ class NodesPage extends StatefulWidget {
   final VoidCallback onImport, onMeasureAll;
   final VoidCallback? onCreateChain;
   final ValueChanged<NodeInfo>? onMeasureNode;
+  final Future<int?> Function(NodeInfo)? onQualitySample;
   final ValueChanged<String>? onImportMethod;
   @override
   State<NodesPage> createState() => _NodesPageState();
@@ -40,11 +43,16 @@ class NodesPage extends StatefulWidget {
 
 class _NodesPageState extends State<NodesPage> {
   String _query = '', _group = '', _source = '';
+  NodeInfo? _qualityNode;
   final Map<String, bool> _expanded = {};
   @override
   void didUpdateWidget(covariant NodesPage old) {
     super.didUpdateWidget(old);
-    if (!identical(old.nodes, widget.nodes)) _group = '';
+    if (!identical(old.nodes, widget.nodes)) {
+      _group = '';
+      if (!widget.nodes.contains(_qualityNode)) _qualityNode = null;
+    }
+    if (old.selectedIndex != widget.selectedIndex) _qualityNode = null;
   }
 
   bool _grid = false, _sort = false;
@@ -60,6 +68,8 @@ class _NodesPageState extends State<NodesPage> {
     showNodeDetails(context, n, widget.subscriptions, widget.latency,
         onSelect: widget.busy ? null : () => widget.onSelect(index),
         onMeasure: widget.busy ? null : () => widget.onMeasureNode?.call(n),
+        onQuality: !widget.running || widget.onQualitySample == null ? null :
+            () => setState(() => _qualityNode = n),
         onDelete: widget.running || widget.busy ? null : () => _delete(index));
   }
 
@@ -140,11 +150,17 @@ class _NodesPageState extends State<NodesPage> {
                     label: const Text('测速全部')),
                 ImportMenuButton(
                     label: '导入',
-                    enabled: !widget.busy && !widget.running,
+                    enabled: !widget.busy,
                     onSelected: (method) => widget.onImportMethod == null
                         ? widget.onImport()
                         : widget.onImportMethod!(method))
               ]),
+          if (widget.running && widget.onQualitySample != null &&
+              widget.selectedIndex >= 0 && widget.selectedIndex < widget.nodes.length) ...[
+            const SizedBox(height: 8),
+            NodeQualityPanel(node: _qualityNode ?? widget.nodes[widget.selectedIndex], measure: widget.onQualitySample!),
+            const SizedBox(height: 8),
+          ],
           SingleChildScrollView(
               scrollDirection: Axis.horizontal,
               child: Row(children: [

@@ -32,7 +32,7 @@ class DesktopSettings {
     return DesktopSettings(
         launchAtLogin: b('launchAtLogin', false),
         silentStart: b('silentStart', false),
-        autoRun: b('autoRun', false),
+        autoRun: b('startCoreOnOpen', true),
         onDemand: b('onDemand', false),
         processes: m['processes'] is List
             ? (m['processes'] as List).whereType<String>().toList()
@@ -50,6 +50,7 @@ class DesktopSettings {
         'launchAtLogin': launchAtLogin,
         'silentStart': silentStart,
         'autoRun': autoRun,
+        'startCoreOnOpen': autoRun,
         'onDemand': onDemand,
         'processes': processes,
         'userAgent': userAgent,

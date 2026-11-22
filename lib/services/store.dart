@@ -337,7 +337,7 @@ class Store {
         // Best effort; a wedged file will be overwritten by save().
       }
     }
-    return AppData();
+    return AppData(desktop: const DesktopSettings(autoRun: true));
   }
 
   Future<AppData?> _tryLoad(File file) async {
