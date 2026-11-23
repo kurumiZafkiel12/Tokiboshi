@@ -193,6 +193,48 @@ void main() {
     expect(polls, 3);
   });
 
+  test('Android can preview and save a source without stopping the current VPN',
+      () async {
+    final store = MemoryStore();
+    final bridge = FakeBridge();
+    final c = AndroidController(
+        bridge: bridge,
+        store: store,
+        data: store.data,
+        fetcher:
+            FakeFetcher({'https://fixture.example/sub': 'ss://fixture#phone'}));
+    addTearDown(c.dispose);
+    c.running = true;
+    const request = ImportRequest(text: 'https://fixture.example/sub');
+    await c.importRequest(request, approve: (summary) async {
+      expect(summary, contains('新增 1'));
+      return false;
+    });
+    expect(c.data.nodes, isEmpty);
+    await c.importRequest(request, approve: (_) async => true);
+    expect(c.data.nodes.single.name, 'phone');
+    expect(c.running, isTrue);
+    expect(c.message, contains('重新连接后'));
+  });
+
+  test('Android app allow and bypass settings are mutually exclusive',
+      () async {
+    final store = MemoryStore();
+    final c =
+        AndroidController(bridge: FakeBridge(), store: store, data: store.data);
+    addTearDown(c.dispose);
+    await c.saveVpnSettings(excludedApps: ['fixture.bypass']);
+    await c.saveVpnSettings(includedApps: ['fixture.allow', 'fixture.allow']);
+    expect(c.data.androidIncludedApps, ['fixture.allow']);
+    await expectLater(
+        c.saveVpnSettings(includedApps: []), throwsFormatException);
+    await c.saveVpnSettings(excludedApps: ['fixture.other']);
+    expect(c.data.androidIncludedApps, isNull);
+    expect(c.data.androidExcludedApps, ['fixture.other']);
+    await c.saveVpnSettings(allApps: true);
+    expect(c.data.androidExcludedApps, isEmpty);
+  });
+
   test('mobile failed persistence preserves prior nodes and configuration',
       () async {
     final store = FailingMobileStore();

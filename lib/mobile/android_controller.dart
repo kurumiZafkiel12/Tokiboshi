@@ -11,6 +11,8 @@ import '../services/node_selection.dart';
 import '../services/active_profile.dart';
 import '../services/clash_api.dart';
 import '../services/local_ports.dart';
+import '../services/quality_history.dart';
+import '../services/routing_targets.dart';
 import '../services/node_tags.dart';
 import '../services/subscription_fetcher.dart';
 import '../services/subscription_nodes.dart';
@@ -34,8 +36,20 @@ class AndroidController extends ChangeNotifier {
   AppData data;
   final monitor = RuntimeMonitor();
   final delays = <int, int?>{};
-  List<String> logs = [];
-  List<Map<String, dynamic>> rules = [];
+  late final qualityHistory = QualityHistory(store.dir);
+
+  Future<List<String>> readLogs() async =>
+      (await bridge.coreLogs()).map(redactDiagnostics).toList();
+
+  Future<List<Map<String, dynamic>>> readRules() async {
+    final client = api;
+    try {
+      return await client.rules();
+    } finally {
+      client.close();
+    }
+  }
+
   bool busy = false,
       running = false,
       importing = false,
@@ -83,14 +97,12 @@ class AndroidController extends ChangeNotifier {
     if (_refreshing || _disposed) return;
     _refreshing = true;
     final before = (running, mode, message);
-    final previousLogs = logs;
     try {
       final status = await bridge.coreStatus();
       if (_disposed) return;
       running = status.running;
       if (status.lastExit != null)
         message = redactDiagnostics(status.lastExit!);
-      logs = (await bridge.coreLogs()).map(redactDiagnostics).toList();
       monitor.configure(
         running: running,
         port: data.clashApiPort,
@@ -100,7 +112,6 @@ class AndroidController extends ChangeNotifier {
         final client = api;
         try {
           mode = (await client.mode())?.toLowerCase() ?? 'rule';
-          rules = await client.rules();
         } finally {
           client.close();
         }
@@ -109,8 +120,7 @@ class AndroidController extends ChangeNotifier {
       if (!busy) message = redactDiagnostics('$e');
     } finally {
       _refreshing = false;
-      if (before != (running, mode, message) || !listEquals(previousLogs, logs))
-        emit();
+      if (before != (running, mode, message)) emit();
     }
   }
 
@@ -310,22 +320,56 @@ class AndroidController extends ChangeNotifier {
           client.close();
         }
       });
+  Future<int?> sampleQuality(NodeInfo node) async {
+    if (!running) return null;
+    final nodes = profileNodes(data);
+    final index = nodes.indexOf(node);
+    if (index < 0) return null;
+    final session = monitor.startedAt;
+    final client = api;
+    try {
+      final delay = await client.delay(
+        assignNodeTags(nodes.map((n) => n.name))[index],
+        url: data.client.testUrl,
+        timeoutMs: data.client.testTimeoutMs,
+      );
+      return running && session == monitor.startedAt ? delay : null;
+    } finally {
+      client.close();
+    }
+  }
+
+  String? qualityKey(NodeInfo node) {
+    final target = Uri.tryParse(data.client.testUrl);
+    if (target == null ||
+        target.hasQuery ||
+        target.userInfo.isNotEmpty ||
+        target.hasFragment) return null;
+    final ref = routeNodeReference(node);
+    if (data.nodes.where((item) => routeNodeReference(item) == ref).length != 1)
+      return null;
+    return qualityHistory.key(
+        node, target.toString(), data.client.testTimeoutMs);
+  }
+
   Future<void> measure(int index) => operation(() async {
         if (!running) throw const FormatException('先连接 VPN，才能通过内核进行真实代理测速');
-        final nodes = profileNodes(data), node = data.nodes[index];
-        if (!nodes.contains(node)) throw const FormatException('节点不属于当前配置');
-        final client = api;
-        try {
-          delays[index] = await client.delay(
-            assignNodeTags(nodes.map((n) => n.name))[nodes.indexOf(node)],
-            url: data.client.testUrl,
-            timeoutMs: data.client.testTimeoutMs,
-          );
-        } finally {
-          client.close();
-        }
+        delays[index] = await sampleQuality(data.nodes[index]);
         emit();
       });
+
+  Future<void> editManualNode(NodeInfo original, NodeInfo replacement) =>
+      operation(() async {
+        if (running) throw const FormatException('请断开 VPN 后编辑节点');
+        final index = data.nodes.indexOf(original);
+        if (index < 0 || original.source.isNotEmpty) return;
+        final next = data.copyWith();
+        next.nodes[index] = replacement;
+        await commit(next);
+        delays.remove(index);
+        report('节点已保存');
+      });
+
   Future<void> removeNode(int index) => operation(() async {
         if (running) throw const FormatException('请停止 VPN 后删除');
         final old = data.selected, next = data.copyWith();

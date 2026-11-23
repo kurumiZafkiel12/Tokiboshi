@@ -6,6 +6,8 @@ import 'package:flutter/material.dart';
 import 'package:file_selector/file_selector.dart';
 
 import '../pages/connections_page.dart';
+import '../pages/node_quality_panel.dart';
+import '../ui/node_widgets.dart';
 import '../services/config_backup.dart';
 import '../ui/client_settings.dart';
 
@@ -420,14 +422,18 @@ class _AndroidShellState extends State<AndroidShell> {
                             .animate(animation),
                     child: child,
                   ),
-                  child: KeyedSubtree(
+                  child: Align(
                     key: ValueKey(page),
-                    child: switch (page) {
-                      0 => home(),
-                      1 => nodes(),
-                      2 => subscriptions(),
-                      _ => settings(),
-                    },
+                    alignment: Alignment.topCenter,
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 880),
+                      child: switch (page) {
+                        0 => home(),
+                        1 => nodes(),
+                        2 => subscriptions(),
+                        _ => settings(),
+                      },
+                    ),
                   ),
                 ),
               ),
@@ -878,6 +884,20 @@ class _AndroidShellState extends State<AndroidShell> {
                                     '协议：${n.protocol}\n服务器：${n.server}\n端口：${n.serverPort}\n分组：${n.group.isEmpty ? '未分组' : n.group}',
                                   );
                                 if (v == 'delay') c.measure(index);
+                                if (v == 'quality') {
+                                  await showNodeQuality(
+                                      context, n, c.sampleQuality,
+                                      history: c.qualityHistory,
+                                      historyKey: c.qualityKey(n),
+                                      host: Uri.tryParse(c.data.client.testUrl)
+                                          ?.host);
+                                }
+                                if (v == 'edit') {
+                                  final replacement =
+                                      await showNodeEditor(context, n);
+                                  if (replacement != null && mounted)
+                                    await c.editManualNode(n, replacement);
+                                }
                                 if (v == 'delete' &&
                                     await confirm('删除节点「${n.name}」？')) {
                                   final current = c.data.nodes.indexOf(n);
@@ -895,6 +915,17 @@ class _AndroidShellState extends State<AndroidShell> {
                                   enabled: !c.busy && c.running,
                                   child: const Text('内核测速'),
                                 ),
+                                PopupMenuItem(
+                                  value: 'quality',
+                                  enabled: !c.busy && c.running,
+                                  child: const Text('五次出口质量'),
+                                ),
+                                if (n.source.isEmpty)
+                                  PopupMenuItem(
+                                    value: 'edit',
+                                    enabled: !c.busy && !c.running,
+                                    child: const Text('编辑手动节点'),
+                                  ),
                                 PopupMenuItem(
                                   value: 'delete',
                                   enabled: !c.busy && !c.running,
@@ -1280,23 +1311,33 @@ class _AndroidShellState extends State<AndroidShell> {
     if (value != null) c.saveOptions(userAgent: value);
   }
 
-  void showRules() {
-    String body;
-    if (c.running)
-      body = c.rules.map((r) => jsonEncode(r)).join('\n\n');
-    else {
-      try {
-        final profile = activeProfile(c.data);
-        body = profile?.profileJson ?? '当前使用内置模板。实际运行规则在连接后由内核返回。';
-      } catch (e) {
-        body = '$e';
-      }
+  Future<void> showRules() async {
+    if (!c.running) {
+      info('已保存配置预览', '当前使用内置模板。实际运行规则在连接后由内核返回。');
+      return;
     }
-    info(c.running ? '内核运行规则' : '已保存配置预览', body.isEmpty ? '当前没有运行规则' : body);
+    try {
+      final rules = await c.readRules();
+      if (mounted)
+        info(
+            '内核运行规则',
+            rules.isEmpty
+                ? '当前没有运行规则'
+                : rules.map((rule) => jsonEncode(rule)).join('\n\n'));
+    } catch (e) {
+      if (mounted) c.report('无法读取运行规则：$e');
+    }
   }
 
-  void showLogs() =>
-      info('运行日志', c.logs.isEmpty ? '暂无内核运行日志。' : c.logs.join('\n'));
+  Future<void> showLogs() async {
+    try {
+      final logs = await c.readLogs();
+      if (mounted) info('运行日志', logs.isEmpty ? '暂无内核运行日志。' : logs.join('\n'));
+    } catch (e) {
+      if (mounted) c.report('无法读取运行日志：$e');
+    }
+  }
+
   void showClientSettings() => Navigator.of(context).push(
         MaterialPageRoute<void>(
           builder: (_) => Scaffold(
