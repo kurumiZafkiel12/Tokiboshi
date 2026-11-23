@@ -23,18 +23,19 @@ class ImportDialog extends StatefulWidget {
       {super.key,
       this.io = const ImportIo(),
       this.initialMethod = 'link',
+      this.initialText = '',
       this.canPreview = false});
   final bool canPreview;
   final ImportIo io;
-  final String initialMethod;
+  final String initialMethod, initialText;
   @override
   State<ImportDialog> createState() => _ImportDialogState();
 }
 
 class _ImportDialogState extends State<ImportDialog> {
   late String _method = widget.initialMethod;
+  late final _text = TextEditingController(text: widget.initialText);
   final _name = TextEditingController(),
-      _text = TextEditingController(),
       _server = TextEditingController(),
       _port = TextEditingController(text: '443'),
       _uuid = TextEditingController(),

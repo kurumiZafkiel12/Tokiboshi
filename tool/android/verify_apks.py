@@ -9,14 +9,14 @@ def alignment(data):
  if cls==2:offset=struct.unpack_from('<Q',data,32)[0];size,count=struct.unpack_from('<HH',data,54);fmt='<IIQQQQQQ'
  else:offset=struct.unpack_from('<I',data,28)[0];size,count=struct.unpack_from('<HH',data,42);fmt='<IIIIIIII'
  return [struct.unpack_from(fmt,data,offset+i*size)[-1] for i in range(count) if struct.unpack_from('<I',data,offset+i*size)[0]==1]
-for abi,code in [('arm64-v8a',2015),('armeabi-v7a',1015),('x86_64',4015)]:
+for abi,code in [('arm64-v8a',2022),('armeabi-v7a',1022),('x86_64',4022)]:
  source=root/f'build/app/outputs/flutter-apk/app-{abi}-release.apk';assert source.is_file(),source
- apk=packages/f'Tokiboshi-0.1.0-android-{abi}.apk';apk.write_bytes(source.read_bytes())
+ apk=packages/f'Tokiboshi-0.1.5-android-{abi}.apk';apk.write_bytes(source.read_bytes())
  check=subprocess.run([str(tools/'apksigner'),'verify','--verbose','--print-certs',str(apk)],capture_output=True,text=True,check=True).stdout
  match=re.search(r'Signer #1 certificate SHA-256 digest: ([0-9a-fA-F]+)',check);assert match and match[1].lower()==expected_cert
  assert 'Android Debug' not in check
  badging=subprocess.run([str(tools/'aapt'),'dump','badging',str(apk)],capture_output=True,text=True,check=True).stdout
- assert "name='site.kurumizafkiel.tokiboshi'" in badging and f"versionCode='{code}'" in badging and "versionName='0.1.0'" in badging
+ assert "name='site.kurumizafkiel.tokiboshi'" in badging and f"versionCode='{code}'" in badging and "versionName='0.1.5'" in badging
  assert "sdkVersion:'24'" in badging and "targetSdkVersion:'35'" in badging
  libraries={}
  with zipfile.ZipFile(apk) as z:
@@ -30,5 +30,5 @@ for abi,code in [('arm64-v8a',2015),('armeabi-v7a',1015),('x86_64',4015)]:
  subprocess.run([str(tools/'zipalign'),'-c','-P','16','4',str(apk)],capture_output=True,text=True,check=True)
  results[apk.name]={'abi':abi,'versionCode':code,'certificateSha256':expected_cert,'sha256':hashlib.sha256(apk.read_bytes()).hexdigest(),'bytes':apk.stat().st_size,'libraries':libraries,'signatureVerified':True,'zipCrcPassed':True,'alignment16KiB':True}
 (packages/'SHA256SUMS-android.txt').write_text(''.join(f"{value['sha256']}  {name}\n" for name,value in results.items()))
-(packages/'android-package-verification.json').write_text(json.dumps({'releaseTag':'v0.1.0','packages':results,'passed':True},indent=2)+'\n')
+(packages/'android-package-verification.json').write_text(json.dumps({'releaseTag':'v0.1.5','packages':results,'passed':True},indent=2)+'\n')
 print('Three signed APKs verified: ABI, version, signer, native libraries, CRC and alignment')

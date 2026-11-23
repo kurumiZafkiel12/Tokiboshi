@@ -72,17 +72,17 @@ class AndroidApp extends StatefulWidget {
 class _AndroidAppState extends State<AndroidApp> with WidgetsBindingObserver {
   late final ui = ValueNotifier(widget.controller.data.ui);
   AndroidController get controller => widget.controller;
+  Future<void>? _ready;
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     controller.addListener(changed);
-    if (widget.initialize)
-      unawaited(
-        controller.initialize().catchError(
-              (Object e) => controller.report('初始化失败：$e'),
-            ),
-      );
+    if (widget.initialize) {
+      _ready = controller.initialize().catchError(
+            (Object e) => controller.report('初始化失败：$e'),
+          );
+    }
   }
 
   void changed() {
@@ -92,7 +92,7 @@ class _AndroidAppState extends State<AndroidApp> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    controller.foreground = state == AppLifecycleState.resumed;
+    controller.setForeground(state == AppLifecycleState.resumed);
     if (controller.foreground) {
       unawaited(
         controller.refresh().then((_) => controller.refreshDueSources()),
@@ -135,7 +135,8 @@ class _AndroidAppState extends State<AndroidApp> with WidgetsBindingObserver {
             style: OutlinedButton.styleFrom(minimumSize: const Size(48, 44)),
           ),
         ),
-        home: AndroidShell(controller: controller, importIo: widget.importIo),
+        home: AndroidShell(
+            controller: controller, importIo: widget.importIo, ready: _ready),
       ),
     );
   }
@@ -146,9 +147,11 @@ class AndroidShell extends StatefulWidget {
     super.key,
     required this.controller,
     required this.importIo,
+    this.ready,
   });
   final AndroidController controller;
   final ImportIo importIo;
+  final Future<void>? ready;
   @override
   State<AndroidShell> createState() => _AndroidShellState();
 }
@@ -168,13 +171,82 @@ class _AndroidShellState extends State<AndroidShell> {
     }
   }
 
-  Future<void> import([String method = 'link']) async {
-    if (c.busy || c.running) return;
+  bool _drainingEntry = false;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.ready != null) {
+      androidVpnChannel.setMethodCallHandler((call) async {
+        if (call.method == 'entryChanged') await _drainEntries();
+      });
+      WidgetsBinding.instance.addPostFrameCallback((_) => _drainEntries());
+    }
+  }
+
+  @override
+  void dispose() {
+    if (widget.ready != null) androidVpnChannel.setMethodCallHandler(null);
+    super.dispose();
+  }
+
+  Future<void> _drainEntries() async {
+    if (_drainingEntry || !mounted) return;
+    _drainingEntry = true;
+    try {
+      await widget.ready;
+      while (mounted) {
+        final entry = await androidVpnChannel
+            .invokeMapMethod<String, String>('takeEntry');
+        if (!mounted || entry == null) break;
+        if (entry['type'] == 'connect') await c.connectIfStopped();
+        if (entry['type'] == 'share') await import('link', entry['text'] ?? '');
+      }
+    } catch (e) {
+      if (mounted) c.report('无法处理系统操作：$e');
+    } finally {
+      _drainingEntry = false;
+    }
+  }
+
+  Future<void> import([String method = 'link', String initialText = '']) async {
+    if (c.busy) {
+      if (initialText.isNotEmpty) c.report('操作进行中，请完成后再次分享');
+      return;
+    }
     final request = await showDialog<ImportRequest>(
       context: context,
-      builder: (_) => ImportDialog(io: widget.importIo, initialMethod: method),
+      builder: (_) => ImportDialog(
+        io: widget.importIo,
+        initialMethod: method,
+        initialText: initialText,
+        canPreview: true,
+      ),
     );
-    if (request != null && mounted) await c.importRequest(request);
+    if (request != null && mounted) {
+      await c.importRequest(request,
+          approve: request.preview ? _approveImport : null);
+    }
+  }
+
+  Future<bool> _approveImport(String summary) async {
+    if (!mounted) return false;
+    return await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text('仅节点导入预览'),
+            content: SingleChildScrollView(child: Text(summary)),
+            actions: [
+              TextButton(
+                  onPressed: () => Navigator.pop(ctx, false),
+                  child: const Text('取消')),
+              FilledButton(
+                  onPressed: () => Navigator.pop(ctx, true),
+                  child: const Text('确认保存')),
+            ],
+          ),
+        ) ??
+        false;
   }
 
   Future<bool> confirm(String text) async =>
@@ -231,7 +303,7 @@ class _AndroidShellState extends State<AndroidShell> {
       );
   Widget addButton() => PopupMenuButton<String>(
         tooltip: '导入节点或订阅',
-        enabled: !c.busy && !c.running,
+        enabled: !c.busy,
         onSelected: import,
         itemBuilder: (_) => [
           for (final item in [
@@ -337,19 +409,16 @@ class _AndroidShellState extends State<AndroidShell> {
                 ),
               Expanded(
                 child: AnimatedSwitcher(
-                  duration: UiScope.duration(context, 240),
+                  duration: UiScope.duration(context, 160),
+                  reverseDuration: Duration.zero,
                   switchInCurve: Curves.easeOutCubic,
-                  layoutBuilder: (current, previous) => Stack(
-                    fit: StackFit.expand,
-                    children: [
-                      for (final old in previous)
-                        IgnorePointer(
-                          child: ExcludeSemantics(
-                            child: TickerMode(enabled: false, child: old),
-                          ),
-                        ),
-                      if (current != null) current,
-                    ],
+                  layoutBuilder: (current, _) =>
+                      current ?? const SizedBox.shrink(),
+                  transitionBuilder: (child, animation) => SlideTransition(
+                    position:
+                        Tween(begin: const Offset(.018, 0), end: Offset.zero)
+                            .animate(animation),
+                    child: child,
                   ),
                   child: KeyedSubtree(
                     key: ValueKey(page),
@@ -373,33 +442,35 @@ class _AndroidShellState extends State<AndroidShell> {
             ],
           ),
         ),
-        bottomNavigationBar: NavigationBar(
-          height: 68,
-          selectedIndex: page,
-          onDestinationSelected: (v) => setState(() => page = v),
-          destinations: const [
-            NavigationDestination(
-              icon: Icon(Icons.dashboard_outlined),
-              selectedIcon: Icon(Icons.dashboard),
-              label: '连接',
-            ),
-            NavigationDestination(
-              icon: Icon(Icons.dns_outlined),
-              selectedIcon: Icon(Icons.dns),
-              label: '节点',
-            ),
-            NavigationDestination(
-              icon: Icon(Icons.inventory_2_outlined),
-              selectedIcon: Icon(Icons.inventory_2),
-              label: '订阅',
-            ),
-            NavigationDestination(
-              icon: Icon(Icons.settings_outlined),
-              selectedIcon: Icon(Icons.settings),
-              label: '设置',
-            ),
-          ],
-        ),
+        bottomNavigationBar: MediaQuery.viewInsetsOf(context).bottom > 0
+            ? null
+            : NavigationBar(
+                height: MediaQuery.sizeOf(context).height < 480 ? 56 : 68,
+                selectedIndex: page,
+                onDestinationSelected: (v) => setState(() => page = v),
+                destinations: const [
+                  NavigationDestination(
+                    icon: Icon(Icons.dashboard_outlined),
+                    selectedIcon: Icon(Icons.dashboard),
+                    label: '连接',
+                  ),
+                  NavigationDestination(
+                    icon: Icon(Icons.dns_outlined),
+                    selectedIcon: Icon(Icons.dns),
+                    label: '节点',
+                  ),
+                  NavigationDestination(
+                    icon: Icon(Icons.inventory_2_outlined),
+                    selectedIcon: Icon(Icons.inventory_2),
+                    label: '订阅',
+                  ),
+                  NavigationDestination(
+                    icon: Icon(Icons.settings_outlined),
+                    selectedIcon: Icon(Icons.settings),
+                    label: '设置',
+                  ),
+                ],
+              ),
       );
   Widget connection({bool compact = false}) => MobilePanel(
         accent: true,
@@ -848,7 +919,7 @@ class _AndroidShellState extends State<AndroidShell> {
           '还没有订阅',
           '支持链接、文件、二维码图片、剪贴板和自定义节点。',
           action: OutlinedButton(
-            onPressed: c.busy || c.running ? null : () => import(),
+            onPressed: c.busy ? null : () => import(),
             child: const Text('添加来源'),
           ),
         )

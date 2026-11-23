@@ -186,6 +186,32 @@ class AndroidVpnTest {
             val images=File(context.getExternalFilesDir(null),"screenshots").apply{mkdirs()};device.takeScreenshot(File(images,"android-connected.png"))
             click("节点");device.takeScreenshot(File(images,"android-nodes.png"));click("设置");device.takeScreenshot(File(images,"android-settings.png"));click("连接")
             click("停止 VPN");await("二次停止"){VpnState.phase=="stopped"&&TokiboshiVpnService.instance==null};evidence.put("repeatConnect",true)
+
+            val shared = "https://fixture.example/subscription"
+            shell("am start -n ${context.packageName}/.MainActivity -a android.intent.action.SEND -t text/plain --es android.intent.extra.TEXT $shared")
+            await("系统分享填入导入编辑器"){device.hasObject(By.text(shared).pkg(context.packageName))}
+            device.pressBack()
+            // Back first hides the keyboard if the system opened it.
+            if (device.hasObject(By.text(shared).pkg(context.packageName))) device.pressBack()
+            await("取消分享导入"){!device.hasObject(By.text(shared).pkg(context.packageName))}
+            evidence.put("sharedLinkReview",true)
+
+            val tile = "${context.packageName}/.VpnQuickTile"
+            shell("cmd statusbar add-tile $tile")
+            shell("cmd statusbar expand-settings")
+            Thread.sleep(750)
+            shell("cmd statusbar click-tile $tile")
+            await("快捷磁贴从已保存的出口启动 VPN"){VpnState.phase=="running"}
+            assertTrue(request().contains("TOKIBOSHI_PROXY_B"))
+            evidence.put("quickTile", true)
+            val manager=context.getSystemService(android.app.NotificationManager::class.java)
+            val action=manager.activeNotifications.flatMap{it.notification.actions?.toList().orEmpty()}
+                .single{it.title.toString()=="断开 VPN"}
+            action.actionIntent.send()
+            await("通知动作停止 VPN 并清理接口"){VpnState.phase=="stopped"&&TokiboshiVpnService.instance==null}
+            shell("cmd statusbar remove-tile $tile")
+            shell("cmd statusbar collapse")
+            evidence.put("notificationStop",true)
         }
         // Native DNS fixture exercises UDP interception from the independent shell UID.
         val original=JSONObject(File(context.filesDir,"config.json").readText())
@@ -193,6 +219,16 @@ class AndroidVpnTest {
         original.getJSONObject("route").put("default_domain_resolver","dns-fixture")
         val dnsConfig=File(context.filesDir,"android-dns-fixture.json").apply{writeText(original.toString())}
         ActivityScenario.launch(MainActivity::class.java).use {
+            val onlySettings=Intent(context,TokiboshiVpnService::class.java)
+                .putExtra("configPath",dnsConfig.path)
+                .putStringArrayListExtra("includedApps",arrayListOf("com.android.settings"))
+            context.startForegroundService(onlySettings)
+            await("指定应用 VPN 建立"){VpnState.phase=="running"}
+            assertFalse("未列入的 shell UID 不得走代理",request().contains("TOKIBOSHI_PROXY_"))
+            assertTrue(request("10.0.2.2",18081).contains("TOKIBOSHI_DIRECT"))
+            TokiboshiVpnService.instance?.requestStop()
+            await("分应用 VPN 已停止"){VpnState.phase=="stopped"&&TokiboshiVpnService.instance==null}
+            evidence.put("appAllowList",true)
             context.startForegroundService(Intent(context,TokiboshiVpnService::class.java).putExtra("configPath",dnsConfig.path))
             await("DNS测试 VPN"){VpnState.phase=="running"}
             val query=byteArrayOf(0x12,0x34,1,0,0,1,0,0,0,0,0,0,7)+"fixture".toByteArray()+byteArrayOf(7)+"example".toByteArray()+byteArrayOf(0,0,1,0,1)

@@ -17,6 +17,7 @@ import java.util.concurrent.atomic.AtomicInteger
 /** All core lifecycle operations are serialized; stopping invalidates in-flight starts. */
 class TokiboshiVpnService : VpnService(), PlatformInterface, CommandServerHandler {
     companion object {
+        private const val ACTION_STOP = "site.kurumizafkiel.tokiboshi.STOP"
         @Volatile var instance:TokiboshiVpnService?=null
         const val CHANNEL="tokiboshi-vpn"
         // Share the lifecycle queue across service instances so an old destroy cannot
@@ -29,7 +30,8 @@ class TokiboshiVpnService : VpnService(), PlatformInterface, CommandServerHandle
     @Volatile private var latestStartId=0
     private var server:CommandServer?=null
     private var logClient:CommandClient?=null
-    @Volatile private var excludedApps: List<String> = emptyList()
+    private var includedApps: List<String>? = null
+    private var excludedApps: List<String> = emptyList()
     private var tunnel:ParcelFileDescriptor?=null
     private val connectivity by lazy { getSystemService(ConnectivityManager::class.java) }
     @Volatile private var listener:InterfaceUpdateListener?=null
@@ -45,21 +47,28 @@ class TokiboshiVpnService : VpnService(), PlatformInterface, CommandServerHandle
     override fun onCreate(){super.onCreate();instance=this}
     override fun onStartCommand(intent:Intent?,flags:Int,startId:Int):Int {
         latestStartId=startId
+        if (intent?.action == ACTION_STOP) {
+            requestStop()
+            return START_NOT_STICKY
+        }
         val token=generation.incrementAndGet()
         VpnState.phase="starting";VpnState.error=null
         showNotification("正在连接…")
         val path=intent?.getStringExtra("configPath")
         val exclusions = intent?.getStringArrayListExtra("excludedApps").orEmpty().distinct()
+        val inclusions = intent?.getStringArrayListExtra("includedApps")?.distinct()
         worker.execute {
             try {
                 require(path!=null) {"缺少配置文件"}
                 closeCore()
                 if(token!=generation.get())return@execute
                 excludedApps = exclusions
+                includedApps = inclusions
                 val directory=filesDir.absolutePath
+                val version = packageManager.getPackageInfo(packageName, 0).versionName.orEmpty()
                 Libbox.setup(SetupOptions().apply {
                     basePath=directory;workingPath=directory;tempPath=cacheDir.absolutePath
-                    fixAndroidStack=true;logMaxLines=400;appVersion="0.0.9-r2-android";appMarketingVersion="0.0.9"
+                    fixAndroidStack=true;logMaxLines=400;appVersion=version;appMarketingVersion=version
                 })
                 val content=File(path).readText()
                 Libbox.checkConfig(content)
@@ -134,6 +143,12 @@ class TokiboshiVpnService : VpnService(), PlatformInterface, CommandServerHandle
         if(Build.VERSION.SDK_INT>=26)manager.createNotificationChannel(NotificationChannel(CHANNEL,"VPN 连接",NotificationManager.IMPORTANCE_LOW))
         val pending=PendingIntent.getActivity(this,0,Intent(this,MainActivity::class.java),PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         val builder=if(Build.VERSION.SDK_INT>=26)android.app.Notification.Builder(this,CHANNEL)else android.app.Notification.Builder(this)
+        val stop = PendingIntent.getService(this, 1,
+            Intent(this, TokiboshiVpnService::class.java).setAction(ACTION_STOP),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+        builder.addAction(android.app.Notification.Action.Builder(
+            android.graphics.drawable.Icon.createWithResource(this, R.drawable.ic_vpn), "断开 VPN", stop
+        ).build())
         startForeground(1,builder.setSmallIcon(site.kurumizafkiel.tokiboshi.R.drawable.ic_vpn).setContentTitle(getString(R.string.app_name)).setContentText(text).setContentIntent(pending).setOngoing(true).build())
     }
     override fun openTun(options:TunOptions):Int {
@@ -152,13 +167,28 @@ class TokiboshiVpnService : VpnService(), PlatformInterface, CommandServerHandle
             if(!has6 && options.inet6Address.hasNext())b.addRoute("::",0)
         }
         // Own subscription/control traffic must never recurse through the tunnel.
-        b.addDisallowedApplication(packageName)
-        for (app in excludedApps) {
-            if (app == packageName) continue
-            try {
-                b.addDisallowedApplication(app)
-            } catch (_: android.content.pm.PackageManager.NameNotFoundException) {
-                VpnState.log("已跳过不可用的排除应用：$app")
+        val allowed = includedApps
+        if (allowed != null) {
+            var count = 0
+            for (app in allowed) {
+                if (app == packageName) continue
+                try {
+                    b.addAllowedApplication(app)
+                    count++
+                } catch (_: android.content.pm.PackageManager.NameNotFoundException) {
+                    VpnState.log("已跳过卸载的指定应用：$app")
+                }
+            }
+            check(count > 0) { "所选应用已卸载，请重新选择通过 VPN 的应用" }
+        } else {
+            b.addDisallowedApplication(packageName)
+            for (app in excludedApps) {
+                if (app == packageName) continue
+                try {
+                    b.addDisallowedApplication(app)
+                } catch (_: android.content.pm.PackageManager.NameNotFoundException) {
+                    VpnState.log("已跳过不可用的排除应用：$app")
+                }
             }
         }
         val descriptor=b.establish() ?: error("系统拒绝创建 VPN 网卡")

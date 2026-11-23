@@ -162,6 +162,7 @@ class AppData {
     this.templateRouting = const {},
     this.androidMtu = 1500,
     this.androidExcludedApps = const [],
+    this.androidIncludedApps,
   }) : clashApiSecret = clashApiSecret ?? '';
 
   List<NodeInfo> nodes;
@@ -222,6 +223,7 @@ class AppData {
   Map<String, String> templateRouting;
   int androidMtu;
   List<String> androidExcludedApps;
+  List<String>? androidIncludedApps;
 
   /// null: legacy unique-source inference; empty: explicit built-in template.
   String? activeProfileId;
@@ -259,6 +261,7 @@ class AppData {
         templateRouting: Map.of(templateRouting),
         androidMtu: androidMtu,
         androidExcludedApps: List.of(androidExcludedApps),
+        androidIncludedApps: androidIncludedApps?.toList(),
         activeProfileId: activeProfileId,
       );
 }
@@ -409,6 +412,12 @@ class Store {
                 [1280, 1400, 1500].contains(map['androidMtu'])
             ? map['androidMtu'] as int
             : 1500,
+        androidIncludedApps: (map['androidIncludedApps'] is List
+            ? (map['androidIncludedApps'] as List)
+                .whereType<String>()
+                .take(512)
+                .toList()
+            : null),
         androidExcludedApps: (map['androidExcludedApps'] is List
             ? (map['androidExcludedApps'] as List)
                 .whereType<String>()
@@ -468,6 +477,7 @@ class Store {
         'ruleSetAutoUpdate': data.ruleSetAutoUpdate,
         'androidMtu': data.androidMtu,
         'androidExcludedApps': data.androidExcludedApps,
+        'androidIncludedApps': data.androidIncludedApps,
         'activeProfileId': data.activeProfileId,
       };
 

@@ -9,6 +9,7 @@ class RuntimeMonitor extends ChangeNotifier {
   Timer? _timer;
   bool _fetching = false, _disposed = false;
   int _generation = 0;
+  bool _samplingEnabled = true;
   int download = 0, upload = 0;
   double downSpeed = 0, upSpeed = 0;
   DateTime? startedAt, _lastSample;
@@ -50,6 +51,19 @@ class RuntimeMonitor extends ChangeNotifier {
     upload = 0;
     downHistory = [];
     upHistory = [];
+    _startSampling();
+  }
+
+  void setSamplingEnabled(bool enabled) {
+    if (_samplingEnabled == enabled) return;
+    _samplingEnabled = enabled;
+    _timer?.cancel();
+    _lastSample = null;
+    _startSampling();
+  }
+
+  void _startSampling() {
+    if (!_samplingEnabled || _api == null || _disposed) return;
     sample();
     _timer = Timer.periodic(const Duration(seconds: 1), (_) => sample());
   }
@@ -57,11 +71,11 @@ class RuntimeMonitor extends ChangeNotifier {
   Future<void> sample() async {
     final api = _api;
     final generation = _generation;
-    if (api == null || _fetching || _disposed) return;
+    if (api == null || _fetching || _disposed || !_samplingEnabled) return;
     _fetching = true;
     try {
       final v = await api.connections();
-      if (_disposed || generation != _generation) return;
+      if (_disposed || generation != _generation || !_samplingEnabled) return;
       final now = DateTime.now();
       final nextDown = (v['downloadTotal'] as num?)?.toInt() ?? 0;
       final nextUp = (v['uploadTotal'] as num?)?.toInt() ?? 0;
@@ -84,7 +98,7 @@ class RuntimeMonitor extends ChangeNotifier {
       error = null;
       notifyListeners();
     } catch (_) {
-      if (!_disposed && generation == _generation) {
+      if (!_disposed && generation == _generation && _samplingEnabled) {
         available = false;
         error = '控制器暂不可达，正在重试';
         downSpeed = 0;

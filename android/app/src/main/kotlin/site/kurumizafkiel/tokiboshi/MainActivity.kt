@@ -1,6 +1,9 @@
 package site.kurumizafkiel.tokiboshi
 
 import android.app.Activity
+import android.app.StatusBarManager
+import android.content.ComponentName
+import android.graphics.drawable.Icon
 import android.content.Intent
 import android.content.ClipboardManager
 import java.io.ByteArrayOutputStream
@@ -14,14 +17,54 @@ import io.nekohasekai.libbox.Libbox
 import java.io.File
 
 class MainActivity : FlutterActivity() {
+    private var entryChannel: MethodChannel? = null
+    private var pendingEntry: Map<String, String>? = null
+
+    private fun stageEntry(intent: Intent) {
+        val entry = when (intent.action) {
+            ACTION_CONNECT -> if (intent.getStringExtra(EXTRA_CONNECT_TOKEN) == connectToken) mapOf("type" to "connect") else null
+            Intent.ACTION_SEND -> intent.getCharSequenceExtra(Intent.EXTRA_TEXT)
+                ?.toString()?.takeIf { it.isNotBlank() && it.length <= 65536 }
+                ?.let { mapOf("type" to "share", "text" to it) }
+            else -> null
+        } ?: return
+        intent.action = Intent.ACTION_MAIN
+        intent.removeExtra(Intent.EXTRA_TEXT)
+        intent.removeExtra(EXTRA_CONNECT_TOKEN)
+        pendingEntry = entry
+        entryChannel?.invokeMethod("entryChanged", null)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        stageEntry(intent)
+    }
+
     private var pendingBackup: Pair<File, MethodChannel.Result>? = null
     private var pendingPermission: MethodChannel.Result? = null
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "site.kurumizafkiel.tokiboshi/vpn")
-            .setMethodCallHandler { call, result ->
+        val channel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "site.kurumizafkiel.tokiboshi/vpn")
+        entryChannel = channel
+        stageEntry(intent)
+        channel.setMethodCallHandler { call, result ->
                 try {
                     when (call.method) {
+                        "takeEntry" -> {
+                            result.success(pendingEntry)
+                            pendingEntry = null
+                        }
+                        "addQuickTile" -> {
+                            if (Build.VERSION.SDK_INT < 33) {
+                                result.success(null)
+                            } else {
+                                getSystemService(StatusBarManager::class.java).requestAddTileService(
+                                    ComponentName(this, VpnQuickTile::class.java), getString(R.string.app_name),
+                                    Icon.createWithResource(this, R.drawable.ic_vpn), mainExecutor
+                                ) { code -> result.success(code) }
+                            }
+                        }
                         "directories" -> result.success(mapOf("files" to filesDir.path, "cache" to cacheDir.path))
                         "vpnApps" -> {
                             val launcher = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
@@ -59,11 +102,19 @@ class MainActivity : FlutterActivity() {
                             val path = call.argument<String>("configPath") ?: error("缺少配置路径")
                             val file = File(path).canonicalFile
                             require(file.path.startsWith(filesDir.canonicalPath + File.separator) && file.isFile) { "无效的私有配置文件" }
-                            if (Build.VERSION.SDK_INT >= 33) requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 9002)
+                            if (Build.VERSION.SDK_INT >= 33 &&
+                                checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED &&
+                                !getPreferences(MODE_PRIVATE).getBoolean("notificationAsked", false)) {
+                                getPreferences(MODE_PRIVATE).edit().putBoolean("notificationAsked", true).apply()
+                                requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 9002)
+                            }
                             val intent = Intent(this, TokiboshiVpnService::class.java).putExtra("configPath",file.path)
                             val excluded = call.argument<List<String>>("excludedApps").orEmpty()
                             require(excluded.size <= 512) { "排除应用过多" }
+                            val included = call.argument<List<String>>("includedApps")
+                            require(included == null || (included.isNotEmpty() && included.size <= 512)) { "请选择允许通过 VPN 的应用" }
                             intent.putStringArrayListExtra("excludedApps", ArrayList(excluded))
+                            if (included != null) intent.putStringArrayListExtra("includedApps", ArrayList(included))
                             if (Build.VERSION.SDK_INT >= 26) startForegroundService(intent) else startService(intent)
                             result.success(null)
                         }
@@ -132,7 +183,14 @@ class MainActivity : FlutterActivity() {
         if(requestCode==9001) { pendingPermission?.success(resultCode==Activity.RESULT_OK);pendingPermission=null }
     }
     override fun onDestroy() {
+        entryChannel?.setMethodCallHandler(null)
+        entryChannel = null
         pendingBackup?.second?.success(false)
         pendingBackup = null
         pendingPermission?.error("cancelled","授权窗口已关闭",null);pendingPermission=null;super.onDestroy() }
+    companion object {
+        val connectToken: String = java.util.UUID.randomUUID().toString()
+        const val EXTRA_CONNECT_TOKEN = "connectToken"
+        const val ACTION_CONNECT = "site.kurumizafkiel.tokiboshi.CONNECT"
+    }
 }

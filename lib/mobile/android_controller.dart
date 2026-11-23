@@ -13,6 +13,7 @@ import '../services/clash_api.dart';
 import '../services/local_ports.dart';
 import '../services/node_tags.dart';
 import '../services/subscription_fetcher.dart';
+import '../services/subscription_nodes.dart';
 import '../services/subscription_resolver.dart';
 import '../services/import_content.dart';
 import '../ui/diagnostics.dart';
@@ -59,14 +60,16 @@ class AndroidController extends ChangeNotifier {
   }
 
   Future<void> initialize({bool poll = true}) async {
-    if (data.clashApiSecret.isEmpty) {
-      final next = data.copyWith();
+    final next = data.copyWith();
+    final migrated = migrateSubscriptionNodes(next);
+    if (next.clashApiSecret.isEmpty)
       next.clashApiSecret = generateClashSecret();
-      await commit(next);
-    }
+    if (migrated || data.clashApiSecret.isEmpty) await commit(next);
     await refresh();
     if (poll)
-      _timer = Timer.periodic(const Duration(seconds: 2), (_) => refresh());
+      _timer = Timer.periodic(const Duration(seconds: 2), (_) {
+        if (foreground) refresh();
+      });
     if (!running && data.autoConnect && data.selected != null) await toggle();
     if (poll && !_disposed) {
       _sourceTimer = Timer.periodic(
@@ -79,6 +82,8 @@ class AndroidController extends ChangeNotifier {
   Future<void> refresh() async {
     if (_refreshing || _disposed) return;
     _refreshing = true;
+    final before = (running, mode, message);
+    final previousLogs = logs;
     try {
       final status = await bridge.coreStatus();
       if (_disposed) return;
@@ -104,8 +109,20 @@ class AndroidController extends ChangeNotifier {
       if (!busy) message = redactDiagnostics('$e');
     } finally {
       _refreshing = false;
-      emit();
+      if (before != (running, mode, message) || !listEquals(previousLogs, logs))
+        emit();
     }
+  }
+
+  void setForeground(bool value) {
+    foreground = value;
+    monitor.setSamplingEnabled(value);
+  }
+
+  Future<void> connectIfStopped() async {
+    if (busy || running || await bridge.coreRunning() || busy || running)
+      return;
+    await toggle();
   }
 
   Future<void> commit(AppData next) async {
@@ -213,7 +230,8 @@ class AndroidController extends ChangeNotifier {
           await android.startCore(
               singBoxPath: 'libbox://1.14.4',
               configPath: file.path,
-              excludedApps: data.androidExcludedApps);
+              excludedApps: data.androidExcludedApps,
+              includedApps: data.androidIncludedApps);
         } else {
           await bridge.startCore(
               singBoxPath: 'libbox://1.14.4', configPath: file.path);
@@ -237,10 +255,13 @@ class AndroidController extends ChangeNotifier {
         if (running) {
           final client = api;
           try {
-            await client.select(
-              'proxy',
-              assignNodeTags(nodes.map((n) => n.name))[nodes.indexOf(node)],
-            );
+            final tag =
+                assignNodeTags(nodes.map((n) => n.name))[nodes.indexOf(node)];
+            final group = await client.proxy('proxy');
+            if (group['all'] is List && !(group['all'] as List).contains(tag)) {
+              throw const FormatException('该节点已保存，请断开并重新连接后使用');
+            }
+            await client.select('proxy', tag);
           } finally {
             client.close();
           }
@@ -384,9 +405,9 @@ class AndroidController extends ChangeNotifier {
         : await resolver.resolveContent(content, nodesOnly: true);
   }
 
-  Future<void> importRequest(ImportRequest request) =>
+  Future<void> importRequest(ImportRequest request,
+          {Future<bool> Function(String)? approve}) =>
       operation(() async {
-        if (running) throw const FormatException('请先停止 VPN 再导入');
         importing = true;
         report('正在解析导入来源…');
         final text = normalizeImportText(request.text),
@@ -414,6 +435,7 @@ class AndroidController extends ChangeNotifier {
           sources.add((url: '', content: text, manual: request.manual));
         }
         final next = data.copyWith();
+        final preview = <String>[];
         for (final source in sources) {
           final outcome = await _resolve(
             url: source.url,
@@ -422,24 +444,31 @@ class AndroidController extends ChangeNotifier {
           if (cancelling || _disposed) throw const ImportCancelled();
           if (!outcome.nodes.any((n) => !n.isPolicy))
             throw const FormatException('没有识别到可用节点');
-          final manual = source.manual && outcome.profileJson == null;
+          final manual = source.manual;
           final id = manual
               ? ''
               : 'android-${DateTime.now().microsecondsSinceEpoch}-${next.subscriptions.length}';
-          final nodes = resolvePolicyGroups(
-            outcome.nodes.map((n) => n.withSource(id)).toList(),
-          );
+          final nodes = outcome.nodes
+              .where(isIndependentSubscriptionNode)
+              .map((n) => n.withSource(id))
+              .toList();
+          final label = request.name.isNotEmpty
+              ? request.name
+              : source.url.isNotEmpty
+                  ? Uri.parse(source.url).host
+                  : '本地导入';
+          final names = next.nodes.map((n) => n.name).toSet();
+          final overlaps = nodes.where((n) => names.contains(n.name)).length;
+          preview.add('$label：新增 ${nodes.length}，跳过 ${outcome.skipped.length}'
+              '${overlaps == 0 ? '' : '，有 $overlaps 个同名节点，按来源保留'}');
+          preview.addAll(outcome.skipped.take(4).map(redactDiagnostics));
           next.nodes = [...next.nodes, ...nodes];
           if (!manual)
             next.subscriptions = [
               ...next.subscriptions,
               Subscription(
                 id: id,
-                name: request.name.isNotEmpty
-                    ? request.name
-                    : source.url.isNotEmpty
-                        ? Uri.parse(source.url).host
-                        : '本地导入',
+                name: label,
                 url: source.url,
                 inlineContent: source.content,
                 profileJson: outcome.profileJson,
@@ -453,12 +482,16 @@ class AndroidController extends ChangeNotifier {
         }
         if (next.selectedIndex < 0 && next.nodes.isNotEmpty)
           next.selectedIndex = 0;
+        if (approve != null && !await approve(preview.join('\n'))) {
+          throw const ImportCancelled();
+        }
+        if (cancelling || _disposed) throw const ImportCancelled();
         _committing = true;
         await commit(next);
-        report('导入已保存，共 ${data.nodes.where((n) => !n.isPolicy).length} 个节点');
+        report('导入已保存，共 ${data.nodes.where((n) => !n.isPolicy).length} 个节点'
+            '${running ? '。重新连接后可使用新节点' : ''}');
       });
-  Future<void> updateSource(Subscription source) =>
-      operation(() async {
+  Future<void> updateSource(Subscription source) => operation(() async {
         if (running) throw const FormatException('请先停止 VPN 再更新');
         if (!data.subscriptions.contains(source)) return;
         final attempt = DateTime.now();
@@ -555,7 +588,11 @@ class AndroidController extends ChangeNotifier {
         next.ui = value;
         await commit(next);
       });
-  Future<void> saveVpnSettings({int? mtu, List<String>? excludedApps}) =>
+  Future<void> saveVpnSettings(
+          {int? mtu,
+          List<String>? excludedApps,
+          List<String>? includedApps,
+          bool allApps = false}) =>
       operation(() async {
         final next = data.copyWith();
         if (mtu != null) {
@@ -566,6 +603,17 @@ class AndroidController extends ChangeNotifier {
         if (excludedApps != null) {
           if (excludedApps.length > 512) throw const FormatException('排除应用过多');
           next.androidExcludedApps = excludedApps.toSet().toList();
+          next.androidIncludedApps = null;
+        }
+        if (includedApps != null) {
+          if (includedApps.isEmpty || includedApps.length > 512) {
+            throw const FormatException('请选择 1 至 512 个允许通过 VPN 的应用');
+          }
+          next.androidIncludedApps = includedApps.toSet().toList();
+        }
+        if (allApps) {
+          next.androidIncludedApps = null;
+          next.androidExcludedApps = [];
         }
         await commit(next);
         report(running ? 'VPN 设置已保存，下次连接生效' : 'VPN 设置已保存');
