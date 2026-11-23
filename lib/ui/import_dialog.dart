@@ -24,8 +24,10 @@ class ImportDialog extends StatefulWidget {
       this.io = const ImportIo(),
       this.initialMethod = 'link',
       this.initialText = '',
-      this.canPreview = false});
-  final bool canPreview;
+      this.canPreview = false,
+      this.previewOnly = false})
+      : assert(!previewOnly || canPreview);
+  final bool canPreview, previewOnly;
   final ImportIo io;
   final String initialMethod, initialText;
   @override
@@ -274,7 +276,7 @@ class _ImportDialogState extends State<ImportDialog> {
                 const Divider(height: 1),
                 Flexible(
                     child: SingleChildScrollView(
-                        padding: const EdgeInsets.all(22),
+                        padding: const EdgeInsets.all(16),
                         child: Column(
                             crossAxisAlignment: CrossAxisAlignment.stretch,
                             children: [
@@ -480,7 +482,7 @@ class _ImportDialogState extends State<ImportDialog> {
                                   ? null
                                   : () => Navigator.pop(context),
                               child: const Text('取消')),
-                          if (widget.canPreview)
+                          if (widget.canPreview && !widget.previewOnly)
                             TextButton(
                                 onPressed: _working || _submitted
                                     ? null

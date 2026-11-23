@@ -225,6 +225,7 @@ class _AndroidShellState extends State<AndroidShell> {
         initialMethod: method,
         initialText: initialText,
         canPreview: true,
+        previewOnly: true,
       ),
     );
     if (request != null && mounted) {
