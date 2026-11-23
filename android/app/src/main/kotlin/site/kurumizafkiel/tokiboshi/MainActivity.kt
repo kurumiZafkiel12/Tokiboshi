@@ -37,8 +37,8 @@ class MainActivity : FlutterActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        setIntent(intent)
-        stageEntry(intent)
+        // External actions are transient. Keep the activity launch intent stable.
+        stageEntry(Intent(intent))
     }
 
     private var pendingBackup: Pair<File, MethodChannel.Result>? = null
