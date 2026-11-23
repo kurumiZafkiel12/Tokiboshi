@@ -6,6 +6,8 @@ import 'package:flutter/material.dart';
 import 'package:file_selector/file_selector.dart';
 
 import '../pages/connections_page.dart';
+import '../pages/toolbox_page.dart';
+import '../pages/network_info.dart';
 import '../pages/node_quality_panel.dart';
 import '../ui/node_widgets.dart';
 import '../services/config_backup.dart';
@@ -710,6 +712,12 @@ class _AndroidShellState extends State<AndroidShell> {
             Column(
               children: [
                 ListTile(
+                  title: const Text('网络工具箱'),
+                  subtitle: const Text('测速、服务可用性、连接拓扑'),
+                  leading: const Icon(Icons.construction_outlined),
+                  onTap: showToolbox,
+                ),
+                ListTile(
                   contentPadding: EdgeInsets.zero,
                   leading: const Icon(Icons.route),
                   title: const Text('分流规则'),
@@ -1405,6 +1413,39 @@ class _AndroidShellState extends State<AndroidShell> {
       c.report('恢复失败：$error');
     }
   }
+
+  void showToolbox() => Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => Scaffold(
+            appBar: AppBar(title: const Text('网络工具箱')),
+            body: SafeArea(
+              child: ListenableBuilder(
+                  listenable: c,
+                  builder: (_, __) => ToolboxPage(
+                        mobile: true,
+                        running: c.running,
+                        onStart: c.connectIfStopped,
+                        mixedPort: c.data.mixedPort,
+                        session: (c.data.selected, c.monitor.startedAt),
+                        networkInfo: NetworkInfo(
+                          monitor: c.monitor,
+                          refresh: () async {
+                            final node = c.data.selected;
+                            if (node != null)
+                              await c.measure(c.data.nodes.indexOf(node));
+                          },
+                          latency: [
+                            for (final entry in c.delays.entries)
+                              if (entry.key >= 0 &&
+                                  entry.key < c.data.nodes.length)
+                                (c.data.nodes[entry.key].name, entry.value),
+                          ],
+                        ),
+                      )),
+            ),
+          ),
+        ),
+      );
 
   void showConnections() => Navigator.of(context).push(
         MaterialPageRoute<void>(

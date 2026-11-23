@@ -18,7 +18,8 @@ class ToolboxPage extends StatefulWidget {
     required this.mixedPort,
     required this.onStart,
     required this.networkInfo,
-    required this.resources,
+    this.resources,
+    this.mobile = false,
     this.proxyCredentials,
     this.systemProxy,
     this.session,
@@ -27,7 +28,9 @@ class ToolboxPage extends StatefulWidget {
   final bool running;
   final int mixedPort;
   final VoidCallback onStart;
-  final Widget networkInfo, resources;
+  final Widget networkInfo;
+  final Widget? resources;
+  final bool mobile;
   final (String, String)? proxyCredentials;
   final SystemProxy? systemProxy;
   final Object? session;
@@ -467,10 +470,12 @@ class _ToolboxPageState extends State<ToolboxPage> {
       return ListView(padding: const EdgeInsets.all(20), children: [
         const Icon(Icons.construction_outlined, size: 40, color: Colors.grey),
         const SizedBox(height: 10),
-        const Text('工具箱需要内核运行（测速走代理隧道）'),
+        Text(widget.mobile ? '连接 VPN 后可使用网络工具' : '工具箱需要内核运行（测速走代理隧道）'),
         const SizedBox(height: 10),
-        FilledButton(onPressed: widget.onStart, child: const Text('启动内核')),
-        widget.resources,
+        FilledButton(
+            onPressed: widget.onStart,
+            child: Text(widget.mobile ? '启动 VPN' : '启动内核')),
+        if (widget.resources != null) widget.resources!,
       ]);
     }
     return _openTool == null ? _matrix() : _toolPage(_openTool!);
@@ -489,13 +494,14 @@ class _ToolboxPageState extends State<ToolboxPage> {
         ),
       ],
       '检测': [
-        (
-          'checks',
-          '检测与修复',
-          '出口泄漏对照 · 系统代理残留清理',
-          Icons.health_and_safety_outlined,
-          () => setState(() => _openTool = 'checks')
-        ),
+        if (!widget.mobile)
+          (
+            'checks',
+            '检测与修复',
+            '出口泄漏对照 · 系统代理残留清理',
+            Icons.health_and_safety_outlined,
+            () => setState(() => _openTool = 'checks')
+          ),
         (
           'audit',
           '服务解锁测试',
@@ -513,15 +519,16 @@ class _ToolboxPageState extends State<ToolboxPage> {
           () => setState(() => _openTool = 'topology')
         ),
       ],
-      '资源': [
-        (
-          'resources',
-          '规则集资源',
-          '17 个内置规则集 · 源可配 · 自动更新',
-          Icons.inventory_2_outlined,
-          () => setState(() => _openTool = 'resources')
-        ),
-      ],
+      if (widget.resources != null)
+        '资源': [
+          (
+            'resources',
+            '规则集资源',
+            '17 个内置规则集 · 源可配 · 自动更新',
+            Icons.inventory_2_outlined,
+            () => setState(() => _openTool = 'resources')
+          ),
+        ],
     };
     return SingleChildScrollView(
         padding: const EdgeInsets.all(20),
@@ -601,7 +608,9 @@ class _ToolboxPageState extends State<ToolboxPage> {
         const SizedBox(height: 10),
         const Text('该工具需要内核运行'),
         const SizedBox(height: 10),
-        FilledButton(onPressed: widget.onStart, child: const Text('启动内核')),
+        FilledButton(
+            onPressed: widget.onStart,
+            child: Text(widget.mobile ? '启动 VPN' : '启动内核')),
       ]);
     } else {
       body = switch (tool) {
@@ -648,7 +657,7 @@ class _ToolboxPageState extends State<ToolboxPage> {
         'checks' => _checksCard(),
         'audit' => ServiceAuditPanel(createClient: _proxyClient),
         'topology' => widget.networkInfo,
-        _ => widget.resources,
+        _ => widget.resources ?? const SizedBox.shrink(),
       };
     }
     return SingleChildScrollView(
