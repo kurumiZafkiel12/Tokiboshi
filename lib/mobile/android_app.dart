@@ -343,7 +343,7 @@ class _AndroidShellState extends State<AndroidShell> {
               const SizedBox(width: 10),
               const Expanded(
                 child: Text(
-                  kInAppName,
+                  '$kAppName · $kInAppName',
                   style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600),
                   overflow: TextOverflow.ellipsis,
                 ),

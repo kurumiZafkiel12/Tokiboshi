@@ -201,6 +201,47 @@ class _ImportDialogState extends State<ImportDialog> {
               controller: c,
               obscureText: secret,
               decoration: InputDecoration(labelText: label, hintText: hint)));
+  void _selectMethod(String method) {
+    if (_method == method) return;
+    setState(() {
+      _method = method;
+      _error = null;
+      _path = null;
+      _filename = null;
+      _fileContent = null;
+      if (method == 'qr' || method == 'custom') _text.clear();
+    });
+  }
+
+  Widget _methodBar() => LayoutBuilder(builder: (context, constraints) {
+        final caption = Text(
+          '支持节点分享链接、订阅地址和配置文件。',
+          style: Theme.of(context).textTheme.bodySmall,
+        );
+        final buttons = Wrap(
+          children: [
+            for (final entry in const [
+              ('link', '链接', Icons.link),
+              ('file', '从文件导入', Icons.upload_file_outlined),
+              ('qr', '二维码', Icons.qr_code_2),
+              ('custom', '自定义节点 JSON', Icons.tune),
+              ('clipboard', '文本 / 剪贴板', Icons.content_paste),
+            ])
+              IconButton(
+                tooltip: entry.$2,
+                isSelected: _method == entry.$1,
+                onPressed: _working ? null : () => _selectMethod(entry.$1),
+                icon: Icon(entry.$3, size: 19),
+              ),
+          ],
+        );
+        return constraints.maxWidth < 440
+            ? Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [caption, buttons])
+            : Row(children: [Expanded(child: caption), buttons]);
+      });
+
   @override
   Widget build(BuildContext context) => Dialog(
       insetPadding: const EdgeInsets.all(20),
@@ -237,71 +278,8 @@ class _ImportDialogState extends State<ImportDialog> {
                         child: Column(
                             crossAxisAlignment: CrossAxisAlignment.stretch,
                             children: [
-                              Row(children: [
-                                Expanded(
-                                    child: Text(
-                                        '粘贴订阅链接、节点链接（hy2/ss/vmess 等）或配置内容，自动识别。',
-                                        style: TextStyle(
-                                            fontSize: 11,
-                                            color: Theme.of(context)
-                                                .colorScheme
-                                                .onSurfaceVariant))),
-                                IconButton(
-                                    tooltip: '从文件导入',
-                                    onPressed: _working
-                                        ? null
-                                        : () => setState(() {
-                                              _method = 'file';
-                                              _error = null;
-                                              _path = null;
-                                              _filename = null;
-                                              _fileContent = null;
-                                            }),
-                                    icon: const Icon(Icons.upload_file_outlined,
-                                        size: 19)),
-                                IconButton(
-                                    tooltip: '二维码',
-                                    onPressed: _working
-                                        ? null
-                                        : () => setState(() {
-                                              _method = 'qr';
-                                              _error = null;
-                                              _path = null;
-                                              _filename = null;
-                                              _fileContent = null;
-                                              _text.clear();
-                                            }),
-                                    icon:
-                                        const Icon(Icons.qr_code_2, size: 19)),
-                                IconButton(
-                                    tooltip: '自定义节点 JSON',
-                                    onPressed: _working
-                                        ? null
-                                        : () => setState(() {
-                                              _method = 'custom';
-                                              _error = null;
-                                              _path = null;
-                                              _filename = null;
-                                              _fileContent = null;
-                                              _text.clear();
-                                            }),
-                                    icon: const Icon(Icons.tune, size: 19)),
-                                IconButton(
-                                    tooltip: '文本 / 剪贴板',
-                                    onPressed: _working
-                                        ? null
-                                        : () => setState(() {
-                                              _method = 'clipboard';
-                                              _error = null;
-                                              _path = null;
-                                              _filename = null;
-                                              _fileContent = null;
-                                            }),
-                                    icon: const Icon(Icons.content_paste,
-                                        size: 19)),
-                              ]),
-                              const SizedBox(height: 14),
-                              const SizedBox(height: 20),
+                              _methodBar(),
+                              const SizedBox(height: 12),
                               _field('名称（可选）', _name),
                               if (_method == 'file') ...[
                                 Panel(
@@ -492,26 +470,28 @@ class _ImportDialogState extends State<ImportDialog> {
                 const Divider(height: 1),
                 Padding(
                     padding: const EdgeInsets.all(16),
-                    child: Row(children: [
-                      Expanded(
-                          child: Text('导入前不会更改已有连接或配置。',
-                              style: Theme.of(context).textTheme.bodySmall)),
-                      TextButton(
-                          onPressed:
-                              _working ? null : () => Navigator.pop(context),
-                          child: const Text('取消')),
-                      const SizedBox(width: 8),
-                      if (widget.canPreview)
-                        TextButton(
-                            onPressed:
-                                _working || _submitted ? null : () => _submit(),
-                            child: const Text('导入')),
-                      FilledButton(
-                          onPressed: _working || _submitted
-                              ? null
-                              : () => _submit(preview: widget.canPreview),
-                          child: Text(widget.canPreview ? '预览并导入' : '导入'))
-                    ]))
+                    child: OverflowBar(
+                        alignment: MainAxisAlignment.end,
+                        spacing: 8,
+                        overflowAlignment: OverflowBarAlignment.end,
+                        children: [
+                          TextButton(
+                              onPressed: _working
+                                  ? null
+                                  : () => Navigator.pop(context),
+                              child: const Text('取消')),
+                          if (widget.canPreview)
+                            TextButton(
+                                onPressed: _working || _submitted
+                                    ? null
+                                    : () => _submit(),
+                                child: const Text('导入')),
+                          FilledButton(
+                              onPressed: _working || _submitted
+                                  ? null
+                                  : () => _submit(preview: widget.canPreview),
+                              child: Text(widget.canPreview ? '预览并导入' : '导入'))
+                        ]))
               ]))));
 }
 
