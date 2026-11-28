@@ -6,7 +6,6 @@ import '../ui/design.dart';
 import '../ui/preferences.dart';
 import '../ui/runtime.dart';
 import '../ui/traffic_chart.dart';
-import '../ui/mechanical_clock.dart';
 import '../ui/node_widgets.dart';
 import 'node_quality_panel.dart';
 import '../services/quality_history.dart';
@@ -177,12 +176,6 @@ class _DashboardPageState extends State<DashboardPage> {
                       key: const ValueKey('ranking'),
                       width: left,
                       child: live(_ranking)),
-                  SizedBox(
-                      key: const ValueKey('mechanical-clock'),
-                      width: right,
-                      child: RepaintBoundary(
-                          child: MechanicalClock(
-                              size: wide ? 132 : 76, dashboard: true))),
                   SizedBox(
                       key: ValueKey(order[1]),
                       width: left,

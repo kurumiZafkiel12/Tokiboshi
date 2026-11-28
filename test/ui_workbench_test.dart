@@ -7,7 +7,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:tokiboshi/main.dart';
 import 'package:tokiboshi/pages/dashboard_page.dart';
 import 'package:tokiboshi/pages/connections_page.dart';
-import 'package:tokiboshi/ui/mechanical_clock.dart';
 import 'package:tokiboshi/pages/nodes_page.dart';
 import 'package:tokiboshi/bridge/core_bridge.dart';
 import 'package:tokiboshi/services/store.dart';
@@ -452,7 +451,6 @@ void main() {
     expect(find.text('firefox.exe'), findsOneWidget);
     await screenshot(t, 'dashboard-live-wide');
     final hero = t.widget<WorkbenchGlass>(find.byType(WorkbenchGlass));
-    final clock = t.widget<MechanicalClock>(find.byType(MechanicalClock));
     monitor
       ..downSpeed = 2 * 1024 * 1024
       ..downHistory = [2 * 1024 * 1024]
@@ -463,7 +461,6 @@ void main() {
     expect(find.text('0 条活动连接'), findsOneWidget);
     expect(find.text('firefox.exe'), findsNothing);
     expect(t.widget(find.byType(WorkbenchGlass)), same(hero));
-    expect(t.widget(find.byType(MechanicalClock)), same(clock));
     expect(find.byType(BackdropFilter), findsNothing);
 
     t.platformDispatcher.textScaleFactorTestValue = 1.5;
@@ -541,30 +538,6 @@ void main() {
     await t.pumpWidget(const SizedBox());
   });
 
-  testWidgets(
-      'red-black dashboard clock opens the detailed movement and survives resizing',
-      (t) async {
-    final fixture = MemoryStore();
-    fixture.data.desktop =
-        const DesktopSettings(autoRun: true, autoCheckUpdates: false);
-    await mount(t, withStore: fixture);
-    await screenshot(t, 'redblack-dashboard-1440');
-    final action = find.text('展开机芯');
-    await t.ensureVisible(action);
-    await t.tap(action);
-    await t.pumpAndSettle();
-    expect(find.byType(Dialog), findsOneWidget);
-    expect(find.descendant(of: find.byType(Dialog), matching: find.text('机械钟')),
-        findsOneWidget);
-    await screenshot(t, 'redblack-mechanical-clock');
-    t.view.physicalSize = const Size(800, 600);
-    await t.pumpAndSettle();
-    expect(t.takeException(), isNull);
-    Navigator.of(t.element(find.byType(Dialog))).pop();
-    await t.pumpAndSettle();
-    await screenshot(t, 'redblack-dashboard-800');
-    await t.pumpWidget(const SizedBox());
-  });
   testWidgets(
       'layout moves persist, status stays anchored, picker selects and drawer opens',
       (t) async {
